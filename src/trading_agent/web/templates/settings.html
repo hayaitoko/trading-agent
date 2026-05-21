@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold">Settings</h1>
+  <p class="text-sm text-slate-400">
+    API credentials. Stored in <span class="mono text-slate-300">trading_agent_secrets.json</span> (gitignored).
+    Leave a masked field blank to keep the existing value.
+  </p>
+</div>
+
+{% include "_settings_form.html" %}
+{% endblock %}

@@ -46,16 +46,19 @@ uv run trading-agent-web
 Single user, no auth. Multiple paper accounts run in parallel against the same signal feed so you can A/B test strategies side by side.
 
 Built pages:
-- **Dashboard**: per-account cash, equity, positions, today's trades.
+- **Dashboard**: per-account cash, equity, positions, today's trades. Has a `+ account` shortcut.
+- **Accounts**: list, add (htmx inline form), enable/disable, delete. Persisted to `accounts.json`.
+- **Trades**: per-account full execution history.
+- **Settings**: API credentials for Reddit, StockTwits, Investopedia. Persisted to `trading_agent_secrets.json`. Secrets are masked in the UI and never round-tripped through HTML.
 
 Planned (nav present but disabled):
-- **Today**: chronological feed of ingested posts + sentiment scores + source links + which trade each post fed into. The audit trail.
-- **Signals**: per-ticker rolling sentiment and mention velocity, drill down to source posts.
-- **Trades**: full order log, each row links back to its triggering signal and source posts.
-- **Accounts**: list, enable/disable, strategy binding.
-- **Strategy**: per-account knobs (sentiment threshold, position size, max drawdown circuit breaker).
+- **Today**: chronological feed of ingested posts + sentiment scores + source links + which trade each post fed into. The audit trail. Needs scrapers to be wired.
+- **Signals**: per-ticker rolling sentiment and mention velocity, drill down to source posts. Needs the signal aggregator.
+- **Strategy**: per-account knobs (sentiment threshold, position size, max drawdown circuit breaker). Needs the strategy layer.
 
 A kill switch, compare-mode, and Telegram alerts are planned alongside the runner loop in v0.5.
+
+`accounts.json` and `trading_agent_secrets.json` are gitignored and only contain non-broker state (account metadata, API keys). `MockBroker` positions and trades are in-memory only and reset on restart — that limitation goes away when `InvestopediaBroker` lands, since it reads state from the live simulator.
 
 ## Roadmap
 

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold">Accounts</h1>
+  <p class="text-sm text-slate-400">Paper trading accounts. Each runs independently against the shared signal feed.</p>
+</div>
+
+<section class="rounded-lg border border-slate-800 bg-slate-900 p-5 mb-6">
+  <h2 class="text-sm uppercase tracking-wide text-slate-500 mb-3">Add account</h2>
+  <form hx-post="/accounts/"
+        hx-target="#accounts-table"
+        hx-swap="outerHTML"
+        hx-on::after-request="if (event.detail.successful) this.reset()"
+        class="flex gap-3 items-end">
+    <div class="flex-1">
+      <label class="block text-xs text-slate-500 mb-1">name</label>
+      <input name="name" required
+             class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+             placeholder="e.g. Paper Momentum">
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">starting cash ($)</label>
+      <input name="starting_cash" required type="number" min="1" step="any" value="25000"
+             class="bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm w-36 mono focus:border-emerald-500 focus:outline-none">
+    </div>
+    <button type="submit"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded text-sm font-medium">
+      + add
+    </button>
+  </form>
+</section>
+
+{% include "_accounts_table.html" %}
+{% endblock %}

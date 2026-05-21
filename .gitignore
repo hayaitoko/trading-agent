@@ -226,4 +226,6 @@ playwright-report/
 test-results/
 .playwright/
 storage_state.json
+accounts.json
+trading_agent_secrets.json
 

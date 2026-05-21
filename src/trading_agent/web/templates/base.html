@@ -22,9 +22,10 @@
           ("dashboard", "Dashboard", "/", True),
           ("today", "Today", "#", False),
           ("signals", "Signals", "#", False),
-          ("trades", "Trades", "#", False),
-          ("accounts", "Accounts", "#", False),
+          ("trades", "Trades", "/trades/", True),
+          ("accounts", "Accounts", "/accounts/", True),
           ("strategy", "Strategy", "#", False),
+          ("settings", "Settings", "/settings/", True),
         ] %}
         {% for key, label, href, ready in pages %}
           {% if ready %}
