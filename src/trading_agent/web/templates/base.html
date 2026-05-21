@@ -210,6 +210,39 @@
     input::placeholder, textarea::placeholder { color: rgb(var(--ink-40)); }
     input:focus, textarea:focus, select:focus { outline: none; }
 
+    /* Native <option> elements take OS theming by default and look awful
+       in dark mode. Force them to use our palette. Browser support is decent
+       (Chromium 105+, Firefox, Safari 17+). */
+    select {
+      background-color: rgb(var(--paper-elevated));
+      color: rgb(var(--ink-100));
+      color-scheme: light;
+    }
+    select option {
+      background-color: rgb(var(--paper-elevated));
+      color: rgb(var(--ink-100));
+    }
+    select option:checked,
+    select option:hover {
+      background-color: rgb(var(--paper-recess));
+      color: rgb(var(--vermillion));
+    }
+    [data-theme="dark"] select {
+      background-color: rgb(var(--paper-elevated));
+      color: rgb(var(--ink-100));
+      color-scheme: dark;
+      border-color: rgb(var(--ink-20));
+    }
+    [data-theme="dark"] select option,
+    [data-theme="dark"] select optgroup {
+      background-color: rgb(var(--paper-elevated));
+      color: rgb(var(--ink-100));
+    }
+    select:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
     .input-line {
       border: 0;
       border-bottom: 1px solid rgb(var(--ink-20));
@@ -305,6 +338,88 @@
 
     a, button { transition: color 200ms ease, background-color 200ms ease, border-color 200ms ease, opacity 200ms ease; }
 
+    /* Hover lift — applied to cards we want to feel tactile */
+    .lift {
+      transition: transform 380ms cubic-bezier(0.16, 1, 0.3, 1),
+                  box-shadow 380ms cubic-bezier(0.16, 1, 0.3, 1),
+                  border-color 280ms ease;
+    }
+    .lift:hover {
+      transform: translateY(-6px) scale(1.018);
+      box-shadow:
+        0 14px 32px -10px rgb(var(--ink-100) / 0.18),
+        0 4px 10px -4px rgb(var(--ink-100) / 0.08);
+      border-color: rgb(var(--ink-100) / 0.35);
+    }
+    [data-theme="dark"] .lift:hover {
+      box-shadow:
+        0 14px 32px -8px rgb(0 0 0 / 0.55),
+        0 4px 10px -4px rgb(0 0 0 / 0.35),
+        0 0 0 1px rgb(var(--vermillion) / 0.25);
+    }
+
+    /* Subtle pulse on active live indicators */
+    @keyframes softPulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgb(var(--vermillion) / 0.0); }
+      50%      { opacity: 0.55; box-shadow: 0 0 0 3px rgb(var(--vermillion) / 0.18); }
+    }
+    .mark-active { animation: softPulse 2.4s ease-in-out infinite; }
+
+    /* CSS-only tooltips. Add data-tip="text" to any element. */
+    [data-tip] { position: relative; }
+    [data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%) translateY(3px);
+      background: rgb(var(--ink-100));
+      color: rgb(var(--paper-elevated));
+      padding: 0.3rem 0.55rem;
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      width: max-content;
+      max-width: 18rem;
+      white-space: normal;
+      text-align: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease, transform 180ms ease;
+      z-index: 60;
+      box-shadow: 0 4px 10px -2px rgb(var(--ink-100) / 0.25);
+    }
+    [data-tip]::before {
+      content: '';
+      position: absolute;
+      bottom: calc(100% + 1px);
+      left: 50%;
+      transform: translateX(-50%) translateY(3px);
+      border: 4px solid transparent;
+      border-top-color: rgb(var(--ink-100));
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease, transform 180ms ease;
+      z-index: 60;
+    }
+    [data-tip]:hover::after,
+    [data-tip]:hover::before {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    /* Tooltip below for elements near the top of the viewport */
+    [data-tip-below]::after {
+      bottom: auto;
+      top: calc(100% + 6px);
+    }
+    [data-tip-below]::before {
+      bottom: auto;
+      top: calc(100% + 1px);
+      border-top-color: transparent;
+      border-bottom-color: rgb(var(--ink-100));
+    }
+
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {
@@ -355,7 +470,8 @@
           <button id="theme-toggle"
                   type="button"
                   class="theme-toggle"
-                  title="Toggle light / dark"
+                  data-tip="Toggle light · dark"
+                  data-tip-below
                   aria-label="Toggle theme">
             <i data-lucide="sun" class="theme-sun lucide"></i>
             <i data-lucide="moon" class="theme-moon lucide"></i>

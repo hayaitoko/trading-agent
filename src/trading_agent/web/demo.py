@@ -8,6 +8,7 @@ MockBroker is in-memory only. This goes away when InvestopediaBroker
 takes over (it reads state from the actual simulator).
 """
 import asyncio
+import os
 from decimal import Decimal
 from pathlib import Path
 
@@ -81,12 +82,16 @@ def build_demo_state(accounts_path: Path, secrets_path: Path) -> AppState:
 
 
 def main() -> None:
+    data_dir = Path(os.getenv("TRADING_AGENT_DATA", "."))
+    data_dir.mkdir(parents=True, exist_ok=True)
     state = build_demo_state(
-        accounts_path=Path("accounts.json"),
-        secrets_path=Path("trading_agent_secrets.json"),
+        accounts_path=data_dir / "accounts.json",
+        secrets_path=data_dir / "trading_agent_secrets.json",
     )
     app = create_app(state)
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    host = os.getenv("TRADING_AGENT_HOST", "127.0.0.1")
+    port = int(os.getenv("TRADING_AGENT_PORT", "8765"))
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":

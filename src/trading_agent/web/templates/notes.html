@@ -30,8 +30,9 @@
     <span id="consolidator-model" class="mono text-ink-80 ml-1">—</span>
   </div>
   <div class="ml-auto flex items-center gap-3">
-    <button id="consolidator-run" class="btn-solid">run now</button>
+    <button id="consolidator-run" data-tip="Run a consolidation pass now" class="btn-solid">run now</button>
     <button id="consolidator-config-toggle"
+            data-tip="Edit interval / model / enabled"
             class="small-caps text-ink-60 hover:text-vermillion border-b border-ink-20 hover:border-vermillion pb-0.5">
       configure
     </button>
@@ -67,7 +68,7 @@
   <aside class="surface flex flex-col">
     <header class="px-4 py-3 border-b border-ink-100/15 flex items-baseline">
       <span class="small-caps text-ink-60">files</span>
-      <button id="notes-new" title="New note" class="ml-auto small-caps text-vermillion hover:text-vermillion-deep">
+      <button id="notes-new" data-tip="Create a new note" class="ml-auto small-caps text-vermillion hover:text-vermillion-deep">
         + new
       </button>
     </header>
@@ -81,8 +82,8 @@
       <span id="editor-path" class="mono text-sm text-ink-80">— no file —</span>
       <span id="editor-dirty" class="micro-caps text-warning hidden italic">unsaved</span>
       <div class="ml-auto flex items-center gap-4">
-        <button id="editor-save" class="btn-link">save</button>
-        <button id="editor-delete" class="small-caps text-loss hover:text-loss-soft">delete</button>
+        <button id="editor-save" data-tip="Save · Ctrl-S" class="btn-link">save</button>
+        <button id="editor-delete" data-tip="Delete · keeps backup" class="small-caps text-loss hover:text-loss-soft">delete</button>
       </div>
     </header>
 

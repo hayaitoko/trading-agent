@@ -11,16 +11,17 @@
   <hr class="mt-6 heavy">
 </section>
 
-<div class="reveal-stack">
+<div class="grid grid-cols-1 lg:grid-cols-[minmax(20rem,28rem)_minmax(0,1fr)] gap-8 reveal-stack">
   {% include "_settings_form.html" %}
 
-  <section id="netlog-section" class="surface mt-10 overflow-hidden">
+  <section id="netlog-section" class="surface overflow-hidden self-start">
     <header class="flex items-center px-6 py-3 border-b border-ink-100/15 gap-3">
       <i data-lucide="activity" class="lucide text-vermillion" style="width:1rem;height:1rem"></i>
       <h2 class="small-caps text-ink-60">network log</h2>
       <span class="micro-caps text-ink-40">inbound + outbound, rolling 200</span>
       <span id="netlog-count" class="ml-auto micro-caps text-ink-40">—</span>
       <button id="netlog-refresh"
+              data-tip="Reload network entries"
               class="micro-caps text-ink-60 hover:text-vermillion flex items-center gap-1">
         <i data-lucide="refresh-cw" class="lucide" style="width:0.85rem;height:0.85rem"></i>
         refresh

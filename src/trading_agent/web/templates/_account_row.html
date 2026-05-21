@@ -7,6 +7,7 @@
     <button hx-post="/accounts/{{ row.id }}/toggle"
             hx-target="#row-{{ row.id }}"
             hx-swap="outerHTML"
+            data-tip="{{ 'Pause this account' if row.enabled else 'Resume this account' }}"
             class="small-caps {% if row.enabled %}text-vermillion hover:text-vermillion-deep{% else %}text-ink-60 hover:text-ink-100{% endif %}">
       <span class="mark {% if row.enabled %}mark-active{% else %}mark-paused{% endif %}"></span>{{ "active" if row.enabled else "paused" }}
     </button>
@@ -16,6 +17,7 @@
             hx-target="#accounts-table"
             hx-swap="outerHTML"
             hx-confirm="Delete account '{{ row.name }}'?"
+            data-tip="Delete · keeps history"
             class="small-caps text-loss hover:text-loss-soft">
       delete
     </button>

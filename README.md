@@ -50,6 +50,17 @@ uv run trading-agent-web
 
 Single user, no auth. Multiple paper accounts run in parallel against the same signal feed so you can A/B test strategies side by side.
 
+## Docker
+
+```powershell
+docker compose up --build
+# open http://127.0.0.1:8765
+```
+
+The container listens on port `8765` and stores runtime state in `/data`, mounted
+to the `ta-data` named volume by `docker-compose.yml`. Override paths and binding
+with `TRADING_AGENT_DATA`, `TRADING_AGENT_HOST`, and `TRADING_AGENT_PORT`.
+
 Built pages:
 - **Dashboard**: per-account cash, equity, positions, today's trades. Has a `+ account` shortcut.
 - **Accounts**: list, add (htmx inline form), enable/disable, delete. Persisted to `accounts.json`.

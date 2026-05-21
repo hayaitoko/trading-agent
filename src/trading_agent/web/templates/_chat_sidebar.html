@@ -4,7 +4,8 @@
     <button id="chat-collapse"
             type="button"
             class="text-ink-60 hover:text-vermillion px-2.5 py-2 leading-none"
-            title="Collapse sidebar"
+            data-tip="Hide chat"
+            data-tip-below
             aria-label="Toggle sidebar">
       <i data-lucide="panel-left-close" class="lucide chat-collapse-open" style="width:1.05rem;height:1.05rem"></i>
       <i data-lucide="panel-left-open" class="lucide chat-collapse-closed hidden" style="width:1.05rem;height:1.05rem"></i>
@@ -20,7 +21,8 @@
       </select>
       <button id="chat-reset"
               type="button"
-              title="Clear conversation"
+              data-tip="Clear all messages"
+              data-tip-below
               class="small-caps text-ink-60 hover:text-vermillion flex items-center gap-1">
         <i data-lucide="rotate-ccw" class="lucide" style="width:0.85rem;height:0.85rem"></i>
         reset
@@ -44,13 +46,14 @@
                   placeholder="Ask about an account, position, trade. Paste a screenshot if helpful."
                   class="w-full bg-paper-elevated border border-ink-20 px-3 py-2 text-[0.92rem] resize-none focus:border-vermillion"></textarea>
         <div class="flex items-center gap-3">
-          <label class="small-caps text-ink-60 hover:text-vermillion cursor-pointer flex items-center gap-1">
+          <label data-tip="Or paste an image" class="small-caps text-ink-60 hover:text-vermillion cursor-pointer flex items-center gap-1">
             <input id="chat-file" type="file" accept="image/*" multiple class="hidden">
             <i data-lucide="paperclip" class="lucide" style="width:0.85rem;height:0.85rem"></i>
             attach
           </label>
           <button id="chat-send"
                   type="submit"
+                  data-tip="Send · Enter"
                   class="btn-solid ml-auto">
             send
             <i data-lucide="send" class="lucide" style="width:0.8rem;height:0.8rem"></i>

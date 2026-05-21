@@ -1,0 +1,16 @@
+services:
+  trading-agent:
+    build: .
+    container_name: trading-agent
+    ports:
+      - "8765:8765"
+    volumes:
+      - ta-data:/data
+    environment:
+      TRADING_AGENT_DATA: /data
+      TRADING_AGENT_HOST: 0.0.0.0
+      TRADING_AGENT_PORT: 8765
+    restart: unless-stopped
+
+volumes:
+  ta-data:

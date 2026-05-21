@@ -1,0 +1,35 @@
+.git/
+.github/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime state — never include in the image
+accounts.json
+trading_agent_secrets.json
+chat_history.json
+consolidator_config.json
+notes/
+
+# Local-only
+*.db
+*.sqlite*
+.env
+.env.*
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+
+# Dev-only docs (the container doesn't need them)
+HANDOFF.md
+PLAN.md
+AGENTS.md
+time*log
