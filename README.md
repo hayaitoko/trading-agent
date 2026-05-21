@@ -36,6 +36,27 @@ uv pip install -e ".[dev]"
 uv run pytest
 ```
 
+## Web UI
+
+```powershell
+uv run trading-agent-web
+# open http://127.0.0.1:8765
+```
+
+Single user, no auth. Multiple paper accounts run in parallel against the same signal feed so you can A/B test strategies side by side.
+
+Built pages:
+- **Dashboard**: per-account cash, equity, positions, today's trades.
+
+Planned (nav present but disabled):
+- **Today**: chronological feed of ingested posts + sentiment scores + source links + which trade each post fed into. The audit trail.
+- **Signals**: per-ticker rolling sentiment and mention velocity, drill down to source posts.
+- **Trades**: full order log, each row links back to its triggering signal and source posts.
+- **Accounts**: list, enable/disable, strategy binding.
+- **Strategy**: per-account knobs (sentiment threshold, position size, max drawdown circuit breaker).
+
+A kill switch, compare-mode, and Telegram alerts are planned alongside the runner loop in v0.5.
+
 ## Roadmap
 
 1. **v0** (this commit): architecture scaffold. Models, ABCs, `MockBroker`, ticker extraction, tests.

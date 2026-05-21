@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold">Dashboard</h1>
+  <p class="text-sm text-slate-400">Per-account state. Click an account to drill into its trades and signals (coming).</p>
+</div>
+
+{% if not accounts %}
+  <div class="rounded-lg border border-slate-800 bg-slate-900 p-8 text-center text-slate-400">
+    No accounts configured.
+  </div>
+{% endif %}
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+  {% for acc in accounts %}
+  <section class="rounded-lg border border-slate-800 bg-slate-900 p-5">
+    <header class="flex items-baseline justify-between mb-4">
+      <div>
+        <h2 class="text-lg font-medium">{{ acc.name }}</h2>
+        <p class="text-xs text-slate-500 mono">{{ acc.id }}</p>
+      </div>
+      <span class="text-xs px-2 py-0.5 rounded {% if acc.enabled %}bg-emerald-900/40 text-emerald-300{% else %}bg-slate-800 text-slate-500{% endif %}">
+        {{ "active" if acc.enabled else "paused" }}
+      </span>
+    </header>
+
+    <div class="grid grid-cols-3 gap-3 mb-5">
+      <div>
+        <p class="text-xs text-slate-500">cash</p>
+        <p class="mono text-lg">${{ "%.2f"|format(acc.cash) }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">equity</p>
+        <p class="mono text-lg">${{ "%.2f"|format(acc.equity) }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">total</p>
+        <p class="mono text-lg font-semibold">${{ "%.2f"|format(acc.total) }}</p>
+      </div>
+    </div>
+
+    <div class="mb-4">
+      <h3 class="text-xs uppercase tracking-wide text-slate-500 mb-2">positions ({{ acc.positions|length }})</h3>
+      {% if acc.positions %}
+      <table class="w-full text-sm mono">
+        <thead class="text-slate-500 text-xs uppercase">
+          <tr>
+            <th class="text-left font-normal py-1">ticker</th>
+            <th class="text-right font-normal py-1">qty</th>
+            <th class="text-right font-normal py-1">avg cost</th>
+            <th class="text-right font-normal py-1">current</th>
+            <th class="text-right font-normal py-1">p&amp;l</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in acc.positions %}
+          {% set pnl = (p.current_price - p.avg_cost) * p.qty %}
+          <tr class="border-t border-slate-800">
+            <td class="py-1.5">{{ p.ticker }}</td>
+            <td class="text-right">{{ p.qty }}</td>
+            <td class="text-right">${{ "%.2f"|format(p.avg_cost) }}</td>
+            <td class="text-right">${{ "%.2f"|format(p.current_price) }}</td>
+            <td class="text-right {% if pnl > 0 %}pos{% elif pnl < 0 %}neg{% endif %}">
+              {% if pnl >= 0 %}+{% endif %}${{ "%.2f"|format(pnl) }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-sm text-slate-600 italic">flat</p>
+      {% endif %}
+    </div>
+
+    <div>
+      <h3 class="text-xs uppercase tracking-wide text-slate-500 mb-2">today ({{ acc.trades_today|length }} trades)</h3>
+      {% if acc.trades_today %}
+      <ul class="text-sm mono space-y-1">
+        {% for t in acc.trades_today %}
+        <li class="flex justify-between text-slate-300">
+          <span>
+            <span class="{% if t.side == 'buy' %}text-emerald-400{% else %}text-rose-400{% endif %}">{{ t.side }}</span>
+            {{ t.qty }} {{ t.ticker }}
+          </span>
+          <span class="text-slate-500">@ ${{ "%.2f"|format(t.price) }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-sm text-slate-600 italic">no activity</p>
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}
