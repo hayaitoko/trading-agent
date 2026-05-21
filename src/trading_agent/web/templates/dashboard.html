@@ -27,7 +27,7 @@
       <div>
         <p class="small-caps text-ink-60 mb-1">paper account</p>
         <h2 class="display text-3xl font-black text-ink-100 leading-none">{{ acc.name }}</h2>
-        <p class="mono text-[10px] text-ink-40 mt-2">{{ acc.id }}</p>
+        <p class="mono text-[10px] text-ink-40 mt-2">{{ acc.id }} &middot; <span class="text-vermillion">{{ acc.model_display }}</span></p>
       </div>
       <span class="small-caps {% if acc.enabled %}text-vermillion{% else %}text-ink-60{% endif %}">
         <span class="mark {% if acc.enabled %}mark-active{% else %}mark-paused{% endif %}"></span>{{ "active" if acc.enabled else "paused" }}

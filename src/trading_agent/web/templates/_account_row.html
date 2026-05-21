@@ -1,6 +1,7 @@
 <tr id="row-{{ row.id }}">
   <td class="display-text text-base text-ink-100">{{ row.name }}</td>
   <td class="mono text-xs text-ink-40">{{ row.id }}</td>
+  <td class="mono text-xs text-ink-80">{{ row.model_display }}</td>
   <td class="num text-ink-80">${{ "%.2f"|format(row.starting_cash) }}</td>
   <td class="text-center">
     <button hx-post="/accounts/{{ row.id }}/toggle"

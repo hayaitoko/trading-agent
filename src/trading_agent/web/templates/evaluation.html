@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="mb-10 reveal-stack">
+  <p class="small-caps text-ink-60 mb-1">the model bout</p>
+  <h1 class="display text-6xl font-black text-ink-100 leading-none">Evaluation</h1>
+  <p class="mt-4 text-ink-80 max-w-2xl italic">
+    Same signal feed, same market, different models. The accounts double as a
+    built-in A/B harness — this page is the standing leaderboard.
+  </p>
+  <hr class="mt-6 heavy">
+</section>
+
+<div class="reveal-stack">
+
+<div class="border-l-4 border-ink-40 bg-paper-recess pl-5 pr-6 py-4 mb-8 flex items-start gap-4">
+  <span class="display text-2xl text-ink-60 leading-none mt-0.5">‡</span>
+  <div>
+    <p class="small-caps text-ink-80 mb-1">Partial metrics &middot; full eval depends on strategy + history</p>
+    <p class="text-ink-80 text-sm">
+      Today we can rank by P&amp;L vs starting cash since MockBroker tracks
+      cash and positions in real time. Hit-rate, Sharpe ratio, max drawdown,
+      and equity curves all need closed-trade tracking and time-series
+      snapshots (v0.5 backtest harness onward).
+    </p>
+  </div>
+</div>
+
+{% if not rows %}
+  <div class="surface px-8 py-16 text-center">
+    <p class="display text-5xl text-ink-40 italic mb-3">&hellip;</p>
+    <p class="text-ink-80">No accounts on the books.</p>
+    <p class="mt-3"><a href="/accounts/" class="btn-link">open an account</a></p>
+  </div>
+{% endif %}
+
+{% if rows %}
+<section class="surface overflow-hidden mb-10">
+  <header class="px-6 py-3 border-b border-ink-100/15 flex items-baseline">
+    <h2 class="small-caps text-ink-60">leaderboard</h2>
+    <span class="ml-auto micro-caps text-ink-40">live</span>
+  </header>
+  <table class="ledger">
+    <thead>
+      <tr>
+        <th class="text-right" style="width:3rem">#</th>
+        <th>Account</th>
+        <th>Model</th>
+        <th class="text-right">Starting</th>
+        <th class="text-right">Total</th>
+        <th class="text-right">P/L $</th>
+        <th class="text-right">P/L %</th>
+        <th class="text-right">Trades</th>
+        <th class="text-center">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="num text-ink-40">{{ r.rank }}</td>
+        <td>
+          <span class="display-text text-ink-100">{{ r.name }}</span>
+          <span class="mono text-[10px] text-ink-40 ml-1">{{ r.id }}</span>
+        </td>
+        <td class="mono text-xs text-vermillion">{{ r.model_display }}</td>
+        <td class="num text-ink-60">${{ "%.2f"|format(r.starting_cash) }}</td>
+        <td class="num text-ink-100">${{ "%.2f"|format(r.total) }}</td>
+        <td class="num {% if r.pnl_abs > 0 %}text-gain{% elif r.pnl_abs < 0 %}text-loss{% else %}text-ink-60{% endif %}">
+          {% if r.pnl_abs >= 0 %}+{% endif %}${{ "%.2f"|format(r.pnl_abs) }}
+        </td>
+        <td class="num {% if r.pnl_pct > 0 %}text-gain{% elif r.pnl_pct < 0 %}text-loss{% else %}text-ink-60{% endif %}">
+          {% if r.pnl_pct >= 0 %}+{% endif %}{{ "%.2f"|format(r.pnl_pct) }}%
+        </td>
+        <td class="num text-ink-80">{{ r.trades }}</td>
+        <td class="text-center">
+          <span class="small-caps {% if r.enabled %}text-vermillion{% else %}text-ink-60{% endif %}">
+            <span class="mark {% if r.enabled %}mark-active{% else %}mark-paused{% endif %}"></span>{{ "active" if r.enabled else "paused" }}
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
+  <section class="surface p-6 opacity-70">
+    <h2 class="small-caps text-ink-60 mb-3">equity curves</h2>
+    <p class="text-ink-60 italic text-sm mb-4">
+      Overlay each account's equity over time. Needs snapshots taken on a cron
+      (planned alongside v0.5 backtest harness).
+    </p>
+    <div class="h-40 border border-ink-20 border-dashed flex items-center justify-center">
+      <span class="display text-3xl text-ink-20 italic">&hellip;</span>
+    </div>
+  </section>
+  <section class="surface p-6 opacity-70">
+    <h2 class="small-caps text-ink-60 mb-3">head-to-head signal response</h2>
+    <p class="text-ink-60 italic text-sm mb-4">
+      Pick a signal; show how each model decided. Did Opus pass on a setup
+      Sonnet took? Needs the signal aggregator and per-account decision log.
+    </p>
+    <div class="h-40 border border-ink-20 border-dashed flex items-center justify-center">
+      <span class="display text-3xl text-ink-20 italic">&hellip;</span>
+    </div>
+  </section>
+</div>
+{% endif %}
+</div>
+{% endblock %}

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from trading_agent.accounts import Account
+from trading_agent.accounts import DEFAULT_ACCOUNT_MODEL, Account
 from trading_agent.brokers import MockBroker
 
 QuoteFn = Callable[[str], Decimal]
@@ -26,6 +26,7 @@ class AccountSpec:
     name: str
     starting_cash: Decimal
     enabled: bool = True
+    model: str = DEFAULT_ACCOUNT_MODEL
 
     def to_dict(self) -> dict:
         return {
@@ -33,6 +34,7 @@ class AccountSpec:
             "name": self.name,
             "starting_cash": str(self.starting_cash),
             "enabled": self.enabled,
+            "model": self.model,
         }
 
     @classmethod
@@ -42,6 +44,7 @@ class AccountSpec:
             name=data["name"],
             starting_cash=Decimal(data["starting_cash"]),
             enabled=bool(data.get("enabled", True)),
+            model=str(data.get("model") or DEFAULT_ACCOUNT_MODEL),
         )
 
 
@@ -76,6 +79,7 @@ def build_account(spec: AccountSpec, quote_fn: QuoteFn) -> Account:
         broker=broker,
         starting_cash=spec.starting_cash,
         enabled=spec.enabled,
+        model=spec.model,
     )
 
 
@@ -86,6 +90,7 @@ def specs_from_accounts(accounts: dict[str, Account]) -> list[AccountSpec]:
             name=a.name,
             starting_cash=a.starting_cash,
             enabled=a.enabled,
+            model=a.model,
         )
         for a in accounts.values()
     ]

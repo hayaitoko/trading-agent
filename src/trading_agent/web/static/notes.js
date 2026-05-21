@@ -5,9 +5,6 @@
     path: document.getElementById('editor-path'),
     dirty: document.getElementById('editor-dirty'),
     textarea: document.getElementById('editor-textarea'),
-    preview: document.getElementById('editor-preview'),
-    modeEdit: document.getElementById('editor-mode-edit'),
-    modePreview: document.getElementById('editor-mode-preview'),
     save: document.getElementById('editor-save'),
     delete: document.getElementById('editor-delete'),
 
@@ -29,6 +26,72 @@
   let openPath = null;
   let savedContent = '';
   let dirty = false;
+  let editor = null;
+
+  // EasyMDE toolbar — Word/Drive-style buttons over markdown.
+  const TOOLBAR = [
+    'bold', 'italic', 'strikethrough',
+    '|',
+    'heading-1', 'heading-2', 'heading-3',
+    '|',
+    'quote', 'unordered-list', 'ordered-list',
+    '|',
+    'link', 'image', 'table', 'horizontal-rule',
+    '|',
+    'code',
+    '|',
+    {
+      name: 'preview',
+      action: EasyMDE.togglePreview,
+      className: 'fa fa-eye no-disable',
+      title: 'Toggle preview (Ctrl+P)',
+    },
+    {
+      name: 'side-by-side',
+      action: EasyMDE.toggleSideBySide,
+      className: 'fa fa-columns no-disable no-mobile',
+      title: 'Side-by-side (F9)',
+    },
+    '|',
+    'guide',
+  ];
+
+  const initEditor = () => {
+    editor = new EasyMDE({
+      element: els.textarea,
+      autoDownloadFontAwesome: true,
+      spellChecker: false,
+      autosave: { enabled: false },
+      status: ['lines', 'words'],
+      toolbar: TOOLBAR,
+      placeholder: 'Select a file from the tree, or click + new to create one.',
+      minHeight: '460px',
+      forceSync: true,
+      indentWithTabs: false,
+      tabSize: 2,
+      shortcuts: {
+        toggleBold: 'Ctrl-B',
+        toggleItalic: 'Ctrl-I',
+        drawLink: 'Ctrl-K',
+        toggleHeadingSmaller: 'Ctrl-H',
+        toggleUnorderedList: 'Ctrl-L',
+        toggleCodeBlock: 'Ctrl-Alt-C',
+        togglePreview: 'Ctrl-P',
+        toggleSideBySide: 'F9',
+      },
+    });
+    editor.codemirror.on('change', () => {
+      const current = editor.value();
+      setDirty(current !== savedContent);
+    });
+    // Ctrl/Cmd+S save from inside the editor.
+    editor.codemirror.on('keydown', (cm, e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveNote();
+      }
+    });
+  };
 
   const setDirty = (d) => {
     dirty = d;
@@ -100,10 +163,9 @@
       const data = await fetchJSON(`/notes/api/read?path=${encodeURIComponent(path)}`);
       openPath = data.path;
       savedContent = data.content;
-      els.textarea.value = data.content;
+      editor.value(data.content);
       els.path.textContent = data.path;
       setDirty(false);
-      switchMode('edit');
     } catch (e) {
       alert(e.message);
     }
@@ -111,13 +173,14 @@
 
   const saveNote = async () => {
     if (!openPath) return;
+    const content = editor.value();
     try {
       await fetchJSON('/notes/api/write', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: openPath, content: els.textarea.value }),
+        body: JSON.stringify({ path: openPath, content }),
       });
-      savedContent = els.textarea.value;
+      savedContent = content;
       setDirty(false);
       await loadTree();
     } catch (e) {
@@ -136,7 +199,7 @@
       });
       openPath = null;
       savedContent = '';
-      els.textarea.value = '';
+      editor.value('');
       els.path.textContent = '— no file —';
       setDirty(false);
       await loadTree();
@@ -166,25 +229,6 @@
       await openNote(path);
     } catch (e) {
       alert(`create failed: ${e.message}`);
-    }
-  };
-
-  const switchMode = (mode) => {
-    if (mode === 'edit') {
-      els.textarea.classList.remove('hidden');
-      els.preview.classList.add('hidden');
-      els.modeEdit.classList.add('text-ink-100', 'border-b', 'border-ink-100');
-      els.modeEdit.classList.remove('text-ink-60');
-      els.modePreview.classList.remove('text-ink-100', 'border-b', 'border-ink-100');
-      els.modePreview.classList.add('text-ink-60');
-    } else {
-      els.preview.innerHTML = window.marked.parse(els.textarea.value);
-      els.textarea.classList.add('hidden');
-      els.preview.classList.remove('hidden');
-      els.modePreview.classList.add('text-ink-100', 'border-b', 'border-ink-100');
-      els.modePreview.classList.remove('text-ink-60');
-      els.modeEdit.classList.remove('text-ink-100', 'border-b', 'border-ink-100');
-      els.modeEdit.classList.add('text-ink-60');
     }
   };
 
@@ -291,22 +335,9 @@
     }
   };
 
-  els.textarea.addEventListener('input', () => {
-    setDirty(els.textarea.value !== savedContent);
-  });
-
-  els.textarea.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-      e.preventDefault();
-      saveNote();
-    }
-  });
-
   els.save.addEventListener('click', saveNote);
   els.delete.addEventListener('click', deleteNote);
   els.new.addEventListener('click', newNote);
-  els.modeEdit.addEventListener('click', () => switchMode('edit'));
-  els.modePreview.addEventListener('click', () => switchMode('preview'));
   els.cconfigToggle.addEventListener('click', () => {
     els.cconfigPanel.classList.toggle('hidden');
   });
@@ -314,6 +345,7 @@
   els.crun.addEventListener('click', runConsolidatorNow);
 
   (async () => {
+    initEditor();
     await loadTree();
     const models = await loadModels();
     const config = await loadConsolidator();

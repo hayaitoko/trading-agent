@@ -33,9 +33,13 @@
         <h2 class="display text-2xl font-black text-ink-100 leading-tight">{{ acc.name }}</h2>
         <p class="mono text-xs text-ink-40 mt-1">{{ acc.id }}</p>
       </div>
-      <span class="small-caps text-ink-40">
-        <span class="mark mark-paused"></span>no strategy bound
-      </span>
+      <div class="text-right">
+        <p class="micro-caps text-ink-60">model</p>
+        <p class="mono text-sm text-vermillion">{{ acc.model.split('/')[-1] }}</p>
+        <p class="small-caps text-ink-40 mt-2">
+          <span class="mark mark-paused"></span>no strategy bound
+        </p>
+      </div>
     </header>
 
     <div class="grid grid-cols-2 gap-x-6 gap-y-5 text-sm opacity-60">

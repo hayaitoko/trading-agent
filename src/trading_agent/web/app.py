@@ -11,6 +11,7 @@ from trading_agent.notes.consolidator import Consolidator
 from trading_agent.web.routes.accounts import router as accounts_router
 from trading_agent.web.routes.chat import router as chat_router
 from trading_agent.web.routes.dashboard import router as dashboard_router
+from trading_agent.web.routes.evaluation import router as evaluation_router
 from trading_agent.web.routes.notes import router as notes_router
 from trading_agent.web.routes.placeholders import router as placeholders_router
 from trading_agent.web.routes.settings import router as settings_router
@@ -69,5 +70,6 @@ def create_app(
     app.include_router(settings_router)
     app.include_router(chat_router)
     app.include_router(notes_router)
+    app.include_router(evaluation_router)
     app.include_router(placeholders_router)
     return app

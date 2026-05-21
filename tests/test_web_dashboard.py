@@ -128,6 +128,91 @@ def test_create_account_via_form(client):
     assert "Paper Momentum" in response.text
     assert "paper-momentum" in state.accounts
     assert state.accounts["paper-momentum"].starting_cash == Decimal("50000")
+    # Defaults to the default account model when not specified.
+    assert state.accounts["paper-momentum"].model == "anthropic/claude-sonnet-4.6"
+
+
+def test_create_account_with_chosen_model(client):
+    c, state = client
+    response = c.post("/accounts/", data={
+        "name": "Opus Trader",
+        "starting_cash": "10000",
+        "model": "anthropic/claude-opus-4.7",
+    })
+    assert response.status_code == 200
+    assert state.accounts["opus-trader"].model == "anthropic/claude-opus-4.7"
+
+
+def test_create_account_unknown_model_rejected(client):
+    c, _ = client
+    response = c.post("/accounts/", data={
+        "name": "Bad",
+        "starting_cash": "1000",
+        "model": "openai/gpt-4-not-real",
+    })
+    assert response.status_code == 422
+
+
+def test_accounts_page_has_model_picker(client):
+    c, _ = client
+    response = c.get("/accounts/")
+    assert response.status_code == 200
+    assert 'name="model"' in response.text
+    assert "Claude Sonnet 4.6" in response.text  # at least one model option
+
+
+def test_eval_page_empty(tmp_path):
+    state = _build_state(tmp_path)
+    client = TestClient(create_app(state))
+    response = client.get("/eval/")
+    assert response.status_code == 200
+    assert "Evaluation" in response.text
+    assert "No accounts" in response.text
+
+
+def test_eval_page_ranks_accounts(tmp_path):
+    import asyncio
+
+    from trading_agent.accounts import Account
+    from trading_agent.models import Order
+
+    state = _build_state(tmp_path, {"NVDA": Decimal("200")})
+    # Account A: starts with 1000, buys low — gains
+    broker_a = MockBroker(cash=Decimal("1000"), quote_fn=state.quote_fn)
+    state.add_account(Account(
+        id="winner", name="Winner", broker=broker_a,
+        starting_cash=Decimal("1000"), model="anthropic/claude-opus-4.7",
+    ))
+    # Account B: same start, no trades — flat
+    broker_b = MockBroker(cash=Decimal("1000"), quote_fn=state.quote_fn)
+    state.add_account(Account(
+        id="flat", name="Flat", broker=broker_b,
+        starting_cash=Decimal("1000"), model="anthropic/claude-haiku-4.5",
+    ))
+    # Winner buys 5 shares at $200, NVDA jumps to $250 (we change the quote)
+    asyncio.run(broker_a.place_order(Order(ticker="NVDA", side="buy", qty=5)))
+    state.quote_fn = lambda t: Decimal("250") if t == "NVDA" else Decimal("0")
+    # Re-wire brokers to use the new quote_fn
+    broker_a._quote_fn = state.quote_fn
+    broker_b._quote_fn = state.quote_fn
+
+    client = TestClient(create_app(state))
+    response = client.get("/eval/")
+    assert response.status_code == 200
+    body = response.text
+    # Winner appears before Flat in the table
+    assert body.index("Winner") < body.index("Flat")
+    # Model labels appear
+    assert "Claude Opus 4.7" in body
+    assert "Claude Haiku 4.5" in body
+
+
+def test_eval_appears_in_nav(tmp_path):
+    state = _build_state(tmp_path)
+    client = TestClient(create_app(state))
+    response = client.get("/")
+    assert 'href="/eval/"' in response.text
+    assert "Evaluation" in response.text
 
 
 def test_create_account_persists_to_disk(client):

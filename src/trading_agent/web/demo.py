@@ -40,13 +40,14 @@ async def _seed_conservative(broker: MockBroker) -> None:
     await broker.place_order(Order(ticker="AAPL", side="buy", qty=15))
 
 
-def _make_demo_account(account_id: str, name: str, cash: Decimal) -> Account:
+def _make_demo_account(account_id: str, name: str, cash: Decimal, model: str) -> Account:
     broker = MockBroker(cash=cash, quote_fn=demo_quote)
     return Account(
         id=account_id,
         name=name,
         broker=broker,
         starting_cash=cash,
+        model=model,
     )
 
 
@@ -60,10 +61,12 @@ def build_demo_state(accounts_path: Path, secrets_path: Path) -> AppState:
 
     if not state.accounts:
         state.add_account(_make_demo_account(
-            "paper-aggressive", "Paper Aggressive", Decimal("25000")
+            "paper-aggressive", "Paper Aggressive", Decimal("25000"),
+            model="anthropic/claude-opus-4.7",
         ))
         state.add_account(_make_demo_account(
-            "paper-conservative", "Paper Conservative", Decimal("25000")
+            "paper-conservative", "Paper Conservative", Decimal("25000"),
+            model="anthropic/claude-sonnet-4.6",
         ))
 
     seeders = {

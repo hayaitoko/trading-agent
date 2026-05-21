@@ -5,7 +5,7 @@
   <p class="small-caps text-ink-60 mb-1">the agent's commonplace book</p>
   <h1 class="display text-6xl font-black text-ink-100 leading-none">Notes</h1>
   <p class="mt-4 text-ink-80 max-w-2xl italic">
-    The agent's memory. Timestamped, curated, and shared with the chat assistant.
+    The agent's memory. Timestamped, curated, shared with the chat assistant.
     Provenance over freshness &middot; nothing is ever deleted.
   </p>
   <hr class="mt-6 heavy">
@@ -63,7 +63,7 @@
   <p id="consolidator-error" class="text-xs text-loss mt-3 hidden italic"></p>
 </section>
 
-<div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-6 reveal-stack" style="min-height: 540px;">
+<div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-6 reveal-stack" style="min-height: 600px;">
   <aside class="surface flex flex-col">
     <header class="px-4 py-3 border-b border-ink-100/15 flex items-baseline">
       <span class="small-caps text-ink-60">files</span>
@@ -80,49 +80,140 @@
     <header class="px-5 py-3 border-b border-ink-100/15 flex items-center gap-4">
       <span id="editor-path" class="mono text-sm text-ink-80">— no file —</span>
       <span id="editor-dirty" class="micro-caps text-warning hidden italic">unsaved</span>
-      <div class="ml-auto flex items-center gap-3">
-        <button id="editor-mode-edit" class="small-caps text-ink-100 border-b border-ink-100 pb-0.5">edit</button>
-        <button id="editor-mode-preview" class="small-caps text-ink-60 hover:text-ink-100 pb-0.5">preview</button>
-        <span class="text-ink-20">&middot;</span>
+      <div class="ml-auto flex items-center gap-4">
         <button id="editor-save" class="btn-link">save</button>
         <button id="editor-delete" class="small-caps text-loss hover:text-loss-soft">delete</button>
       </div>
     </header>
 
-    <textarea id="editor-textarea"
-              spellcheck="false"
-              placeholder="Select a file from the tree, or click + new to create one."
-              class="flex-1 bg-paper-elevated text-ink-100 p-6 mono text-sm resize-none leading-relaxed focus:outline-none"
-              style="min-height: 460px;"></textarea>
-
-    <div id="editor-preview"
-         class="hidden flex-1 overflow-y-auto p-6 leading-relaxed text-ink-100"
-         style="min-height: 460px;"></div>
+    <div class="flex-1 flex flex-col min-h-0">
+      <textarea id="editor-textarea"
+                placeholder="Select a file from the tree, or click + new to create one."
+                style="min-height: 540px;"></textarea>
+    </div>
   </section>
 </div>
 
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde@2.18.0/dist/easymde.min.css">
+<script src="https://cdn.jsdelivr.net/npm/easymde@2.18.0/dist/easymde.min.js"></script>
+
 <style>
-  /* Editor preview — book typography */
-  #editor-preview { font-family: 'Bodoni Moda', Georgia, serif; font-size: 1.05rem; }
-  #editor-preview h1 { font-family: 'Bodoni Moda', serif; font-size: 2rem; font-weight: 900; letter-spacing: -0.02em; margin-top: 0; margin-bottom: 0.6rem; }
-  #editor-preview h2 { font-family: 'Bodoni Moda', serif; font-size: 1.5rem; font-weight: 800; margin-top: 1.5rem; margin-bottom: 0.4rem; }
-  #editor-preview h3 { font-family: 'Bodoni Moda', serif; font-size: 1.2rem; font-weight: 700; margin-top: 1.2rem; margin-bottom: 0.3rem; }
-  #editor-preview p { margin-bottom: 0.7rem; }
-  #editor-preview ul, #editor-preview ol { margin-bottom: 0.7rem; padding-left: 1.4rem; }
-  #editor-preview li { margin-bottom: 0.25rem; }
-  #editor-preview code { font-family: 'IBM Plex Mono', monospace; font-size: 0.9em; background: #EAE3D0; padding: 0 0.3em; }
-  #editor-preview pre { background: #EAE3D0; padding: 1rem; overflow-x: auto; margin-bottom: 0.7rem; }
-  #editor-preview pre code { background: transparent; padding: 0; }
-  #editor-preview blockquote { border-left: 2px solid #B6361A; padding-left: 1rem; color: #3D352D; font-style: italic; margin: 0.8rem 0; }
-  #editor-preview hr { margin: 1.5rem 0; }
-  #editor-preview a { color: #B6361A; text-decoration: underline; }
+  /* === EasyMDE editorial overrides === */
+  .EasyMDEContainer {
+    background: #FAF6EC;
+    border: 0;
+    font-family: 'Atkinson Hyperlegible', sans-serif;
+  }
+  .EasyMDEContainer .editor-toolbar {
+    background: #EAE3D0;
+    border: 0;
+    border-bottom: 1px solid rgba(23, 20, 17, 0.15);
+    padding: 0.4rem 0.6rem;
+    opacity: 1;
+  }
+  .EasyMDEContainer .editor-toolbar::after,
+  .EasyMDEContainer .editor-toolbar::before { content: none; }
+  .EasyMDEContainer .editor-toolbar button {
+    color: #3D352D !important;
+    border: 0 !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    width: 2.1rem;
+    height: 2.1rem;
+    margin: 0 0.05rem;
+    transition: color 200ms ease, background-color 200ms ease;
+  }
+  .EasyMDEContainer .editor-toolbar button:hover {
+    color: #B6361A !important;
+    background: rgba(182, 54, 26, 0.08) !important;
+  }
+  .EasyMDEContainer .editor-toolbar button.active {
+    color: #B6361A !important;
+    background: rgba(182, 54, 26, 0.12) !important;
+  }
+  .EasyMDEContainer .editor-toolbar i.separator {
+    border-left: 1px solid rgba(23, 20, 17, 0.15);
+    margin: 0 0.35rem;
+    height: 1.2rem;
+    align-self: center;
+  }
+  .EasyMDEContainer .CodeMirror {
+    background: #FAF6EC;
+    color: #171411;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.92rem;
+    line-height: 1.65;
+    padding: 1.2rem 1.4rem;
+    border: 0;
+    min-height: 460px;
+  }
+  .CodeMirror-cursor { border-left-color: #B6361A !important; }
+  .CodeMirror-selected,
+  .CodeMirror-line::selection,
+  .CodeMirror-line ::selection { background: rgba(182, 54, 26, 0.18) !important; }
+  .cm-header { color: #171411; font-weight: 800; font-family: 'Bodoni Moda', serif; }
+  .cm-header-1 { font-size: 1.5em; }
+  .cm-header-2 { font-size: 1.3em; }
+  .cm-header-3 { font-size: 1.15em; }
+  .cm-em { color: #2A2520; }
+  .cm-strong { color: #171411; }
+  .cm-link, .cm-url { color: #B6361A; }
+  .cm-quote { color: #665B4D; font-style: italic; }
+  .cm-comment, .cm-meta { color: #665B4D; }
+  .cm-formatting { color: #9A8B73; }
+  .cm-formatting-code, .cm-formatting-code-block { color: #B6361A; }
+  .cm-inline-code,
+  .cm-comment.cm-fenced-code-block { background: #EAE3D0; color: #2A2520; }
+  .editor-statusbar {
+    background: #EAE3D0;
+    border-top: 1px solid rgba(23, 20, 17, 0.15);
+    color: #665B4D;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 0.35rem 0.8rem;
+  }
+  .editor-preview, .editor-preview-side {
+    background: #FAF6EC;
+    color: #171411;
+    font-family: 'Bodoni Moda', Georgia, serif;
+    font-size: 1.05rem;
+    line-height: 1.7;
+    padding: 1.6rem 1.8rem;
+    border: 0;
+    border-left: 1px solid rgba(23, 20, 17, 0.15);
+  }
+  .editor-preview h1, .editor-preview-side h1 { font-family: 'Bodoni Moda', serif; font-size: 2.2rem; font-weight: 900; letter-spacing: -0.02em; margin: 0 0 0.6rem; }
+  .editor-preview h2, .editor-preview-side h2 { font-family: 'Bodoni Moda', serif; font-size: 1.6rem; font-weight: 800; margin: 1.5rem 0 0.4rem; }
+  .editor-preview h3, .editor-preview-side h3 { font-family: 'Bodoni Moda', serif; font-size: 1.25rem; font-weight: 700; margin: 1.2rem 0 0.3rem; }
+  .editor-preview p, .editor-preview-side p { margin: 0 0 0.7rem; }
+  .editor-preview code, .editor-preview-side code { font-family: 'IBM Plex Mono', monospace; font-size: 0.88em; background: #EAE3D0; padding: 0.05em 0.35em; }
+  .editor-preview pre, .editor-preview-side pre { background: #EAE3D0; padding: 0.9rem 1.1rem; overflow-x: auto; margin: 0 0 0.7rem; }
+  .editor-preview blockquote, .editor-preview-side blockquote { border-left: 2px solid #B6361A; padding-left: 1rem; color: #3D352D; font-style: italic; margin: 0.8rem 0; }
+  .editor-preview a, .editor-preview-side a { color: #B6361A; text-decoration: underline; }
+  .editor-preview hr, .editor-preview-side hr { margin: 1.5rem 0; }
 
   /* Notes tree */
-  #notes-tree .tree-folder { color: #665B4D; text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.62rem; font-weight: 700; margin-top: 0.6rem; }
-  #notes-tree .tree-file { color: #2A2520; font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; padding: 0.2rem 0; display: block; transition: color 200ms ease, padding-left 200ms ease; }
+  #notes-tree .tree-folder {
+    color: #665B4D;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.62rem;
+    font-weight: 700;
+    margin-top: 0.7rem;
+    margin-bottom: 0.15rem;
+  }
+  #notes-tree .tree-file {
+    color: #2A2520;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    padding: 0.22rem 0;
+    display: block;
+    transition: color 200ms ease, padding-left 200ms ease;
+  }
   #notes-tree .tree-file:hover { color: #B6361A; padding-left: 4px; }
 </style>
 
-<script src="https://cdn.jsdelivr.net/npm/marked@14.1.4/marked.min.js"></script>
 <script src="/static/notes.js"></script>
 {% endblock %}

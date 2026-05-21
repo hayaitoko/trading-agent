@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from trading_agent.accounts import Account
+from trading_agent.chat.models import find_model
 from trading_agent.models import Position, Trade
 
 router = APIRouter()
@@ -21,6 +22,8 @@ class AccountView:
     total: Decimal
     positions: list[Position]
     trades_today: list[Trade]
+    model: str
+    model_display: str
 
 
 async def _build_view(account: Account) -> AccountView:
@@ -29,6 +32,7 @@ async def _build_view(account: Account) -> AccountView:
     equity = sum((p.qty * p.current_price for p in positions), start=Decimal(0))
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     trades_today = await account.broker.get_trades(since=today_start)
+    model_spec = find_model(account.model)
     return AccountView(
         id=account.id,
         name=account.name,
@@ -38,6 +42,8 @@ async def _build_view(account: Account) -> AccountView:
         total=cash + equity,
         positions=positions,
         trades_today=trades_today,
+        model=account.model,
+        model_display=model_spec.display if model_spec else account.model,
     )
 
 

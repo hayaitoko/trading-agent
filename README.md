@@ -1,8 +1,13 @@
 # trading-agent
 
-Autonomous stock-trading agent. Scrapes investment forums for short-term sentiment signals on individual tickers, runs them through a signal pipeline, and executes paper trades through a pluggable broker backend.
+Two things at once, by design:
 
-**Status:** v0. Architecture scaffold. No live scrapers, no live broker yet.
+1. **A personal trading agent.** Scrapes investment forums for short-term sentiment, generates per-ticker signals, executes paper trades through a pluggable broker backend.
+2. **A model evaluation harness.** Multiple paper accounts × different LLMs × the same signal feed = a built-in A/B test. The leaderboard lives at `/eval/`.
+
+Both run on the same plumbing. Every account binds to its own model, so picking "the right model" is what the system *does*, not a planning question.
+
+**Status:** v0. Plumbing and UI shipped. Scrapers, signals, and strategy layer still TODO (placeholder pages marked with † in the nav).
 
 ## Architecture
 
