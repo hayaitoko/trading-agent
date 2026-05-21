@@ -226,7 +226,9 @@ playwright-report/
 test-results/
 .playwright/
 storage_state.json
-accounts.json
-trading_agent_secrets.json
-chat_history.json
+/accounts.json
+/trading_agent_secrets.json
+/chat_history.json
+/consolidator_config.json
+/notes/
 

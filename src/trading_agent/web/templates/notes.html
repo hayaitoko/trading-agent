@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-4 flex items-end justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold">Notes</h1>
+    <p class="text-sm text-slate-400">The agent's memory. Timestamped, curated, and shared with the chat assistant.</p>
+  </div>
+</div>
+
+<section id="consolidator-strip" class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3 mb-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+  <div class="flex items-center gap-2">
+    <span id="consolidator-indicator" class="w-2 h-2 rounded-full bg-slate-600"></span>
+    <span class="text-slate-400">consolidator</span>
+    <span id="consolidator-state" class="mono text-slate-300">loading</span>
+  </div>
+  <div class="text-xs text-slate-500 mono">
+    last run: <span id="consolidator-last">—</span>
+  </div>
+  <div class="text-xs text-slate-500 mono">
+    next run: <span id="consolidator-next">—</span>
+  </div>
+  <div class="text-xs text-slate-500 mono">
+    model: <span id="consolidator-model">—</span>
+  </div>
+  <div class="ml-auto flex items-center gap-2">
+    <button id="consolidator-run"
+            class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-medium">
+      run now
+    </button>
+    <button id="consolidator-config-toggle"
+            class="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 border border-slate-700 rounded">
+      ⚙
+    </button>
+  </div>
+</section>
+
+<section id="consolidator-config" class="hidden rounded-lg border border-slate-800 bg-slate-900/60 p-4 mb-6">
+  <h2 class="text-xs uppercase tracking-wide text-slate-500 mb-3">consolidator config</h2>
+  <form id="consolidator-form" class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+    <label class="text-xs text-slate-400 flex items-center gap-2">
+      <input type="checkbox" id="cfg-enabled" class="accent-emerald-500">
+      <span>enabled</span>
+    </label>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">interval (minutes)</label>
+      <input type="number" id="cfg-interval" min="1" step="1"
+             class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm mono focus:border-emerald-500 focus:outline-none">
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">model</label>
+      <select id="cfg-model"
+              class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm mono focus:border-emerald-500 focus:outline-none">
+        <option>loading...</option>
+      </select>
+    </div>
+    <div class="md:col-span-3 flex justify-end">
+      <button type="submit"
+              class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-medium">
+        save
+      </button>
+    </div>
+  </form>
+  <p id="consolidator-error" class="text-xs text-rose-400 mt-2 hidden"></p>
+</section>
+
+<div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-4" style="min-height: 500px;">
+  <aside class="rounded-lg border border-slate-800 bg-slate-900 flex flex-col">
+    <header class="px-3 py-2 border-b border-slate-800 flex items-center gap-2">
+      <span class="text-xs uppercase tracking-wide text-slate-500">files</span>
+      <button id="notes-new"
+              title="New note"
+              class="ml-auto text-xs text-emerald-400 hover:text-emerald-300">
+        + new
+      </button>
+    </header>
+    <div id="notes-tree" class="flex-1 overflow-y-auto p-2 text-sm">
+      <p class="text-slate-500 italic text-xs">loading…</p>
+    </div>
+  </aside>
+
+  <section class="rounded-lg border border-slate-800 bg-slate-900 flex flex-col">
+    <header class="px-4 py-2 border-b border-slate-800 flex items-center gap-3">
+      <span id="editor-path" class="text-sm mono text-slate-300">— no file —</span>
+      <span id="editor-dirty" class="text-xs text-amber-400 hidden">● unsaved</span>
+      <div class="ml-auto flex items-center gap-1">
+        <button id="editor-mode-edit"
+                class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-100">edit</button>
+        <button id="editor-mode-preview"
+                class="text-xs px-2 py-1 rounded text-slate-400 hover:text-slate-100">preview</button>
+        <button id="editor-save"
+                class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded">
+          save
+        </button>
+        <button id="editor-delete"
+                class="text-xs text-rose-400 hover:text-rose-300 px-2 py-1">
+          delete
+        </button>
+      </div>
+    </header>
+
+    <textarea id="editor-textarea"
+              spellcheck="false"
+              placeholder="Select a file from the tree or click + new to create one."
+              class="flex-1 bg-slate-950 text-slate-100 p-4 mono text-sm resize-none focus:outline-none"
+              style="min-height: 400px;"></textarea>
+
+    <div id="editor-preview"
+         class="hidden flex-1 overflow-y-auto p-4 prose prose-invert prose-sm max-w-none"
+         style="min-height: 400px;"></div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@14.1.4/marked.min.js"></script>
+<script src="/static/notes.js"></script>
+{% endblock %}

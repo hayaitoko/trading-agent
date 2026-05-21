@@ -53,6 +53,57 @@ TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_notes",
+            "description": (
+                "List every note file in the agent's memory as a flat array of "
+                "relative paths (e.g. 'companies/NVDA.md'). Notes are organized in "
+                "companies/, sectors/, macro/, general/."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_note",
+            "description": (
+                "Read a single note by relative path. Returns the raw markdown "
+                "including frontmatter so you can see created/updated timestamps "
+                "and inline (as of YYYY-MM-DD) markers."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path like 'companies/NVDA.md'.",
+                    }
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_notes",
+            "description": (
+                "Substring search across every note. Returns matching paths with a "
+                "short excerpt around each match. Case-insensitive."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -139,6 +190,40 @@ async def _get_trades(state: "AppState", account_id: str, limit: int = 20) -> st
     ])
 
 
+def _list_notes(state: "AppState") -> str:
+    from trading_agent.notes import list_tree
+    if state.notes_dir is None:
+        return _dump({"error": "notes_dir not configured"})
+
+    paths: list[str] = []
+
+    def collect(node):
+        if node.type == "file":
+            paths.append(node.path)
+        for child in node.children:
+            collect(child)
+
+    collect(list_tree(state.notes_dir))
+    return _dump(paths)
+
+
+def _read_note(state: "AppState", path: str) -> str:
+    from trading_agent.notes import NotesError, read_note
+    if state.notes_dir is None:
+        return _dump({"error": "notes_dir not configured"})
+    try:
+        return _dump({"path": path, "content": read_note(state.notes_dir, path)})
+    except NotesError as e:
+        return _dump({"error": str(e), "path": path})
+
+
+def _search_notes(state: "AppState", query: str, limit: int = 10) -> str:
+    from trading_agent.notes import search_notes
+    if state.notes_dir is None:
+        return _dump({"error": "notes_dir not configured"})
+    return _dump(search_notes(state.notes_dir, query, limit=limit))
+
+
 async def execute(state: "AppState", name: str, args: dict) -> str:
     if name == "list_accounts":
         return await _list_accounts(state)
@@ -146,6 +231,12 @@ async def execute(state: "AppState", name: str, args: dict) -> str:
         return await _get_account(state, args["account_id"])
     if name == "get_trades":
         return await _get_trades(state, args["account_id"], int(args.get("limit", 20)))
+    if name == "list_notes":
+        return _list_notes(state)
+    if name == "read_note":
+        return _read_note(state, args["path"])
+    if name == "search_notes":
+        return _search_notes(state, args["query"], int(args.get("limit", 10)))
     return _dump({"error": f"unknown tool: {name}"})
 
 
@@ -156,7 +247,12 @@ SYSTEM_PROMPT = (
     "What you can do via tools:\n"
     "- list_accounts: see all paper-trading accounts and their current state\n"
     "- get_account: detailed snapshot of one account (positions, today's trades)\n"
-    "- get_trades: trade history for an account\n\n"
+    "- get_trades: trade history for an account\n"
+    "- list_notes / read_note / search_notes: the agent's memory. Notes are\n"
+    "  organized under companies/, sectors/, macro/, general/. Every note has\n"
+    "  frontmatter with created/updated dates and inline (as of YYYY-MM-DD)\n"
+    "  markers for time-bound claims, so you can tell what is archival vs\n"
+    "  current.\n\n"
     "What you cannot do yet (and should be honest about):\n"
     "- You have no access to live news, market data, or social-media sentiment.\n"
     "- You have no signal/decision log explaining why a trade was made, because the\n"

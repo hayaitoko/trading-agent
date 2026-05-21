@@ -20,6 +20,7 @@ class AppState:
     quote_fn: QuoteFn
     accounts: dict[str, Account] = field(default_factory=dict)
     secrets: dict[str, str] = field(default_factory=dict)
+    notes_dir: Path | None = None
 
     def hydrate(self) -> None:
         self.secrets = load_secrets(self.secrets_path)

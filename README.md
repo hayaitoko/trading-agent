@@ -51,6 +51,19 @@ Built pages:
 - **Trades**: per-account full execution history.
 - **Settings**: API credentials for OpenRouter, Reddit, StockTwits, Investopedia. Persisted to `trading_agent_secrets.json`. Secrets are masked in the UI and never round-tripped through HTML.
 
+**Notes** (`/notes/`) — the agent's memory, shared with the chat assistant:
+- File tree on the left, markdown editor on the right with edit/preview toggle.
+- Default structure: `companies/`, `sectors/`, `macro/`, `general/`. Auto-created on first run; `general/README.md` explains the conventions.
+- **Timestamping as a first-class convention.** Every note has frontmatter with `created`/`updated`. Time-bound claims inside the body carry inline `(as of YYYY-MM-DD)` markers. The agent reading a note can always tell what is archival vs current.
+- **Memory consolidator** (configurable on the page). Disabled by default. When enabled, runs on a timer with a chosen model. Its job is curation, not pruning:
+  - Adds missing frontmatter
+  - Adds missing `(as of …)` markers
+  - Merges structurally duplicate notes (two NVDA notes → one)
+  - Improves formatting and cross-links
+  - **Never deletes information**, never marks things stale because they're old. Provenance over freshness.
+- Every edit takes a timestamped backup to `notes/.history/<timestamp>/<path>`. Every run logs to `notes/.consolidator/log.md`.
+- Chat tools `list_notes`, `read_note`, `search_notes` let the sidebar assistant use the notes when answering you.
+
 Persistent chat sidebar (left rail, on every page):
 - Model dropdown (Claude Opus/Sonnet/Haiku, GPT-5, Grok 4, Gemini 3.1 Pro, DeepSeek v4, Kimi K2.6). Choice persisted in `localStorage`.
 - Approximate context counter (`chars/3 = tokens`) showing % of the selected model's context window.
