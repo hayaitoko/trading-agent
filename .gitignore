@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# trading-agent
+trading_agent.db
+trading_agent.db-journal
+*.sqlite
+*.sqlite3
+playwright-report/
+test-results/
+.playwright/
+storage_state.json
+
