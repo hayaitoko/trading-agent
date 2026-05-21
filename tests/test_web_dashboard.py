@@ -105,7 +105,7 @@ def test_dashboard_has_add_account_button(tmp_path):
     client = TestClient(create_app(state))
     response = client.get("/")
     assert "/accounts/" in response.text
-    assert "+ account" in response.text
+    assert "open new account" in response.text
 
 
 @pytest.fixture

@@ -15,6 +15,7 @@ What it does NOT do:
 - Make any change without a `.history/<timestamp>/` backup of the original.
 """
 import asyncio
+import contextlib
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -182,7 +183,8 @@ class Consolidator:
     def _load_all_notes(self) -> list[tuple[str, str]]:
         notes: list[tuple[str, str]] = []
         for path in sorted(self.notes_dir.rglob(f"*{storage.NOTE_EXT}")):
-            if any(part in storage.RESERVED_DIRS for part in path.relative_to(self.notes_dir).parts):
+            rel_parts = path.relative_to(self.notes_dir).parts
+            if any(part in storage.RESERVED_DIRS for part in rel_parts):
                 continue
             rel = str(path.relative_to(self.notes_dir)).replace("\\", "/")
             notes.append((rel, path.read_text(encoding="utf-8")))
@@ -226,10 +228,8 @@ class Consolidator:
             new_content = edit["new_content"]
             if not new_content:
                 # Merge-absorption: delete original. delete_note snapshots first.
-                try:
+                with contextlib.suppress(storage.NotesError):
                     storage.delete_note(self.notes_dir, path)
-                except storage.NotesError:
-                    pass
             else:
                 storage.write_note(self.notes_dir, path, new_content)
 
@@ -263,10 +263,8 @@ class Consolidator:
         if self._task is None:
             return
         self._task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
-        except asyncio.CancelledError:
-            pass
         self._task = None
 
     async def _loop(self) -> None:

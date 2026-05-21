@@ -1,115 +1,127 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="mb-4 flex items-end justify-between">
-  <div>
-    <h1 class="text-2xl font-semibold">Notes</h1>
-    <p class="text-sm text-slate-400">The agent's memory. Timestamped, curated, and shared with the chat assistant.</p>
-  </div>
-</div>
+<section class="mb-8 reveal-stack">
+  <p class="small-caps text-ink-60 mb-1">the agent's commonplace book</p>
+  <h1 class="display text-6xl font-black text-ink-100 leading-none">Notes</h1>
+  <p class="mt-4 text-ink-80 max-w-2xl italic">
+    The agent's memory. Timestamped, curated, and shared with the chat assistant.
+    Provenance over freshness &middot; nothing is ever deleted.
+  </p>
+  <hr class="mt-6 heavy">
+</section>
 
-<section id="consolidator-strip" class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3 mb-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+<section id="consolidator-strip" class="surface px-6 py-4 mb-6 flex flex-wrap items-center gap-x-8 gap-y-3 reveal-stack">
   <div class="flex items-center gap-2">
-    <span id="consolidator-indicator" class="w-2 h-2 rounded-full bg-slate-600"></span>
-    <span class="text-slate-400">consolidator</span>
-    <span id="consolidator-state" class="mono text-slate-300">loading</span>
+    <span id="consolidator-indicator" class="mark mark-paused"></span>
+    <span class="small-caps text-ink-60">consolidator</span>
+    <span id="consolidator-state" class="small-caps text-ink-100">loading</span>
   </div>
-  <div class="text-xs text-slate-500 mono">
-    last run: <span id="consolidator-last">—</span>
+  <div class="text-xs text-ink-60">
+    <span class="micro-caps">last</span>
+    <span id="consolidator-last" class="mono text-ink-80 ml-1">—</span>
   </div>
-  <div class="text-xs text-slate-500 mono">
-    next run: <span id="consolidator-next">—</span>
+  <div class="text-xs text-ink-60">
+    <span class="micro-caps">next</span>
+    <span id="consolidator-next" class="mono text-ink-80 ml-1">—</span>
   </div>
-  <div class="text-xs text-slate-500 mono">
-    model: <span id="consolidator-model">—</span>
+  <div class="text-xs text-ink-60">
+    <span class="micro-caps">model</span>
+    <span id="consolidator-model" class="mono text-ink-80 ml-1">—</span>
   </div>
-  <div class="ml-auto flex items-center gap-2">
-    <button id="consolidator-run"
-            class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-medium">
-      run now
-    </button>
+  <div class="ml-auto flex items-center gap-3">
+    <button id="consolidator-run" class="btn-solid">run now</button>
     <button id="consolidator-config-toggle"
-            class="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 border border-slate-700 rounded">
-      ⚙
+            class="small-caps text-ink-60 hover:text-vermillion border-b border-ink-20 hover:border-vermillion pb-0.5">
+      configure
     </button>
   </div>
 </section>
 
-<section id="consolidator-config" class="hidden rounded-lg border border-slate-800 bg-slate-900/60 p-4 mb-6">
-  <h2 class="text-xs uppercase tracking-wide text-slate-500 mb-3">consolidator config</h2>
-  <form id="consolidator-form" class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-    <label class="text-xs text-slate-400 flex items-center gap-2">
-      <input type="checkbox" id="cfg-enabled" class="accent-emerald-500">
-      <span>enabled</span>
+<section id="consolidator-config" class="hidden surface-recess p-6 mb-6">
+  <h2 class="small-caps text-ink-60 mb-4">consolidator configuration</h2>
+  <form id="consolidator-form" class="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
+    <label class="flex items-center gap-3 text-ink-80">
+      <input type="checkbox" id="cfg-enabled" class="accent-vermillion w-4 h-4">
+      <span class="small-caps">enabled</span>
     </label>
     <div>
-      <label class="block text-xs text-slate-500 mb-1">interval (minutes)</label>
+      <label class="block micro-caps text-ink-60 mb-1">interval &nbsp;<span class="text-ink-40">(minutes)</span></label>
       <input type="number" id="cfg-interval" min="1" step="1"
-             class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm mono focus:border-emerald-500 focus:outline-none">
+             class="input-line w-full text-base mono tnum">
     </div>
     <div>
-      <label class="block text-xs text-slate-500 mb-1">model</label>
-      <select id="cfg-model"
-              class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm mono focus:border-emerald-500 focus:outline-none">
+      <label class="block micro-caps text-ink-60 mb-1">model</label>
+      <select id="cfg-model" class="input-line w-full text-base mono cursor-pointer">
         <option>loading...</option>
       </select>
     </div>
-    <div class="md:col-span-3 flex justify-end">
-      <button type="submit"
-              class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-medium">
-        save
-      </button>
+    <div class="md:col-span-3 flex justify-end pt-3 border-t border-ink-100/15">
+      <button type="submit" class="btn-solid">save</button>
     </div>
   </form>
-  <p id="consolidator-error" class="text-xs text-rose-400 mt-2 hidden"></p>
+  <p id="consolidator-error" class="text-xs text-loss mt-3 hidden italic"></p>
 </section>
 
-<div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-4" style="min-height: 500px;">
-  <aside class="rounded-lg border border-slate-800 bg-slate-900 flex flex-col">
-    <header class="px-3 py-2 border-b border-slate-800 flex items-center gap-2">
-      <span class="text-xs uppercase tracking-wide text-slate-500">files</span>
-      <button id="notes-new"
-              title="New note"
-              class="ml-auto text-xs text-emerald-400 hover:text-emerald-300">
+<div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-6 reveal-stack" style="min-height: 540px;">
+  <aside class="surface flex flex-col">
+    <header class="px-4 py-3 border-b border-ink-100/15 flex items-baseline">
+      <span class="small-caps text-ink-60">files</span>
+      <button id="notes-new" title="New note" class="ml-auto small-caps text-vermillion hover:text-vermillion-deep">
         + new
       </button>
     </header>
-    <div id="notes-tree" class="flex-1 overflow-y-auto p-2 text-sm">
-      <p class="text-slate-500 italic text-xs">loading…</p>
+    <div id="notes-tree" class="flex-1 overflow-y-auto p-3 text-sm">
+      <p class="italic text-ink-40 text-xs">loading…</p>
     </div>
   </aside>
 
-  <section class="rounded-lg border border-slate-800 bg-slate-900 flex flex-col">
-    <header class="px-4 py-2 border-b border-slate-800 flex items-center gap-3">
-      <span id="editor-path" class="text-sm mono text-slate-300">— no file —</span>
-      <span id="editor-dirty" class="text-xs text-amber-400 hidden">● unsaved</span>
-      <div class="ml-auto flex items-center gap-1">
-        <button id="editor-mode-edit"
-                class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-100">edit</button>
-        <button id="editor-mode-preview"
-                class="text-xs px-2 py-1 rounded text-slate-400 hover:text-slate-100">preview</button>
-        <button id="editor-save"
-                class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded">
-          save
-        </button>
-        <button id="editor-delete"
-                class="text-xs text-rose-400 hover:text-rose-300 px-2 py-1">
-          delete
-        </button>
+  <section class="surface flex flex-col">
+    <header class="px-5 py-3 border-b border-ink-100/15 flex items-center gap-4">
+      <span id="editor-path" class="mono text-sm text-ink-80">— no file —</span>
+      <span id="editor-dirty" class="micro-caps text-warning hidden italic">unsaved</span>
+      <div class="ml-auto flex items-center gap-3">
+        <button id="editor-mode-edit" class="small-caps text-ink-100 border-b border-ink-100 pb-0.5">edit</button>
+        <button id="editor-mode-preview" class="small-caps text-ink-60 hover:text-ink-100 pb-0.5">preview</button>
+        <span class="text-ink-20">&middot;</span>
+        <button id="editor-save" class="btn-link">save</button>
+        <button id="editor-delete" class="small-caps text-loss hover:text-loss-soft">delete</button>
       </div>
     </header>
 
     <textarea id="editor-textarea"
               spellcheck="false"
-              placeholder="Select a file from the tree or click + new to create one."
-              class="flex-1 bg-slate-950 text-slate-100 p-4 mono text-sm resize-none focus:outline-none"
-              style="min-height: 400px;"></textarea>
+              placeholder="Select a file from the tree, or click + new to create one."
+              class="flex-1 bg-paper-elevated text-ink-100 p-6 mono text-sm resize-none leading-relaxed focus:outline-none"
+              style="min-height: 460px;"></textarea>
 
     <div id="editor-preview"
-         class="hidden flex-1 overflow-y-auto p-4 prose prose-invert prose-sm max-w-none"
-         style="min-height: 400px;"></div>
+         class="hidden flex-1 overflow-y-auto p-6 leading-relaxed text-ink-100"
+         style="min-height: 460px;"></div>
   </section>
 </div>
+
+<style>
+  /* Editor preview — book typography */
+  #editor-preview { font-family: 'Bodoni Moda', Georgia, serif; font-size: 1.05rem; }
+  #editor-preview h1 { font-family: 'Bodoni Moda', serif; font-size: 2rem; font-weight: 900; letter-spacing: -0.02em; margin-top: 0; margin-bottom: 0.6rem; }
+  #editor-preview h2 { font-family: 'Bodoni Moda', serif; font-size: 1.5rem; font-weight: 800; margin-top: 1.5rem; margin-bottom: 0.4rem; }
+  #editor-preview h3 { font-family: 'Bodoni Moda', serif; font-size: 1.2rem; font-weight: 700; margin-top: 1.2rem; margin-bottom: 0.3rem; }
+  #editor-preview p { margin-bottom: 0.7rem; }
+  #editor-preview ul, #editor-preview ol { margin-bottom: 0.7rem; padding-left: 1.4rem; }
+  #editor-preview li { margin-bottom: 0.25rem; }
+  #editor-preview code { font-family: 'IBM Plex Mono', monospace; font-size: 0.9em; background: #EAE3D0; padding: 0 0.3em; }
+  #editor-preview pre { background: #EAE3D0; padding: 1rem; overflow-x: auto; margin-bottom: 0.7rem; }
+  #editor-preview pre code { background: transparent; padding: 0; }
+  #editor-preview blockquote { border-left: 2px solid #B6361A; padding-left: 1rem; color: #3D352D; font-style: italic; margin: 0.8rem 0; }
+  #editor-preview hr { margin: 1.5rem 0; }
+  #editor-preview a { color: #B6361A; text-decoration: underline; }
+
+  /* Notes tree */
+  #notes-tree .tree-folder { color: #665B4D; text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.62rem; font-weight: 700; margin-top: 0.6rem; }
+  #notes-tree .tree-file { color: #2A2520; font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; padding: 0.2rem 0; display: block; transition: color 200ms ease, padding-left 200ms ease; }
+  #notes-tree .tree-file:hover { color: #B6361A; padding-left: 4px; }
+</style>
 
 <script src="https://cdn.jsdelivr.net/npm/marked@14.1.4/marked.min.js"></script>
 <script src="/static/notes.js"></script>

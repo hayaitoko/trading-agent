@@ -1,51 +1,63 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="mb-6">
-  <h1 class="text-2xl font-semibold">Strategy</h1>
-  <p class="text-sm text-slate-400">Per-account strategy bindings and tunable parameters. Edit knobs without touching code.</p>
-</div>
+<section class="mb-10 reveal-stack">
+  <p class="small-caps text-ink-60 mb-1">the control room</p>
+  <h1 class="display text-6xl font-black text-ink-100 leading-none">Strategy</h1>
+  <p class="mt-4 text-ink-80 max-w-2xl italic">
+    Per-account strategy bindings and tunable parameters. Edit the knobs without
+    touching code.
+  </p>
+  <hr class="mt-6 heavy">
+</section>
 
+<div class="reveal-stack">
 {% with status_title = "Strategy layer not implemented (v0.6)", status_detail = "No Strategy ABC exists yet, so there is no strategy to bind to an account. v0.6 will define the Strategy interface and a first naive_momentum implementation. Until then these cards show the account names but no editable parameters." %}
   {% include "_status_banner.html" %}
 {% endwith %}
 
 {% if not accounts %}
-  <div class="rounded-lg border border-slate-800 bg-slate-900 p-8 text-center text-slate-400">
-    No accounts. <a href="/accounts/" class="text-emerald-400 hover:text-emerald-300 underline">Add one</a>.
+  <div class="surface px-8 py-16 text-center">
+    <p class="display text-5xl text-ink-40 italic mb-3">&hellip;</p>
+    <p class="text-ink-80">No accounts on the books.</p>
+    <p class="mt-3"><a href="/accounts/" class="btn-link">open an account</a></p>
   </div>
 {% endif %}
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
   {% for acc in accounts %}
-  <section class="rounded-lg border border-slate-800 bg-slate-900 p-5">
-    <header class="flex justify-between items-baseline mb-4">
+  <section class="surface p-6">
+    <header class="flex justify-between items-baseline mb-5 pb-3 border-b border-ink-100/15">
       <div>
-        <h2 class="text-lg font-medium">{{ acc.name }}</h2>
-        <p class="text-xs text-slate-500 mono">{{ acc.id }}</p>
+        <p class="small-caps text-ink-60 mb-0.5">paper account</p>
+        <h2 class="display text-2xl font-black text-ink-100 leading-tight">{{ acc.name }}</h2>
+        <p class="mono text-xs text-ink-40 mt-1">{{ acc.id }}</p>
       </div>
-      <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-500">no strategy bound</span>
+      <span class="small-caps text-ink-40">
+        <span class="mark mark-paused"></span>no strategy bound
+      </span>
     </header>
 
-    <div class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm opacity-60">
+    <div class="grid grid-cols-2 gap-x-6 gap-y-5 text-sm opacity-60">
       <div>
-        <label class="block text-xs text-slate-500 mb-1">sentiment threshold</label>
-        <input disabled value="—" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-slate-600 cursor-not-allowed">
+        <label class="micro-caps text-ink-60 block mb-1">sentiment threshold</label>
+        <input disabled value="—" class="input-line w-full text-ink-40 cursor-not-allowed mono tnum">
       </div>
       <div>
-        <label class="block text-xs text-slate-500 mb-1">position size (% of cash)</label>
-        <input disabled value="—" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-slate-600 cursor-not-allowed">
+        <label class="micro-caps text-ink-60 block mb-1">position size <span class="text-ink-40">(% cash)</span></label>
+        <input disabled value="—" class="input-line w-full text-ink-40 cursor-not-allowed mono tnum">
       </div>
       <div>
-        <label class="block text-xs text-slate-500 mb-1">max drawdown (%)</label>
-        <input disabled value="—" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-slate-600 cursor-not-allowed">
+        <label class="micro-caps text-ink-60 block mb-1">max drawdown <span class="text-ink-40">(%)</span></label>
+        <input disabled value="—" class="input-line w-full text-ink-40 cursor-not-allowed mono tnum">
       </div>
       <div>
-        <label class="block text-xs text-slate-500 mb-1">mention-velocity min</label>
-        <input disabled value="—" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-slate-600 cursor-not-allowed">
+        <label class="micro-caps text-ink-60 block mb-1">velocity floor</label>
+        <input disabled value="—" class="input-line w-full text-ink-40 cursor-not-allowed mono tnum">
       </div>
     </div>
   </section>
   {% endfor %}
+</div>
 </div>
 {% endblock %}

@@ -28,7 +28,7 @@
 
   const setCollapsed = (collapsed) => {
     els.sidebar.classList.toggle('w-96', !collapsed);
-    els.sidebar.classList.toggle('w-10', collapsed);
+    els.sidebar.classList.toggle('w-11', collapsed);
     els.body.classList.toggle('hidden', collapsed);
     els.sidebarLabel.classList.toggle('hidden', collapsed);
     els.collapseIcon.textContent = collapsed ? '»' : '«';
@@ -37,7 +37,7 @@
   };
 
   els.collapse.addEventListener('click', () => {
-    const collapsed = els.sidebar.classList.contains('w-10');
+    const collapsed = els.sidebar.classList.contains('w-11');
     setCollapsed(!collapsed);
   });
 
@@ -106,18 +106,21 @@
     const bubble = document.createElement('div');
     const isUser = m.role === 'user';
     bubble.className = isUser
-      ? 'ml-6 bg-slate-800 rounded-lg px-3 py-2'
-      : 'mr-6 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2';
+      ? 'pl-8 text-right border-r-2 border-ink-100 pr-3 ml-4'
+      : 'pr-2 border-l-2 border-vermillion pl-3 mr-4';
     const tag = isUser ? 'you' : (m.model || 'assistant').split('/').pop();
     const toolNote = m.tool_calls && m.tool_calls.length
-      ? `<p class="text-xs text-slate-500 italic mt-1">called ${m.tool_calls.map(tc => (tc.function && tc.function.name) || 'tool').join(', ')}</p>`
+      ? `<p class="micro-caps text-ink-40 mt-2">called &middot; ${m.tool_calls.map(tc => (tc.function && tc.function.name) || 'tool').join(' &middot; ')}</p>`
       : '';
     const imageHtml = (m.images || []).map(src =>
-      `<img src="${escapeHtml(src)}" class="mt-2 max-w-full rounded border border-slate-700">`
+      `<img src="${escapeHtml(src)}" class="mt-2 max-w-full border border-ink-20">`
     ).join('');
-    const textHtml = m.content ? `<p class="chat-bubble">${escapeHtml(m.content)}</p>` : '';
+    const textClass = isUser
+      ? 'chat-bubble italic text-ink-80'
+      : 'chat-bubble text-ink-100';
+    const textHtml = m.content ? `<p class="${textClass}">${escapeHtml(m.content)}</p>` : '';
     bubble.innerHTML = `
-      <p class="text-xs text-slate-500 mono mb-1">${escapeHtml(tag)}</p>
+      <p class="micro-caps mb-1 ${isUser ? 'text-ink-60' : 'text-vermillion'}">${escapeHtml(tag)}</p>
       ${textHtml}
       ${imageHtml}
       ${toolNote}`;
@@ -127,9 +130,12 @@
   const renderHistory = (messages) => {
     els.messages.innerHTML = '';
     if (!messages || messages.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'text-slate-500 text-xs italic text-center mt-4';
-      empty.textContent = 'Ask about an account, a position, or your recent trades.';
+      const empty = document.createElement('div');
+      empty.className = 'text-center mt-6 text-ink-60';
+      empty.innerHTML = `
+        <p class="display text-2xl text-ink-40 mb-3" style="font-style: italic;">&hellip;</p>
+        <p class="text-sm italic">Ask about an account, a position, or your recent trades.</p>
+      `;
       els.messages.appendChild(empty);
       return;
     }

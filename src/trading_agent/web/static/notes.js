@@ -60,8 +60,8 @@
       a.href = '#';
       a.textContent = node.name;
       a.dataset.path = node.path;
-      a.className = 'block py-0.5 text-slate-300 hover:text-emerald-300 mono text-xs';
-      a.style.paddingLeft = `${depth * 12}px`;
+      a.className = 'tree-file';
+      a.style.paddingLeft = `${depth * 14}px`;
       a.addEventListener('click', (e) => {
         e.preventDefault();
         openNote(node.path);
@@ -71,8 +71,8 @@
     const wrap = document.createElement('div');
     if (depth >= 0) {
       const header = document.createElement('div');
-      header.className = 'text-xs text-slate-500 uppercase tracking-wide mt-1';
-      header.style.paddingLeft = `${depth * 12}px`;
+      header.className = 'tree-folder';
+      header.style.paddingLeft = `${depth * 14}px`;
       header.textContent = node.name || 'notes';
       wrap.appendChild(header);
     }
@@ -86,7 +86,7 @@
     const root = await fetchJSON('/notes/api/tree');
     els.tree.innerHTML = '';
     if (!root.children || root.children.length === 0) {
-      els.tree.innerHTML = '<p class="text-slate-500 italic text-xs">no notes yet</p>';
+      els.tree.innerHTML = '<p class="italic text-ink-40 text-xs">No notes yet.</p>';
       return;
     }
     for (const child of root.children) {
@@ -173,18 +173,18 @@
     if (mode === 'edit') {
       els.textarea.classList.remove('hidden');
       els.preview.classList.add('hidden');
-      els.modeEdit.classList.add('bg-slate-800', 'text-slate-100');
-      els.modeEdit.classList.remove('text-slate-400');
-      els.modePreview.classList.remove('bg-slate-800', 'text-slate-100');
-      els.modePreview.classList.add('text-slate-400');
+      els.modeEdit.classList.add('text-ink-100', 'border-b', 'border-ink-100');
+      els.modeEdit.classList.remove('text-ink-60');
+      els.modePreview.classList.remove('text-ink-100', 'border-b', 'border-ink-100');
+      els.modePreview.classList.add('text-ink-60');
     } else {
       els.preview.innerHTML = window.marked.parse(els.textarea.value);
       els.textarea.classList.add('hidden');
       els.preview.classList.remove('hidden');
-      els.modePreview.classList.add('bg-slate-800', 'text-slate-100');
-      els.modePreview.classList.remove('text-slate-400');
-      els.modeEdit.classList.remove('bg-slate-800', 'text-slate-100');
-      els.modeEdit.classList.add('text-slate-400');
+      els.modePreview.classList.add('text-ink-100', 'border-b', 'border-ink-100');
+      els.modePreview.classList.remove('text-ink-60');
+      els.modeEdit.classList.remove('text-ink-100', 'border-b', 'border-ink-100');
+      els.modeEdit.classList.add('text-ink-60');
     }
   };
 
@@ -204,14 +204,14 @@
     const status = data.status;
 
     if (status.running) {
-      els.cstate.textContent = 'running…';
-      els.cindicator.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+      els.cstate.textContent = 'running';
+      els.cindicator.className = 'mark mark-warn animate-pulse';
     } else if (config.enabled) {
       els.cstate.textContent = 'enabled';
-      els.cindicator.className = 'w-2 h-2 rounded-full bg-emerald-400';
+      els.cindicator.className = 'mark mark-active';
     } else {
       els.cstate.textContent = 'disabled';
-      els.cindicator.className = 'w-2 h-2 rounded-full bg-slate-600';
+      els.cindicator.className = 'mark mark-paused';
     }
 
     els.clast.textContent = status.last_run_at

@@ -1,24 +1,278 @@
 <!DOCTYPE html>
-<html lang="en" class="bg-slate-950 text-slate-100">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>trading-agent</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            paper: {
+              base: '#F2EDE2',
+              elevated: '#FAF6EC',
+              edge: '#E3DBC8',
+              recess: '#EAE3D0',
+              shadow: '#D9CFB5',
+            },
+            ink: {
+              100: '#171411',
+              90: '#2A2520',
+              80: '#3D352D',
+              60: '#665B4D',
+              40: '#9A8B73',
+              20: '#C6B99F',
+              10: '#D8CDB4',
+            },
+            vermillion: {
+              DEFAULT: '#B6361A',
+              soft: '#D5573B',
+              deep: '#7A2210',
+            },
+            gain: { DEFAULT: '#2E5E3D', soft: '#558970' },
+            loss: { DEFAULT: '#8C2A1B', soft: '#B14F3C' },
+            warning: { DEFAULT: '#9F6800', soft: '#C28F1F' },
+          },
+          fontFamily: {
+            display: ['"Bodoni Moda"', 'Didot', '"Bodoni 72"', 'Georgia', 'serif'],
+            sans: ['"Atkinson Hyperlegible"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'ui-monospace', 'Menlo', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+
   <style>
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .pos { color: rgb(74 222 128); }
-    .neg { color: rgb(248 113 113); }
+    html { color-scheme: light; }
+    body {
+      background-color: #F2EDE2;
+      background-image:
+        radial-gradient(rgba(23, 20, 17, 0.025) 1px, transparent 1px),
+        radial-gradient(rgba(23, 20, 17, 0.018) 1px, transparent 1px);
+      background-size: 32px 32px, 19px 19px;
+      background-position: 0 0, 9px 13px;
+      color: #171411;
+      font-family: 'Atkinson Hyperlegible', sans-serif;
+      font-feature-settings: 'tnum' 1;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .display {
+      font-family: 'Bodoni Moda', Didot, Georgia, serif;
+      font-variation-settings: 'opsz' 96;
+      letter-spacing: -0.012em;
+    }
+    .display-text {
+      font-family: 'Bodoni Moda', Didot, Georgia, serif;
+      font-variation-settings: 'opsz' 18;
+    }
+    .mono {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-feature-settings: 'tnum' 1, 'zero' 1;
+    }
+
+    .small-caps {
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 0.68rem;
+      font-weight: 700;
+    }
+    .micro-caps {
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      font-size: 0.6rem;
+      font-weight: 700;
+    }
+
+    .tnum { font-feature-settings: 'tnum' 1; }
+    .ordinal { font-feature-settings: 'ordn' 1; }
+
+    /* Status marks (squares, no pills) */
+    .mark {
+      display: inline-block;
+      width: 0.5rem;
+      height: 0.5rem;
+      vertical-align: 0.04em;
+      margin-right: 0.45rem;
+    }
+    .mark-active { background: #B6361A; }
+    .mark-idle { background: #9A8B73; }
+    .mark-paused { border: 1px solid #9A8B73; background: transparent; }
+    .mark-warn { background: #9F6800; }
+    .mark-gain { background: #2E5E3D; }
+    .mark-loss { background: #8C2A1B; }
+
+    /* Hairline rule, editorial style */
+    hr { border: 0; border-top: 1px solid rgba(23, 20, 17, 0.12); }
+    hr.heavy { border-top: 1px solid #171411; }
+    hr.ornament {
+      border: 0;
+      text-align: center;
+      overflow: visible;
+    }
+    hr.ornament::after {
+      content: '·  ·  ·';
+      letter-spacing: 0.5em;
+      color: #9A8B73;
+      font-family: 'Bodoni Moda', serif;
+      display: inline-block;
+      position: relative;
+      top: -0.6em;
+      background: #F2EDE2;
+      padding: 0 0.8em;
+    }
+
+    /* Selection */
+    ::selection { background: #B6361A; color: #FAF6EC; }
+
+    /* Inputs */
+    input, textarea, select {
+      background: transparent;
+      color: #171411;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+    }
+
+    /* Underlined text inputs (editorial) */
+    .input-line {
+      border: 0;
+      border-bottom: 1px solid #C6B99F;
+      background: transparent;
+      padding: 0.3rem 0;
+      transition: border-color 220ms ease;
+    }
+    .input-line:focus { border-bottom-color: #B6361A; }
+
+    /* Editorial-style button (link-style) */
+    .btn-link {
+      font-family: 'Atkinson Hyperlegible', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-weight: 700;
+      font-size: 0.68rem;
+      color: #171411;
+      border-bottom: 1px solid #171411;
+      padding-bottom: 0.15rem;
+      transition: color 220ms ease, border-color 220ms ease;
+    }
+    .btn-link:hover { color: #B6361A; border-bottom-color: #B6361A; }
+
+    /* Filled accent button — used sparingly */
+    .btn-solid {
+      background: #171411;
+      color: #FAF6EC;
+      padding: 0.45rem 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-weight: 700;
+      font-size: 0.68rem;
+      transition: background-color 220ms ease;
+    }
+    .btn-solid:hover { background: #B6361A; }
+    .btn-solid:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Cards / surfaces */
+    .surface {
+      background: #FAF6EC;
+      border: 1px solid #E3DBC8;
+    }
+    .surface-recess {
+      background: #EAE3D0;
+      border: 1px solid #DBD0B7;
+    }
+
+    /* Page reveal */
+    @keyframes pageReveal {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .reveal-stack > * {
+      animation: pageReveal 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    .reveal-stack > *:nth-child(1)  { animation-delay: 20ms; }
+    .reveal-stack > *:nth-child(2)  { animation-delay: 80ms; }
+    .reveal-stack > *:nth-child(3)  { animation-delay: 140ms; }
+    .reveal-stack > *:nth-child(4)  { animation-delay: 200ms; }
+    .reveal-stack > *:nth-child(5)  { animation-delay: 260ms; }
+    .reveal-stack > *:nth-child(6)  { animation-delay: 320ms; }
+    .reveal-stack > *:nth-child(7)  { animation-delay: 380ms; }
+    .reveal-stack > *:nth-child(8)  { animation-delay: 440ms; }
+    .reveal-stack > *:nth-child(9)  { animation-delay: 500ms; }
+    .reveal-stack > *:nth-child(10) { animation-delay: 560ms; }
+
+    /* Tables — no full borders, hairlines only */
+    table.ledger {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    table.ledger thead tr {
+      border-top: 1px solid #171411;
+      border-bottom: 1px solid #171411;
+    }
+    table.ledger thead th {
+      padding: 0.45rem 0.5rem;
+      text-align: left;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 0.62rem;
+      font-weight: 700;
+      color: #665B4D;
+    }
+    table.ledger tbody td {
+      padding: 0.55rem 0.5rem;
+      border-bottom: 1px solid rgba(23, 20, 17, 0.06);
+    }
+    table.ledger tbody tr:last-child td { border-bottom: 0; }
+    table.ledger .num { text-align: right; font-family: 'IBM Plex Mono', monospace; font-feature-settings: 'tnum' 1; }
+    table.ledger .ticker { font-family: 'IBM Plex Mono', monospace; font-weight: 600; }
+
+    /* Chat bubble preserve */
     .chat-bubble { white-space: pre-wrap; word-break: break-word; }
+
+    /* Transitions */
+    a, button { transition: color 200ms ease, background-color 200ms ease, border-color 200ms ease, opacity 200ms ease; }
+
+    /* Scrollbar — light theme */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: #D8CDB4;
+      border-radius: 0;
+      border: 2px solid #F2EDE2;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: #9A8B73; }
+
+    /* Caret */
+    textarea, input { caret-color: #B6361A; }
   </style>
 </head>
 <body class="min-h-screen">
-  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
-    <div class="px-6 py-3 flex items-center gap-6">
-      <a href="/" class="font-semibold tracking-tight">trading-agent</a>
-      <nav class="flex gap-4 text-sm">
+  <header class="border-b border-ink-100 bg-paper-elevated sticky top-0 z-20">
+    <div class="px-8 pt-5 pb-3">
+      <div class="flex items-baseline justify-between mb-3">
+        <div class="flex items-baseline gap-5">
+          <a href="/" class="display text-[2.2rem] font-black text-ink-100 leading-none">
+            trading<span class="text-vermillion">·</span>agent
+          </a>
+          <span class="small-caps text-ink-60">paper edition</span>
+        </div>
+        <span class="mono text-xs text-ink-60" id="header-date">—</span>
+      </div>
+      <hr class="heavy mb-3">
+      <nav class="flex flex-wrap gap-x-6 gap-y-2 items-baseline">
         {% set pages = [
           ("dashboard", "Dashboard", "/", "ready"),
           ("today", "Today", "/today/", "placeholder"),
@@ -32,26 +286,36 @@
         {% for key, label, href, status in pages %}
           <a href="{{ href }}"
              title="{{ 'placeholder until data layer is wired' if status == 'placeholder' else '' }}"
-             class="hover:text-white {% if page == key %}text-white border-b-2 border-emerald-400 pb-3 -mb-3{% elif status == 'placeholder' %}text-slate-500{% else %}text-slate-400{% endif %}">
-            {{ label }}{% if status == 'placeholder' %}<span class="text-amber-500/70 ml-0.5">●</span>{% endif %}
+             class="small-caps hover:text-vermillion {% if page == key %}text-vermillion border-b border-vermillion pb-1 -mb-2{% elif status == 'placeholder' %}text-ink-40{% else %}text-ink-80{% endif %}">
+            {{ label }}{% if status == 'placeholder' %}<sup class="ml-0.5">†</sup>{% endif %}
           </a>
         {% endfor %}
+        <span class="ml-auto micro-caps text-ink-40">vol. i &middot; v0.0.1</span>
       </nav>
-      <span class="ml-auto text-xs text-slate-500 mono">v0.0.1</span>
     </div>
   </header>
 
-  <div class="flex" style="height: calc(100vh - 53px);">
+  <div class="flex" style="height: calc(100vh - 116px);">
     {% include "_chat_sidebar.html" %}
-    <main class="flex-1 overflow-y-auto px-6 py-8">
-      {% block content %}{% endblock %}
-      <footer class="text-xs text-slate-600 border-t border-slate-900 mt-12 pt-6">
-        paper trading only. no real brokerage connections.
-        <a class="underline hover:text-slate-400" href="https://github.com/hayaitoko/trading-agent">github</a>
-      </footer>
+    <main class="flex-1 overflow-y-auto px-10 py-10">
+      <div class="max-w-6xl mx-auto">
+        {% block content %}{% endblock %}
+        <footer class="text-ink-60 small-caps border-t border-ink-100/15 mt-20 pt-5 flex justify-between">
+          <span>† placeholder &middot; paper trading only &middot; no real brokerage</span>
+          <a class="hover:text-vermillion" href="https://github.com/hayaitoko/trading-agent">repository</a>
+        </footer>
+      </div>
     </main>
   </div>
 
+  <script>
+    (() => {
+      const today = new Date();
+      const opts = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' };
+      document.getElementById('header-date').textContent =
+        today.toLocaleDateString('en-US', opts).toUpperCase();
+    })();
+  </script>
   <script src="/static/chat.js"></script>
 </body>
 </html>

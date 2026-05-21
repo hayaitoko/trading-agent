@@ -1,33 +1,35 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="mb-6">
-  <h1 class="text-2xl font-semibold">Accounts</h1>
-  <p class="text-sm text-slate-400">Paper trading accounts. Each runs independently against the shared signal feed.</p>
-</div>
+<section class="mb-10 reveal-stack">
+  <p class="small-caps text-ink-60 mb-1">register of accounts</p>
+  <h1 class="display text-6xl font-black text-ink-100 leading-none">Accounts</h1>
+  <p class="mt-4 text-ink-80 max-w-2xl italic">
+    Each paper-trading account runs independently against the shared signal feed.
+    Bind a different strategy to each to A/B-test ideas.
+  </p>
+  <hr class="mt-6 heavy">
+</section>
 
-<section class="rounded-lg border border-slate-800 bg-slate-900 p-5 mb-6">
-  <h2 class="text-sm uppercase tracking-wide text-slate-500 mb-3">Add account</h2>
+<section class="surface p-6 mb-10 reveal-stack">
+  <h2 class="small-caps text-ink-60 mb-4">open an account</h2>
   <form hx-post="/accounts/"
         hx-target="#accounts-table"
         hx-swap="outerHTML"
         hx-on::after-request="if (event.detail.successful) this.reset()"
-        class="flex gap-3 items-end">
-    <div class="flex-1">
-      <label class="block text-xs text-slate-500 mb-1">name</label>
+        class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-5 items-end">
+    <div>
+      <label class="micro-caps text-ink-60 block mb-1">name</label>
       <input name="name" required
-             class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-             placeholder="e.g. Paper Momentum">
+             placeholder="e.g. Paper Momentum"
+             class="input-line w-full text-base">
     </div>
     <div>
-      <label class="block text-xs text-slate-500 mb-1">starting cash ($)</label>
+      <label class="micro-caps text-ink-60 block mb-1">starting cash &nbsp;<span class="text-ink-40">($)</span></label>
       <input name="starting_cash" required type="number" min="1" step="any" value="25000"
-             class="bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm w-36 mono focus:border-emerald-500 focus:outline-none">
+             class="input-line w-44 text-base mono tnum text-right">
     </div>
-    <button type="submit"
-            class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded text-sm font-medium">
-      + add
-    </button>
+    <button type="submit" class="btn-solid">+ add</button>
   </form>
 </section>
 

@@ -1,13 +1,17 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="mb-6">
-  <h1 class="text-2xl font-semibold">Settings</h1>
-  <p class="text-sm text-slate-400">
-    API credentials. Stored in <span class="mono text-slate-300">trading_agent_secrets.json</span> (gitignored).
+<section class="mb-10 reveal-stack">
+  <p class="small-caps text-ink-60 mb-1">credentials &middot; configuration</p>
+  <h1 class="display text-6xl font-black text-ink-100 leading-none">Settings</h1>
+  <p class="mt-4 text-ink-80 max-w-2xl italic">
+    API credentials stored locally in <span class="mono not-italic text-ink-100">trading_agent_secrets.json</span> (gitignored).
     Leave a masked field blank to keep the existing value.
   </p>
-</div>
+  <hr class="mt-6 heavy">
+</section>
 
+<div class="reveal-stack">
 {% include "_settings_form.html" %}
+</div>
 {% endblock %}

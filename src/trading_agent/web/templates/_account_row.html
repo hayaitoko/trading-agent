@@ -1,21 +1,21 @@
-<tr id="row-{{ row.id }}" class="border-t border-slate-800">
-  <td class="py-2 px-4">{{ row.name }}</td>
-  <td class="py-2 px-4 mono text-xs text-slate-500">{{ row.id }}</td>
-  <td class="py-2 px-4 text-right mono">${{ "%.2f"|format(row.starting_cash) }}</td>
-  <td class="py-2 px-4 text-center">
+<tr id="row-{{ row.id }}">
+  <td class="display-text text-base text-ink-100">{{ row.name }}</td>
+  <td class="mono text-xs text-ink-40">{{ row.id }}</td>
+  <td class="num text-ink-80">${{ "%.2f"|format(row.starting_cash) }}</td>
+  <td class="text-center">
     <button hx-post="/accounts/{{ row.id }}/toggle"
             hx-target="#row-{{ row.id }}"
             hx-swap="outerHTML"
-            class="text-xs px-2 py-0.5 rounded {% if row.enabled %}bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60{% else %}bg-slate-800 text-slate-500 hover:bg-slate-700{% endif %}">
-      {{ "active" if row.enabled else "paused" }}
+            class="small-caps {% if row.enabled %}text-vermillion hover:text-vermillion-deep{% else %}text-ink-60 hover:text-ink-100{% endif %}">
+      <span class="mark {% if row.enabled %}mark-active{% else %}mark-paused{% endif %}"></span>{{ "active" if row.enabled else "paused" }}
     </button>
   </td>
-  <td class="py-2 px-4 text-right">
+  <td class="text-right">
     <button hx-delete="/accounts/{{ row.id }}"
             hx-target="#accounts-table"
             hx-swap="outerHTML"
             hx-confirm="Delete account '{{ row.name }}'?"
-            class="text-xs text-rose-400 hover:text-rose-300">
+            class="small-caps text-loss hover:text-loss-soft">
       delete
     </button>
   </td>

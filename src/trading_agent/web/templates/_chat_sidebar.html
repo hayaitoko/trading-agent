@@ -1,56 +1,59 @@
-<aside id="chat-sidebar" class="w-96 shrink-0 border-r border-slate-800 bg-slate-900/40 flex flex-col transition-[width] duration-150">
-  <div class="flex items-center border-b border-slate-800 bg-slate-900/80">
+<aside id="chat-sidebar"
+       class="w-96 shrink-0 border-r border-ink-100 surface-recess flex flex-col transition-[width] duration-200">
+  <div class="flex items-center border-b border-ink-100 bg-paper-recess">
     <button id="chat-collapse"
             type="button"
-            class="text-slate-400 hover:text-slate-100 px-3 py-2 text-sm leading-none"
+            class="text-ink-60 hover:text-vermillion px-3 py-2 text-base leading-none display-text"
             title="Collapse sidebar"
             aria-label="Toggle sidebar">
       <span id="chat-collapse-icon">«</span>
     </button>
-    <span id="chat-sidebar-label" class="text-xs text-slate-500 mono">chat</span>
+    <span id="chat-sidebar-label" class="small-caps text-ink-60">marginalia</span>
   </div>
 
   <div id="chat-body" class="flex-1 flex flex-col min-h-0">
-    <header class="px-4 py-2 border-b border-slate-800 flex items-center gap-2 bg-slate-900/80">
+    <header class="px-4 py-2 border-b border-ink-100/20 flex items-center gap-2">
       <select id="chat-model"
-              class="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs mono focus:border-emerald-500 focus:outline-none">
+              class="flex-1 mono text-[0.72rem] text-ink-80 border-b border-ink-20 focus:border-vermillion py-1 cursor-pointer">
         <option>loading...</option>
       </select>
       <button id="chat-reset"
               type="button"
               title="Clear conversation"
-              class="text-xs text-slate-400 hover:text-rose-400 px-2 py-1 border border-slate-700 rounded">
+              class="small-caps text-ink-60 hover:text-vermillion">
         reset
       </button>
     </header>
 
-    <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-sm"></div>
+    <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-5 text-[0.92rem] leading-relaxed"></div>
 
     <div id="chat-attachments" class="px-4 pb-1 flex flex-wrap gap-1"></div>
 
-    <div class="px-4 py-2 border-t border-slate-800 bg-slate-900/60">
-      <div id="chat-context-bar" class="text-xs text-slate-500 mono mb-2 flex justify-between">
-        <span><span id="chat-tokens">0</span> tokens (~<span id="chat-context-pct">0</span>%)</span>
-        <span id="chat-model-limit" class="text-slate-600"></span>
+    <div class="px-4 py-3 border-t border-ink-100/20 bg-paper-recess">
+      <div id="chat-context-bar" class="micro-caps text-ink-60 mb-2 flex justify-between">
+        <span>
+          <span id="chat-tokens" class="mono">0</span> tokens · <span id="chat-context-pct">0</span>%
+        </span>
+        <span id="chat-model-limit" class="mono text-ink-40 lowercase tracking-normal">—</span>
       </div>
       <form id="chat-form" class="space-y-2">
         <textarea id="chat-input"
                   rows="3"
                   placeholder="Ask about an account, position, trade. Paste a screenshot if helpful."
-                  class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-sm resize-none focus:border-emerald-500 focus:outline-none"></textarea>
-        <div class="flex items-center gap-2">
-          <label class="text-xs text-slate-500 hover:text-slate-300 cursor-pointer">
+                  class="w-full bg-paper-elevated border border-ink-20 px-3 py-2 text-[0.92rem] resize-none focus:border-vermillion"></textarea>
+        <div class="flex items-center gap-3">
+          <label class="small-caps text-ink-60 hover:text-vermillion cursor-pointer">
             <input id="chat-file" type="file" accept="image/*" multiple class="hidden">
-            attach image
+            attach
           </label>
           <button id="chat-send"
                   type="submit"
-                  class="ml-auto bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-medium">
-            send
+                  class="btn-solid ml-auto">
+            send →
           </button>
         </div>
       </form>
-      <p id="chat-error" class="text-xs text-rose-400 mt-1 hidden"></p>
+      <p id="chat-error" class="text-xs text-loss mt-2 hidden italic"></p>
     </div>
   </div>
 </aside>

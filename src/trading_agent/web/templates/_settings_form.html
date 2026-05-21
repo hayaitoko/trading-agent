@@ -2,33 +2,31 @@
       hx-post="/settings/"
       hx-target="#settings-form"
       hx-swap="outerHTML"
-      class="rounded-lg border border-slate-800 bg-slate-900 p-6 space-y-4 max-w-2xl">
+      class="surface p-8 space-y-6 max-w-3xl">
 
   {% if saved %}
-  <div class="rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 text-sm px-3 py-2">
-    saved.
+  <div class="border-l-4 border-gain bg-paper-recess pl-5 pr-6 py-3 flex items-start gap-3">
+    <span class="display text-xl text-gain leading-none">✓</span>
+    <p class="small-caps text-gain">saved.</p>
   </div>
   {% endif %}
 
   {% for f in fields %}
   <div>
-    <label for="field-{{ f.key }}" class="block text-xs uppercase tracking-wide text-slate-500 mb-1">
+    <label for="field-{{ f.key }}" class="block small-caps text-ink-80 mb-1">
       {{ f.label }}
-      {% if f.is_secret and f.has_value %}<span class="text-slate-600 normal-case">(currently set: {{ f.redacted }})</span>{% endif %}
+      {% if f.is_secret and f.has_value %}<span class="text-ink-40 normal-case tracking-normal text-xs ml-1 italic">— currently set: {{ f.redacted }}</span>{% endif %}
     </label>
     <input id="field-{{ f.key }}"
            name="{{ f.key }}"
            type="{{ 'password' if f.is_secret else 'text' }}"
            value="{{ f.value }}"
            placeholder="{{ 'leave blank to keep existing' if f.is_secret and f.has_value else '' }}"
-           class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm mono focus:border-emerald-500 focus:outline-none">
+           class="input-line w-full text-base mono">
   </div>
   {% endfor %}
 
-  <div class="flex justify-end">
-    <button type="submit"
-            class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded text-sm font-medium">
-      save
-    </button>
+  <div class="flex justify-end pt-4 border-t border-ink-100/15">
+    <button type="submit" class="btn-solid">save changes</button>
   </div>
 </form>

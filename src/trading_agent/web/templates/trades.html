@@ -1,54 +1,62 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="mb-6">
-  <h1 class="text-2xl font-semibold">Trades</h1>
-  <p class="text-sm text-slate-400">Full execution history per account. Source signals and citations will appear here once scrapers are wired.</p>
-</div>
+<section class="mb-10 reveal-stack">
+  <p class="small-caps text-ink-60 mb-1">the execution ledger</p>
+  <h1 class="display text-6xl font-black text-ink-100 leading-none">Trades</h1>
+  <p class="mt-4 text-ink-80 max-w-2xl italic">
+    Full execution history, account by account. Source signals and citations will
+    appear here once the scrapers run.
+  </p>
+  <hr class="mt-6 heavy">
+</section>
 
 {% if not groups %}
-  <div class="rounded-lg border border-slate-800 bg-slate-900 p-8 text-center text-slate-400">
-    No accounts. <a href="/accounts/" class="text-emerald-400 hover:text-emerald-300 underline">Add one</a>.
+  <div class="surface px-8 py-16 text-center reveal-stack">
+    <p class="display text-5xl text-ink-40 italic mb-3">&hellip;</p>
+    <p class="text-ink-80">No accounts on the books.</p>
+    <p class="mt-3"><a href="/accounts/" class="btn-link">open an account</a></p>
   </div>
 {% endif %}
 
-<div class="space-y-6">
+<div class="space-y-10 reveal-stack">
   {% for g in groups %}
-  <section class="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
-    <header class="flex justify-between items-baseline px-5 py-3 bg-slate-950/50 border-b border-slate-800">
+  <section class="surface overflow-hidden">
+    <header class="flex justify-between items-baseline px-6 py-4 border-b border-ink-100/15">
       <div>
-        <h2 class="font-medium">{{ g.account_name }}</h2>
-        <p class="text-xs text-slate-500 mono">{{ g.account_id }}</p>
+        <p class="small-caps text-ink-60">paper account</p>
+        <h2 class="display text-2xl font-black text-ink-100">{{ g.account_name }}</h2>
+        <p class="mono text-xs text-ink-40 mt-1">{{ g.account_id }}</p>
       </div>
       <div class="text-right">
-        <p class="text-xs text-slate-500">total volume</p>
-        <p class="mono">${{ "%.2f"|format(g.total_volume) }}</p>
+        <p class="micro-caps text-ink-60">total volume</p>
+        <p class="display text-2xl mono tnum text-ink-100">${{ "%.2f"|format(g.total_volume) }}</p>
       </div>
     </header>
 
     {% if not g.trades %}
-      <p class="px-5 py-6 text-sm text-slate-500 italic">No trades yet.</p>
+      <p class="px-6 py-12 text-center text-ink-40 italic">No trades yet.</p>
     {% else %}
-    <table class="w-full text-sm">
-      <thead class="text-slate-500 text-xs uppercase bg-slate-950/30">
+    <table class="ledger">
+      <thead>
         <tr>
-          <th class="text-left font-normal py-2 px-5">time</th>
-          <th class="text-left font-normal py-2 px-5">side</th>
-          <th class="text-left font-normal py-2 px-5">ticker</th>
-          <th class="text-right font-normal py-2 px-5">qty</th>
-          <th class="text-right font-normal py-2 px-5">price</th>
-          <th class="text-right font-normal py-2 px-5">value</th>
+          <th>Time</th>
+          <th>Side</th>
+          <th>Ticker</th>
+          <th class="text-right">Qty</th>
+          <th class="text-right">Price</th>
+          <th class="text-right">Value</th>
         </tr>
       </thead>
       <tbody>
         {% for t in g.trades %}
-        <tr class="border-t border-slate-800">
-          <td class="py-2 px-5 mono text-xs text-slate-400">{{ t.executed_at.strftime("%Y-%m-%d %H:%M:%S") }}</td>
-          <td class="py-2 px-5 mono {% if t.side == 'buy' %}text-emerald-400{% else %}text-rose-400{% endif %}">{{ t.side }}</td>
-          <td class="py-2 px-5 mono">{{ t.ticker }}</td>
-          <td class="py-2 px-5 text-right mono">{{ t.qty }}</td>
-          <td class="py-2 px-5 text-right mono">${{ "%.2f"|format(t.price) }}</td>
-          <td class="py-2 px-5 text-right mono">${{ "%.2f"|format(t.price * t.qty) }}</td>
+        <tr>
+          <td class="mono text-xs text-ink-60">{{ t.executed_at.strftime("%Y-%m-%d &middot; %H:%M:%S")|safe }}</td>
+          <td class="small-caps {% if t.side == 'buy' %}text-gain{% else %}text-loss{% endif %}">{{ t.side }}</td>
+          <td class="ticker text-ink-100">{{ t.ticker }}</td>
+          <td class="num text-ink-80">{{ t.qty }}</td>
+          <td class="num text-ink-80">${{ "%.2f"|format(t.price) }}</td>
+          <td class="num text-ink-100">${{ "%.2f"|format(t.price * t.qty) }}</td>
         </tr>
         {% endfor %}
       </tbody>

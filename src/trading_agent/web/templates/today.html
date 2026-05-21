@@ -1,42 +1,49 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="mb-6">
-  <h1 class="text-2xl font-semibold">Today</h1>
-  <p class="text-sm text-slate-400">Chronological feed of every forum post ingested today. Each row links to the source and shows which signal/trade it fed into.</p>
-</div>
+<section class="mb-10 reveal-stack">
+  <p class="small-caps text-ink-60 mb-1">the chronological feed</p>
+  <h1 class="display text-6xl font-black text-ink-100 leading-none">Today</h1>
+  <p class="mt-4 text-ink-80 max-w-2xl italic">
+    Every forum post ingested today, the sentiment we extracted from it, and which
+    signal or trade it fed into. The audit trail.
+  </p>
+  <hr class="mt-6 heavy">
+</section>
 
-{% with status_title = "No scrapers running yet (v0.1)", status_detail = "Configure Reddit credentials at /settings, register a Reddit app at reddit.com/prefs/apps, then v0.1 will start polling r/wallstreetbets / r/stocks / r/options and post rows will appear here." %}
+<div class="reveal-stack">
+{% with status_title = "No scrapers running yet (v0.1)", status_detail = "Configure Reddit credentials in Settings, register a Reddit app at reddit.com/prefs/apps, then v0.1 will start polling r/wallstreetbets / r/stocks / r/options and post rows will appear here." %}
   {% include "_status_banner.html" %}
 {% endwith %}
 
-<section class="rounded-lg border border-slate-800 bg-slate-900 mb-6">
-  <header class="px-5 py-3 border-b border-slate-800 flex flex-wrap gap-2 text-xs">
-    <span class="text-slate-500 uppercase tracking-wide">filters</span>
-    <select disabled class="bg-slate-950 border border-slate-800 text-slate-500 rounded px-2 py-1 mono cursor-not-allowed">
+<section class="surface mb-6 overflow-hidden">
+  <header class="px-6 py-3 border-b border-ink-100/15 flex flex-wrap gap-3 items-baseline">
+    <span class="small-caps text-ink-60">filters</span>
+    <select disabled class="input-line text-xs text-ink-40 cursor-not-allowed">
       <option>source: all</option>
     </select>
-    <select disabled class="bg-slate-950 border border-slate-800 text-slate-500 rounded px-2 py-1 mono cursor-not-allowed">
+    <select disabled class="input-line text-xs text-ink-40 cursor-not-allowed">
       <option>sentiment: all</option>
     </select>
-    <input disabled placeholder="ticker" class="bg-slate-950 border border-slate-800 text-slate-500 rounded px-2 py-1 mono cursor-not-allowed w-20" />
-    <span class="ml-auto text-slate-600 mono">last update: never</span>
+    <input disabled placeholder="ticker" class="input-line text-xs text-ink-40 cursor-not-allowed w-20" />
+    <span class="ml-auto micro-caps text-ink-40">last update &middot; never</span>
   </header>
 
-  <table class="w-full text-sm">
-    <thead class="bg-slate-950/40 text-slate-500 text-xs uppercase">
+  <table class="ledger">
+    <thead>
       <tr>
-        <th class="text-left font-normal py-2 px-5">time</th>
-        <th class="text-left font-normal py-2 px-5">source</th>
-        <th class="text-left font-normal py-2 px-5">tickers</th>
-        <th class="text-right font-normal py-2 px-5">sentiment</th>
-        <th class="text-left font-normal py-2 px-5">excerpt</th>
-        <th class="text-left font-normal py-2 px-5">link</th>
+        <th>Time</th>
+        <th>Source</th>
+        <th>Tickers</th>
+        <th class="text-right">Sentiment</th>
+        <th>Excerpt</th>
+        <th>Link</th>
       </tr>
     </thead>
     <tbody>
-      <tr><td colspan="6" class="text-center text-slate-600 italic py-10 text-sm">no posts ingested</td></tr>
+      <tr><td colspan="6" class="text-center text-ink-40 italic py-14">No posts ingested.</td></tr>
     </tbody>
   </table>
 </section>
+</div>
 {% endblock %}
