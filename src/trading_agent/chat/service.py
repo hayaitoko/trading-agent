@@ -11,6 +11,7 @@ from trading_agent.chat.history import clear_history, load_history, save_history
 from trading_agent.chat.models import DEFAULT_MODEL, ChatMessage, find_model
 
 if TYPE_CHECKING:
+    from trading_agent.web.netlog import NetworkLog
     from trading_agent.web.state import AppState
 
 MAX_TOOL_ITERATIONS = 6
@@ -26,11 +27,13 @@ class ChatService:
         *,
         model_caller: ModelCaller | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        netlog: "NetworkLog | None" = None,
     ):
         self.state = state
         self.history_path = history_path
         self._model_caller = model_caller or call_model
         self._transport = transport
+        self._netlog = netlog
 
     def load(self) -> list[ChatMessage]:
         return load_history(self.history_path)
@@ -58,6 +61,7 @@ class ChatService:
                 history=[*history, *new_messages],
                 tools=tools.TOOL_SCHEMAS,
                 transport=self._transport,
+                netlog=self._netlog,
             )
 
             tool_calls = response.get("tool_calls") or []

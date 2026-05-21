@@ -2,7 +2,8 @@
   const els = {
     sidebar: document.getElementById('chat-sidebar'),
     collapse: document.getElementById('chat-collapse'),
-    collapseIcon: document.getElementById('chat-collapse-icon'),
+    collapseOpenIcon: document.querySelector('.chat-collapse-open'),
+    collapseClosedIcon: document.querySelector('.chat-collapse-closed'),
     sidebarLabel: document.getElementById('chat-sidebar-label'),
     body: document.getElementById('chat-body'),
     model: document.getElementById('chat-model'),
@@ -31,7 +32,8 @@
     els.sidebar.classList.toggle('w-11', collapsed);
     els.body.classList.toggle('hidden', collapsed);
     els.sidebarLabel.classList.toggle('hidden', collapsed);
-    els.collapseIcon.textContent = collapsed ? '»' : '«';
+    if (els.collapseOpenIcon) els.collapseOpenIcon.classList.toggle('hidden', collapsed);
+    if (els.collapseClosedIcon) els.collapseClosedIcon.classList.toggle('hidden', !collapsed);
     els.collapse.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
     localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
   };

@@ -2,11 +2,15 @@
 
 Kept deliberately small. The service layer drives the tool-use loop on top.
 """
-from typing import Any
+import time
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from trading_agent.chat.models import ChatMessage, ModelSpec
+
+if TYPE_CHECKING:
+    from trading_agent.web.netlog import NetworkLog
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -65,6 +69,7 @@ async def call_model(
     tools: list[dict],
     timeout: float = 60.0,
     transport: httpx.AsyncBaseTransport | None = None,
+    netlog: "NetworkLog | None" = None,
 ) -> dict[str, Any]:
     if not api_key:
         raise OpenRouterError("OPENROUTER_API_KEY is not set. Add it in Settings.")
@@ -88,15 +93,30 @@ async def call_model(
         "X-Title": "trading-agent",
     }
 
-    async with httpx.AsyncClient(timeout=timeout, transport=transport) as http:
-        response = await http.post(OPENROUTER_URL, headers=headers, json=payload)
-        if response.status_code >= 400:
-            raise OpenRouterError(
-                f"OpenRouter returned {response.status_code}: {response.text[:500]}"
-            )
-        data = response.json()
+    start = time.monotonic()
+    status = 0
+    error: str | None = None
+    try:
+        async with httpx.AsyncClient(timeout=timeout, transport=transport) as http:
+            response = await http.post(OPENROUTER_URL, headers=headers, json=payload)
+            status = response.status_code
+            if response.status_code >= 400:
+                error = f"HTTP {response.status_code}: {response.text[:200]}"
+                raise OpenRouterError(error)
+            data = response.json()
 
-    choices = data.get("choices") or []
-    if not choices:
-        raise OpenRouterError(f"no choices in response: {data}")
-    return choices[0]["message"]
+        choices = data.get("choices") or []
+        if not choices:
+            error = f"no choices in response: {data}"
+            raise OpenRouterError(error)
+        return choices[0]["message"]
+    finally:
+        if netlog is not None:
+            netlog.record(
+                direction="out",
+                method="POST",
+                target=f"openrouter · {model.id}",
+                status=status,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=error,
+            )

@@ -215,6 +215,76 @@ def test_eval_appears_in_nav(tmp_path):
     assert "Evaluation" in response.text
 
 
+def test_theme_toggle_present_in_header(tmp_path):
+    state = _build_state(tmp_path)
+    client = TestClient(create_app(state))
+    response = client.get("/")
+    assert 'id="theme-toggle"' in response.text
+    # Both sun and moon icons emitted; CSS hides one based on data-theme.
+    assert 'data-lucide="sun"' in response.text
+    assert 'data-lucide="moon"' in response.text
+
+
+def test_chat_sidebar_uses_panel_icons(tmp_path):
+    state = _build_state(tmp_path)
+    client = TestClient(create_app(state))
+    response = client.get("/")
+    assert 'data-lucide="panel-left-close"' in response.text
+    assert 'data-lucide="panel-left-open"' in response.text
+
+
+def test_netlog_records_inbound_requests(tmp_path):
+    state = _build_state(tmp_path)
+    app = create_app(state, start_consolidator=False)
+    client = TestClient(app)
+    # Hit a real route — middleware should record it.
+    client.get("/")
+    client.get("/accounts/")
+    log = app.state.netlog.snapshot()
+    paths = [e["target"] for e in log]
+    assert "/" in paths
+    assert "/accounts/" in paths
+    for entry in log:
+        assert entry["direction"] == "in"
+        assert entry["status"] == 200
+        assert entry["duration_ms"] >= 0
+
+
+def test_netlog_endpoint_returns_entries(tmp_path):
+    state = _build_state(tmp_path)
+    app = create_app(state, start_consolidator=False)
+    client = TestClient(app)
+    client.get("/")  # generate at least one entry
+    response = client.get("/settings/api/netlog")
+    assert response.status_code == 200
+    data = response.json()
+    assert "entries" in data
+    assert isinstance(data["entries"], list)
+
+
+def test_netlog_skips_static_and_itself(tmp_path):
+    state = _build_state(tmp_path)
+    app = create_app(state, start_consolidator=False)
+    client = TestClient(app)
+    client.get("/static/chat.js")  # static — should not record
+    client.get("/settings/api/netlog")  # the netlog endpoint itself — should not record
+    client.get("/")  # this should record
+    log = app.state.netlog.snapshot()
+    paths = [e["target"] for e in log]
+    assert not any(p.startswith("/static") for p in paths)
+    assert "/settings/api/netlog" not in paths
+    assert "/" in paths
+
+
+def test_settings_page_has_netlog_section(tmp_path):
+    state = _build_state(tmp_path)
+    client = TestClient(create_app(state, start_consolidator=False))
+    response = client.get("/settings/")
+    assert response.status_code == 200
+    assert 'id="netlog-section"' in response.text
+    assert "network log" in response.text.lower()
+
+
 def test_create_account_persists_to_disk(client):
     c, state = client
     c.post("/accounts/", data={"name": "Aggro", "starting_cash": "1000"})

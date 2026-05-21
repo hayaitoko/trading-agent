@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from trading_agent.web.persistence import SECRET_KEYS
 
@@ -63,3 +63,9 @@ async def save_settings(request: Request):
         "_settings_form.html",
         {"fields": _view(state.secrets), "saved": True},
     )
+
+
+@router.get("/api/netlog")
+async def api_netlog(request: Request, limit: int = Query(50, ge=1, le=200)):
+    netlog = request.app.state.netlog
+    return JSONResponse({"entries": netlog.snapshot(limit=limit)})

@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from trading_agent.chat import ChatService
 from trading_agent.notes import ensure_default_structure
 from trading_agent.notes.consolidator import Consolidator
+from trading_agent.web.netlog import NetworkLog, NetworkLogMiddleware
 from trading_agent.web.routes.accounts import router as accounts_router
 from trading_agent.web.routes.chat import router as chat_router
 from trading_agent.web.routes.dashboard import router as dashboard_router
@@ -39,11 +40,14 @@ def create_app(
     ensure_default_structure(resolved_notes_dir)
     state.notes_dir = resolved_notes_dir
 
+    netlog = NetworkLog()
+
     consolidator = Consolidator(
         notes_dir=resolved_notes_dir,
         config_path=resolved_config,
         log_path=resolved_log,
         api_key_getter=lambda: state.secrets.get("openrouter_api_key", ""),
+        netlog=netlog,
     )
 
     @asynccontextmanager
@@ -57,12 +61,15 @@ def create_app(
     app = FastAPI(title="trading-agent", lifespan=lifespan)
     app.state.app_state = state
     app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    app.state.netlog = netlog
+    app.state.notes_dir = resolved_notes_dir
     app.state.chat_service = ChatService(
         state=state,
         history_path=chat_history_path or (base_dir / "chat_history.json"),
+        netlog=netlog,
     )
-    app.state.notes_dir = resolved_notes_dir
     app.state.consolidator = consolidator
+    app.add_middleware(NetworkLogMiddleware, netlog=netlog)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(dashboard_router)
     app.include_router(accounts_router)

@@ -196,23 +196,37 @@
 
   /* Notes tree */
   #notes-tree .tree-folder {
-    color: #665B4D;
+    color: rgb(var(--ink-60));
     text-transform: uppercase;
     letter-spacing: 0.14em;
     font-size: 0.62rem;
     font-weight: 700;
     margin-top: 0.7rem;
     margin-bottom: 0.15rem;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
   }
   #notes-tree .tree-file {
-    color: #2A2520;
+    color: rgb(var(--ink-90));
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.78rem;
-    padding: 0.22rem 0;
-    display: block;
+    padding: 0.24rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
     transition: color 200ms ease, padding-left 200ms ease;
   }
-  #notes-tree .tree-file:hover { color: #B6361A; padding-left: 4px; }
+  #notes-tree .tree-file:hover { color: rgb(var(--vermillion)); padding-left: 4px; }
+  #notes-tree .tree-icon {
+    width: 0.85rem;
+    height: 0.85rem;
+    stroke-width: 1.6;
+    flex-shrink: 0;
+  }
+  #notes-tree .tree-folder .tree-icon { color: rgb(var(--ink-40)); }
+  #notes-tree .tree-file .tree-icon { color: rgb(var(--ink-40)); transition: color 200ms ease; }
+  #notes-tree .tree-file:hover .tree-icon { color: rgb(var(--vermillion)); }
 </style>
 
 <script src="/static/notes.js"></script>

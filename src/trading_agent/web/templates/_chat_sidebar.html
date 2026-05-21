@@ -3,10 +3,11 @@
   <div class="flex items-center border-b border-ink-100 bg-paper-recess">
     <button id="chat-collapse"
             type="button"
-            class="text-ink-60 hover:text-vermillion px-3 py-2 text-base leading-none display-text"
+            class="text-ink-60 hover:text-vermillion px-2.5 py-2 leading-none"
             title="Collapse sidebar"
             aria-label="Toggle sidebar">
-      <span id="chat-collapse-icon">«</span>
+      <i data-lucide="panel-left-close" class="lucide chat-collapse-open" style="width:1.05rem;height:1.05rem"></i>
+      <i data-lucide="panel-left-open" class="lucide chat-collapse-closed hidden" style="width:1.05rem;height:1.05rem"></i>
     </button>
     <span id="chat-sidebar-label" class="small-caps text-ink-60">marginalia</span>
   </div>
@@ -20,7 +21,8 @@
       <button id="chat-reset"
               type="button"
               title="Clear conversation"
-              class="small-caps text-ink-60 hover:text-vermillion">
+              class="small-caps text-ink-60 hover:text-vermillion flex items-center gap-1">
+        <i data-lucide="rotate-ccw" class="lucide" style="width:0.85rem;height:0.85rem"></i>
         reset
       </button>
     </header>
@@ -42,14 +44,16 @@
                   placeholder="Ask about an account, position, trade. Paste a screenshot if helpful."
                   class="w-full bg-paper-elevated border border-ink-20 px-3 py-2 text-[0.92rem] resize-none focus:border-vermillion"></textarea>
         <div class="flex items-center gap-3">
-          <label class="small-caps text-ink-60 hover:text-vermillion cursor-pointer">
+          <label class="small-caps text-ink-60 hover:text-vermillion cursor-pointer flex items-center gap-1">
             <input id="chat-file" type="file" accept="image/*" multiple class="hidden">
+            <i data-lucide="paperclip" class="lucide" style="width:0.85rem;height:0.85rem"></i>
             attach
           </label>
           <button id="chat-send"
                   type="submit"
                   class="btn-solid ml-auto">
-            send →
+            send
+            <i data-lucide="send" class="lucide" style="width:0.8rem;height:0.8rem"></i>
           </button>
         </div>
       </form>

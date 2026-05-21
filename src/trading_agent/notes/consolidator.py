@@ -22,11 +22,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from trading_agent.chat.client import OpenRouterError, call_model
 from trading_agent.chat.models import DEFAULT_MODEL, ChatMessage, find_model
 from trading_agent.notes import storage
+
+if TYPE_CHECKING:
+    from trading_agent.web.netlog import NetworkLog
 
 ModelCaller = Callable[..., Awaitable[dict[str, Any]]]
 ApiKeyGetter = Callable[[], str]
@@ -101,12 +104,14 @@ class Consolidator:
         log_path: Path,
         api_key_getter: ApiKeyGetter,
         model_caller: ModelCaller | None = None,
+        netlog: "NetworkLog | None" = None,
     ):
         self.notes_dir = notes_dir
         self.config_path = config_path
         self.log_path = log_path
         self._get_api_key = api_key_getter
         self._model_caller = model_caller or call_model
+        self._netlog = netlog
         self.status = ConsolidatorStatus()
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
@@ -166,6 +171,7 @@ class Consolidator:
                         content=self._build_user_message(notes),
                     )],
                     tools=[],
+                    netlog=self._netlog,
                 )
                 result = self._parse_response(response.get("content") or "")
                 self._apply_edits(result.edits)

@@ -12,6 +12,116 @@
 </section>
 
 <div class="reveal-stack">
-{% include "_settings_form.html" %}
+  {% include "_settings_form.html" %}
+
+  <section id="netlog-section" class="surface mt-10 overflow-hidden">
+    <header class="flex items-center px-6 py-3 border-b border-ink-100/15 gap-3">
+      <i data-lucide="activity" class="lucide text-vermillion" style="width:1rem;height:1rem"></i>
+      <h2 class="small-caps text-ink-60">network log</h2>
+      <span class="micro-caps text-ink-40">inbound + outbound, rolling 200</span>
+      <span id="netlog-count" class="ml-auto micro-caps text-ink-40">—</span>
+      <button id="netlog-refresh"
+              class="micro-caps text-ink-60 hover:text-vermillion flex items-center gap-1">
+        <i data-lucide="refresh-cw" class="lucide" style="width:0.85rem;height:0.85rem"></i>
+        refresh
+      </button>
+    </header>
+    <table class="ledger">
+      <thead>
+        <tr>
+          <th style="width:8.5rem">Time</th>
+          <th style="width:3.5rem" class="text-center">Dir</th>
+          <th style="width:4rem">Method</th>
+          <th>Target</th>
+          <th class="text-right" style="width:4rem">Status</th>
+          <th class="text-right" style="width:5rem">Duration</th>
+        </tr>
+      </thead>
+      <tbody id="netlog-body">
+        <tr><td colspan="6" class="text-center text-ink-40 italic py-10">loading…</td></tr>
+      </tbody>
+    </table>
+  </section>
 </div>
+
+<script>
+(() => {
+  const els = {
+    body: document.getElementById('netlog-body'),
+    count: document.getElementById('netlog-count'),
+    refresh: document.getElementById('netlog-refresh'),
+  };
+  let timer = null;
+
+  const escapeHtml = (s) => String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const fmtStatus = (s) => {
+    if (s >= 500) return `<span class="text-loss">${s}</span>`;
+    if (s >= 400) return `<span class="text-warning">${s}</span>`;
+    if (s >= 300) return `<span class="text-ink-60">${s}</span>`;
+    if (s >= 200) return `<span class="text-gain">${s}</span>`;
+    return `<span class="text-ink-40">${s || '—'}</span>`;
+  };
+
+  const fmtTime = (iso) => {
+    const dt = new Date(iso);
+    return dt.toLocaleTimeString('en-US', { hour12: false });
+  };
+
+  const render = (entries) => {
+    els.count.textContent = entries.length === 1 ? '1 entry' : `${entries.length} entries`;
+    if (!entries.length) {
+      els.body.innerHTML = '<tr><td colspan="6" class="text-center text-ink-40 italic py-10">No traffic yet.</td></tr>';
+      return;
+    }
+    const rows = entries.map(e => {
+      const dirIcon = e.direction === 'out'
+        ? '<i data-lucide="arrow-up-right" class="lucide text-vermillion" style="width:0.85rem;height:0.85rem"></i>'
+        : '<i data-lucide="arrow-down-left" class="lucide text-ink-60" style="width:0.85rem;height:0.85rem"></i>';
+      const errorRow = e.error
+        ? `<tr><td></td><td colspan="5" class="text-loss italic text-xs pb-2 pt-0">${escapeHtml(e.error)}</td></tr>`
+        : '';
+      return `
+        <tr>
+          <td class="mono text-xs text-ink-60">${fmtTime(e.timestamp)}</td>
+          <td class="text-center">${dirIcon}</td>
+          <td class="mono text-xs">${escapeHtml(e.method)}</td>
+          <td class="mono text-xs text-ink-80">${escapeHtml(e.target)}</td>
+          <td class="num text-xs">${fmtStatus(e.status)}</td>
+          <td class="num text-xs text-ink-60">${e.duration_ms}ms</td>
+        </tr>
+        ${errorRow}
+      `;
+    });
+    els.body.innerHTML = rows.join('');
+    if (window.lucide) lucide.createIcons();
+  };
+
+  const fetchLog = async () => {
+    try {
+      const r = await fetch('/settings/api/netlog');
+      const data = await r.json();
+      render(data.entries || []);
+    } catch (e) {
+      els.body.innerHTML = `<tr><td colspan="6" class="text-loss italic py-8 text-center">fetch failed: ${escapeHtml(e.message)}</td></tr>`;
+    }
+  };
+
+  els.refresh.addEventListener('click', fetchLog);
+  fetchLog();
+  // Auto-refresh every 5s
+  timer = setInterval(fetchLog, 5000);
+  // Stop refreshing when the tab is hidden, resume when visible
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearInterval(timer);
+    } else {
+      fetchLog();
+      timer = setInterval(fetchLog, 5000);
+    }
+  });
+})();
+</script>
 {% endblock %}

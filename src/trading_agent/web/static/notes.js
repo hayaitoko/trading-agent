@@ -121,10 +121,16 @@
     if (node.type === 'file') {
       const a = document.createElement('a');
       a.href = '#';
-      a.textContent = node.name;
       a.dataset.path = node.path;
       a.className = 'tree-file';
       a.style.paddingLeft = `${depth * 14}px`;
+      const icon = document.createElement('i');
+      icon.setAttribute('data-lucide', 'file-text');
+      icon.className = 'tree-icon';
+      const text = document.createElement('span');
+      text.textContent = node.name;
+      a.appendChild(icon);
+      a.appendChild(text);
       a.addEventListener('click', (e) => {
         e.preventDefault();
         openNote(node.path);
@@ -136,7 +142,13 @@
       const header = document.createElement('div');
       header.className = 'tree-folder';
       header.style.paddingLeft = `${depth * 14}px`;
-      header.textContent = node.name || 'notes';
+      const icon = document.createElement('i');
+      icon.setAttribute('data-lucide', 'folder');
+      icon.className = 'tree-icon';
+      const text = document.createElement('span');
+      text.textContent = node.name || 'notes';
+      header.appendChild(icon);
+      header.appendChild(text);
       wrap.appendChild(header);
     }
     for (const child of node.children) {
@@ -155,6 +167,7 @@
     for (const child of root.children) {
       els.tree.appendChild(renderTreeNode(child, 0));
     }
+    if (window.lucide) lucide.createIcons();
   };
 
   const openNote = async (path) => {
