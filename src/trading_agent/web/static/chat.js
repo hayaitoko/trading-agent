@@ -1,5 +1,10 @@
 (() => {
   const els = {
+    sidebar: document.getElementById('chat-sidebar'),
+    collapse: document.getElementById('chat-collapse'),
+    collapseIcon: document.getElementById('chat-collapse-icon'),
+    sidebarLabel: document.getElementById('chat-sidebar-label'),
+    body: document.getElementById('chat-body'),
     model: document.getElementById('chat-model'),
     modelLimit: document.getElementById('chat-model-limit'),
     reset: document.getElementById('chat-reset'),
@@ -19,6 +24,26 @@
   let busy = false;
 
   const STORE_KEY = 'tradingAgent.model';
+  const COLLAPSED_KEY = 'tradingAgent.sidebarCollapsed';
+
+  const setCollapsed = (collapsed) => {
+    els.sidebar.classList.toggle('w-96', !collapsed);
+    els.sidebar.classList.toggle('w-10', collapsed);
+    els.body.classList.toggle('hidden', collapsed);
+    els.sidebarLabel.classList.toggle('hidden', collapsed);
+    els.collapseIcon.textContent = collapsed ? '»' : '«';
+    els.collapse.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
+  };
+
+  els.collapse.addEventListener('click', () => {
+    const collapsed = els.sidebar.classList.contains('w-10');
+    setCollapsed(!collapsed);
+  });
+
+  if (localStorage.getItem(COLLAPSED_KEY) === '1') {
+    setCollapsed(true);
+  }
 
   const escapeHtml = (s) => s
     .replace(/&/g, '&amp;')

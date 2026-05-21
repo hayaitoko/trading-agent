@@ -20,23 +20,20 @@
       <a href="/" class="font-semibold tracking-tight">trading-agent</a>
       <nav class="flex gap-4 text-sm">
         {% set pages = [
-          ("dashboard", "Dashboard", "/", True),
-          ("today", "Today", "#", False),
-          ("signals", "Signals", "#", False),
-          ("trades", "Trades", "/trades/", True),
-          ("accounts", "Accounts", "/accounts/", True),
-          ("strategy", "Strategy", "#", False),
-          ("settings", "Settings", "/settings/", True),
+          ("dashboard", "Dashboard", "/", "ready"),
+          ("today", "Today", "/today/", "placeholder"),
+          ("signals", "Signals", "/signals/", "placeholder"),
+          ("trades", "Trades", "/trades/", "ready"),
+          ("accounts", "Accounts", "/accounts/", "ready"),
+          ("strategy", "Strategy", "/strategy/", "placeholder"),
+          ("settings", "Settings", "/settings/", "ready"),
         ] %}
-        {% for key, label, href, ready in pages %}
-          {% if ready %}
-            <a href="{{ href }}"
-               class="hover:text-white {% if page == key %}text-white border-b-2 border-emerald-400 pb-3 -mb-3{% else %}text-slate-400{% endif %}">
-              {{ label }}
-            </a>
-          {% else %}
-            <span class="text-slate-600 cursor-not-allowed" title="not built yet">{{ label }}</span>
-          {% endif %}
+        {% for key, label, href, status in pages %}
+          <a href="{{ href }}"
+             title="{{ 'placeholder until data layer is wired' if status == 'placeholder' else '' }}"
+             class="hover:text-white {% if page == key %}text-white border-b-2 border-emerald-400 pb-3 -mb-3{% elif status == 'placeholder' %}text-slate-500{% else %}text-slate-400{% endif %}">
+            {{ label }}{% if status == 'placeholder' %}<span class="text-amber-500/70 ml-0.5">●</span>{% endif %}
+          </a>
         {% endfor %}
       </nav>
       <span class="ml-auto text-xs text-slate-500 mono">v0.0.1</span>

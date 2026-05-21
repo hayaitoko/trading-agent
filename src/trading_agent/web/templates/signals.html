@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold">Signals</h1>
+  <p class="text-sm text-slate-400">Per-ticker rolling sentiment and mention velocity. Drill into a card to see the contributing posts.</p>
+</div>
+
+{% with status_title = "Signal aggregator not implemented (v0.3)", status_detail = "Posts from scrapers flow into a per-ticker aggregator that computes rolling sentiment and mention velocity. When v0.3 lands, this grid populates from that aggregator." %}
+  {% include "_status_banner.html" %}
+{% endwith %}
+
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for slot in range(6) %}
+  <section class="rounded-lg border border-slate-800 bg-slate-900 p-5 opacity-50">
+    <header class="flex justify-between items-baseline mb-3">
+      <h2 class="text-lg font-medium mono text-slate-600">—</h2>
+      <span class="text-xs text-slate-700 mono">no data</span>
+    </header>
+    <div class="grid grid-cols-2 gap-3 text-xs">
+      <div>
+        <p class="text-slate-600">sentiment</p>
+        <div class="h-2 bg-slate-800 rounded mt-1 overflow-hidden">
+          <div class="h-full bg-slate-700 w-0"></div>
+        </div>
+      </div>
+      <div>
+        <p class="text-slate-600">mentions/hr</p>
+        <p class="mono text-slate-700 text-base">—</p>
+      </div>
+    </div>
+    <p class="text-xs text-slate-700 italic mt-3">no contributing posts</p>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

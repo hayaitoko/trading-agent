@@ -8,6 +8,7 @@ from trading_agent.chat import ChatService
 from trading_agent.web.routes.accounts import router as accounts_router
 from trading_agent.web.routes.chat import router as chat_router
 from trading_agent.web.routes.dashboard import router as dashboard_router
+from trading_agent.web.routes.placeholders import router as placeholders_router
 from trading_agent.web.routes.settings import router as settings_router
 from trading_agent.web.routes.trades import router as trades_router
 from trading_agent.web.state import AppState
@@ -30,4 +31,5 @@ def create_app(state: AppState, chat_history_path: Path | None = None) -> FastAP
     app.include_router(trades_router)
     app.include_router(settings_router)
     app.include_router(chat_router)
+    app.include_router(placeholders_router)
     return app

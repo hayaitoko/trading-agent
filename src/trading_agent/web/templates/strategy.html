@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold">Strategy</h1>
+  <p class="text-sm text-slate-400">Per-account strategy bindings and tunable parameters. Edit knobs without touching code.</p>
+</div>
+
+{% with status_title = "Strategy layer not implemented (v0.6)", status_detail = "No Strategy ABC exists yet, so there is no strategy to bind to an account. v0.6 will define the Strategy interface and a first naive_momentum implementation. Until then these cards show the account names but no editable parameters." %}
+  {% include "_status_banner.html" %}
+{% endwith %}
+
+{% if not accounts %}
+  <div class="rounded-lg border border-slate-800 bg-slate-900 p-8 text-center text-slate-400">
+    No accounts. <a href="/accounts/" class="text-emerald-400 hover:text-emerald-300 underline">Add one</a>.
+  </div>
+{% endif %}
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  {% for acc in accounts %}
+  <section class="rounded-lg border border-slate-800 bg-slate-900 p-5">
+    <header class="flex justify-between items-baseline mb-4">
+      <div>
+        <h2 class="text-lg font-medium">{{ acc.name }}</h2>
+        <p class="text-xs text-slate-500 mono">{{ acc.id }}</p>
+      </div>
+      <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-500">no strategy bound</span>
+    </header>
+
+    <div class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm opacity-60">
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">sentiment threshold</label>
+        <input disabled value="—" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-slate-600 cursor-not-allowed">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">position size (% of cash)</label>
+        <input disabled value="—" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-slate-600 cursor-not-allowed">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">max drawdown (%)</label>
+        <input disabled value="—" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-slate-600 cursor-not-allowed">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">mention-velocity min</label>
+        <input disabled value="—" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 mono text-slate-600 cursor-not-allowed">
+      </div>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

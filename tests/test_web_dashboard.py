@@ -55,12 +55,49 @@ def test_dashboard_with_no_accounts(tmp_path):
     assert "No accounts" in response.text
 
 
-def test_disabled_nav_pages_still_marked_not_clickable(tmp_path):
+def test_placeholder_nav_pages_marked_in_nav(tmp_path):
     state = _build_state(tmp_path)
     client = TestClient(create_app(state))
     response = client.get("/")
-    # Today, Signals, Strategy are still disabled
-    assert "not built yet" in response.text
+    # Today, Signals, Strategy are placeholders with a status dot
+    assert "placeholder until data layer is wired" in response.text
+
+
+def test_today_placeholder_renders(tmp_path):
+    state = _build_state(tmp_path)
+    client = TestClient(create_app(state))
+    response = client.get("/today/")
+    assert response.status_code == 200
+    assert "Today" in response.text
+    assert "Placeholder" in response.text
+    assert "v0.1" in response.text
+
+
+def test_signals_placeholder_renders(tmp_path):
+    state = _build_state(tmp_path)
+    client = TestClient(create_app(state))
+    response = client.get("/signals/")
+    assert response.status_code == 200
+    assert "Signals" in response.text
+    assert "v0.3" in response.text
+
+
+def test_strategy_placeholder_renders_account_names(tmp_path):
+    client = _client_with_one_position(tmp_path)
+    response = client.get("/strategy/")
+    assert response.status_code == 200
+    assert "Strategy" in response.text
+    assert "Test Account" in response.text
+    assert "v0.6" in response.text
+    assert "no strategy bound" in response.text
+
+
+def test_sidebar_has_collapse_button(tmp_path):
+    state = _build_state(tmp_path)
+    client = TestClient(create_app(state))
+    response = client.get("/")
+    assert 'id="chat-collapse"' in response.text
+    assert 'id="chat-body"' in response.text
 
 
 def test_dashboard_has_add_account_button(tmp_path):
