@@ -10,6 +10,7 @@ from trading_agent.brokers import MockBroker
 QuoteFn = Callable[[str], Decimal]
 
 SECRET_KEYS: tuple[str, ...] = (
+    "openrouter_api_key",
     "reddit_client_id",
     "reddit_client_secret",
     "reddit_user_agent",

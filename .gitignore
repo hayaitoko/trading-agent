@@ -228,4 +228,5 @@ test-results/
 storage_state.json
 accounts.json
 trading_agent_secrets.json
+chat_history.json
 

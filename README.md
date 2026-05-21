@@ -49,7 +49,16 @@ Built pages:
 - **Dashboard**: per-account cash, equity, positions, today's trades. Has a `+ account` shortcut.
 - **Accounts**: list, add (htmx inline form), enable/disable, delete. Persisted to `accounts.json`.
 - **Trades**: per-account full execution history.
-- **Settings**: API credentials for Reddit, StockTwits, Investopedia. Persisted to `trading_agent_secrets.json`. Secrets are masked in the UI and never round-tripped through HTML.
+- **Settings**: API credentials for OpenRouter, Reddit, StockTwits, Investopedia. Persisted to `trading_agent_secrets.json`. Secrets are masked in the UI and never round-tripped through HTML.
+
+Persistent chat sidebar (left rail, on every page):
+- Model dropdown (Claude Opus/Sonnet/Haiku, GPT-5, Grok 4, Gemini 3.1 Pro, DeepSeek v4, Kimi K2.6). Choice persisted in `localStorage`.
+- Approximate context counter (`chars/3 = tokens`) showing % of the selected model's context window.
+- Reset button clears the conversation.
+- Paste a screenshot directly into the textarea or use the file picker. Images are base64-inlined into the request.
+- Routes through **OpenRouter** so one API key covers every model. Anthropic models get `cache_control` on the system prompt and `provider.order: [anthropic]` for cache consistency across requests.
+- Conversation persists server-side in `chat_history.json` so reloads (and other browsers pointed at the same server) see the same context.
+- Tool use: `list_accounts`, `get_account`, `get_trades`. Tools that need scrapers/signals/news will light up as those layers ship.
 
 Planned (nav present but disabled):
 - **Today**: chronological feed of ingested posts + sentiment scores + source links + which trade each post fed into. The audit trail. Needs scrapers to be wired.

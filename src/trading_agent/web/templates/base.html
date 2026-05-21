@@ -11,11 +11,12 @@
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .pos { color: rgb(74 222 128); }
     .neg { color: rgb(248 113 113); }
+    .chat-bubble { white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body class="min-h-screen">
-  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-10">
-    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center gap-6">
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-20">
+    <div class="px-6 py-3 flex items-center gap-6">
       <a href="/" class="font-semibold tracking-tight">trading-agent</a>
       <nav class="flex gap-4 text-sm">
         {% set pages = [
@@ -42,13 +43,17 @@
     </div>
   </header>
 
-  <main class="max-w-7xl mx-auto px-6 py-8">
-    {% block content %}{% endblock %}
-  </main>
+  <div class="flex" style="height: calc(100vh - 53px);">
+    {% include "_chat_sidebar.html" %}
+    <main class="flex-1 overflow-y-auto px-6 py-8">
+      {% block content %}{% endblock %}
+      <footer class="text-xs text-slate-600 border-t border-slate-900 mt-12 pt-6">
+        paper trading only. no real brokerage connections.
+        <a class="underline hover:text-slate-400" href="https://github.com/hayaitoko/trading-agent">github</a>
+      </footer>
+    </main>
+  </div>
 
-  <footer class="max-w-7xl mx-auto px-6 py-6 text-xs text-slate-600 border-t border-slate-900 mt-12">
-    paper trading only. no real brokerage connections.
-    <a class="underline hover:text-slate-400" href="https://github.com/hayaitoko/trading-agent">github</a>
-  </footer>
+  <script src="/static/chat.js"></script>
 </body>
 </html>
