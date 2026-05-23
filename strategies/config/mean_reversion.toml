@@ -1,0 +1,7 @@
+timeframe = "1m"
+symbols = ["SYNTH-USD"]
+
+[strategy]
+sma_period = 20
+std_multiplier = 2.0
+position_size = 1.0
