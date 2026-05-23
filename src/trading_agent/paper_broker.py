@@ -3,9 +3,23 @@
 Implements the canonical BrokerAdapter interface. Broker-internal order /
 position records are named PaperOrder / PaperPosition to avoid shadowing the
 models.Order / models.Position dataclasses (which carry different fields).
+
+Realism knobs (all default to off, so behaviour is unchanged unless enabled):
+
+* **Quotes** — feed real bid/ask via :meth:`update_quote` and market orders
+  fill at the ask (buy) / bid (sell) instead of a single mid price.
+* **slippage_bps** — adverse slippage applied to *market* fills.
+* **commission_bps** — per-trade commission deducted from cash.
+* **is_market_open** — optional ``Callable[[str], bool]``; when it returns
+  False, market orders are rejected and limit orders stay queued.
+
+Limit orders now match against the prevailing quote: a buy limit fills when the
+market trades at or below the limit, a sell limit when at or above it. Matching
+runs on placement and on every :meth:`update_market_prices` / :meth:`update_quote`.
 """
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -44,13 +58,26 @@ class PaperPosition:
 class PaperBroker(BrokerAdapter):
     """In-memory paper broker."""
 
-    def __init__(self, initial_balance: float = 100000.0):
+    def __init__(
+        self,
+        initial_balance: float = 100000.0,
+        *,
+        slippage_bps: float = 0.0,
+        commission_bps: float = 0.0,
+        is_market_open: Callable[[str], bool] | None = None,
+    ):
         self._initial_balance: float = initial_balance
         self._balance: float = initial_balance
         self._positions: dict[str, PaperPosition] = {}
         self._orders: dict[str, PaperOrder] = {}
         self._trade_history: list[tuple[str, float, float, str]] = []
+        # Last-price view, kept for valuation + get_quote backward compatibility.
         self.market_prices: dict[str, float] = {}
+        # Richer per-symbol quote: {'bid': float|None, 'ask': float|None, 'last': float|None}.
+        self._quotes: dict[str, dict[str, float | None]] = {}
+        self.slippage_bps = slippage_bps
+        self.commission_bps = commission_bps
+        self.is_market_open = is_market_open
         self._connected: bool = False
 
     def connect(self) -> bool:
@@ -67,22 +94,25 @@ class PaperBroker(BrokerAdapter):
     def get_balance(self) -> dict[str, Any]:
         return {"cash": self._balance}
 
-    def get_quote(self, symbol: str) -> dict[str, float]:
+    def get_quote(self, symbol: str) -> dict[str, Any]:
         """Get current quote for symbol.
 
-        Args:
-            symbol: The symbol to get quote for
-
-        Returns:
-            Dictionary with quote information containing 'price' key
+        Returns a dict with a ``price`` key (last/mid). Includes ``bid``/``ask``
+        when a richer quote has been supplied via :meth:`update_quote`.
 
         Raises:
-            ValueError: If symbol is not found in market_prices
+            ValueError: If no price is known for the symbol.
         """
         price = self.market_prices.get(symbol)
         if price is None:
             raise ValueError(f"Symbol {symbol} not found in market_prices")
-        return {'price': price}
+        q = self._quotes.get(symbol, {})
+        out: dict[str, Any] = {"price": price}
+        if q.get("bid") is not None:
+            out["bid"] = q["bid"]
+        if q.get("ask") is not None:
+            out["ask"] = q["ask"]
+        return out
 
     def get_order_status(self, order_id: str) -> dict[str, Any]:
         if not self._connected:
@@ -171,18 +201,12 @@ class PaperBroker(BrokerAdapter):
 
         if order_type == OrderType.MARKET:
             self._fill_market_order(order)
+        else:
+            # Limit (and other resting types): try to fill immediately if the
+            # current quote already crosses; otherwise leave it PENDING.
+            self._try_fill_limit_order(order)
 
-        return {
-            "order_id": order.id,
-            "symbol": order.symbol,
-            "side": order.side.value,
-            "order_type": order.order_type.value,
-            "quantity": order.quantity,
-            "price": order.price,
-            "status": order.status.value,
-            "filled_quantity": order.filled_quantity,
-            "filled_price": order.filled_price,
-        }
+        return self._order_result(order)
 
     def cancel_order(self, order_id: str) -> bool:
         if not self._connected:
@@ -200,36 +224,149 @@ class PaperBroker(BrokerAdapter):
     def get_order(self, order_id: str) -> PaperOrder | None:
         return self._orders.get(order_id)
 
+    # --- Market data --------------------------------------------------------
+
     def update_market_prices(self, prices: dict[str, float]) -> None:
+        """Set the last price for one or more symbols, then match resting limits."""
         self.market_prices.update(prices)
+        for symbol, px in prices.items():
+            q = self._quotes.setdefault(symbol, {"bid": None, "ask": None, "last": None})
+            q["last"] = px
+        self._match_pending_limit_orders(list(prices.keys()))
+
+    def update_quote(
+        self,
+        symbol: str,
+        *,
+        bid: float | None = None,
+        ask: float | None = None,
+        last: float | None = None,
+    ) -> None:
+        """Supply a richer bid/ask/last quote (e.g. from a live feed).
+
+        Market orders fill at ask (buy) / bid (sell) when those are present.
+        ``market_prices`` is kept in sync (last, else mid) for valuation.
+        """
+        q = self._quotes.setdefault(symbol, {"bid": None, "ask": None, "last": None})
+        if bid is not None:
+            q["bid"] = bid
+        if ask is not None:
+            q["ask"] = ask
+        if last is not None:
+            q["last"] = last
+
+        reference = q["last"]
+        if reference is None and q["bid"] is not None and q["ask"] is not None:
+            reference = (q["bid"] + q["ask"]) / 2.0
+        if reference is not None:
+            self.market_prices[symbol] = reference
+
+        self._match_pending_limit_orders([symbol])
+
+    def update_quotes(self, quotes: dict[str, dict[str, float | None]]) -> None:
+        """Bulk variant of :meth:`update_quote`."""
+        for symbol, q in quotes.items():
+            self.update_quote(
+                symbol, bid=q.get("bid"), ask=q.get("ask"), last=q.get("last")
+            )
+
+    # --- Fill engine --------------------------------------------------------
+
+    def _market_fill_price(self, symbol: str, side: OrderSide) -> float | None:
+        """Marketable price for a market order: ask for buys, bid for sells,
+        falling back to the last price. Adverse slippage is then applied."""
+        q = self._quotes.get(symbol, {})
+        ref = self.market_prices.get(symbol)
+        quoted = q.get("ask") if side == OrderSide.BUY else q.get("bid")
+        base = quoted if quoted is not None else ref
+        if base is None:
+            return None
+        slip = base * self.slippage_bps / 10_000.0
+        return base + slip if side == OrderSide.BUY else base - slip
+
+    def _limit_marketable_price(
+        self, symbol: str, side: OrderSide, limit_price: float
+    ) -> float | None:
+        """Fill price for a limit order if it currently crosses, else None.
+
+        Buy fills when the market (ask, else last) is at or below the limit;
+        sell when the market (bid, else last) is at or above it. Filled at the
+        better of the limit and the prevailing quote — no slippage on limits.
+        """
+        q = self._quotes.get(symbol, {})
+        ref = self.market_prices.get(symbol)
+        if side == OrderSide.BUY:
+            mkt = q.get("ask")
+            mkt = mkt if mkt is not None else ref
+            if mkt is None or mkt > limit_price:
+                return None
+            return min(mkt, limit_price)
+        mkt = q.get("bid")
+        mkt = mkt if mkt is not None else ref
+        if mkt is None or mkt < limit_price:
+            return None
+        return max(mkt, limit_price)
 
     def _fill_market_order(self, order: PaperOrder) -> None:
-        market_price = self.market_prices.get(order.symbol)
-        if market_price is None:
+        if self.is_market_open is not None and not self.is_market_open(order.symbol):
             order.status = OrderStatus.REJECTED
             return
 
-        if order.side == OrderSide.BUY:
-            cost = order.quantity * market_price
-            if cost > self._balance:
-                order.status = OrderStatus.REJECTED
-                return
-        elif order.side == OrderSide.SELL:
-            position = self._positions.get(order.symbol)
-            if position is None or position.quantity < order.quantity:
-                order.status = OrderStatus.REJECTED
-                return
+        fill_price = self._market_fill_price(order.symbol, order.side)
+        if fill_price is None:
+            order.status = OrderStatus.REJECTED
+            return
 
-        self._execute_trade(order, market_price)
+        if not self._can_fill(order, fill_price):
+            order.status = OrderStatus.REJECTED
+            return
+
+        self._execute_trade(order, fill_price)
+
+    def _try_fill_limit_order(self, order: PaperOrder) -> None:
+        """Attempt to fill a resting limit order against the current quote."""
+        if order.status != OrderStatus.PENDING or order.price is None:
+            return
+        # Closed market: leave the order queued rather than rejecting it.
+        if self.is_market_open is not None and not self.is_market_open(order.symbol):
+            return
+
+        fill_price = self._limit_marketable_price(order.symbol, order.side, order.price)
+        if fill_price is None:
+            return  # not marketable yet — stays PENDING
+        if not self._can_fill(order, fill_price):
+            return  # can't afford / no position — stays PENDING
+        self._execute_trade(order, fill_price)
+
+    def _match_pending_limit_orders(self, symbols: list[str]) -> None:
+        affected = set(symbols)
+        for order in list(self._orders.values()):
+            if (
+                order.status == OrderStatus.PENDING
+                and order.order_type != OrderType.MARKET
+                and order.symbol in affected
+            ):
+                self._try_fill_limit_order(order)
+
+    def _can_fill(self, order: PaperOrder, fill_price: float) -> bool:
+        """Affordability / position check shared by market and limit fills."""
+        if order.side == OrderSide.BUY:
+            cost = order.quantity * fill_price
+            commission = cost * self.commission_bps / 10_000.0
+            return cost + commission <= self._balance
+        position = self._positions.get(order.symbol)
+        return position is not None and position.quantity >= order.quantity
 
     def _execute_trade(self, order: PaperOrder, fill_price: float) -> None:
         order.status = OrderStatus.FILLED
         order.filled_quantity = order.quantity
         order.filled_price = fill_price
 
+        notional = order.quantity * fill_price
+        commission = notional * self.commission_bps / 10_000.0
+
         if order.side == OrderSide.BUY:
-            cost = order.quantity * fill_price
-            self._balance -= cost
+            self._balance -= notional
 
             if order.symbol in self._positions:
                 pos = self._positions[order.symbol]
@@ -250,8 +387,7 @@ class PaperBroker(BrokerAdapter):
                 self._positions[order.symbol] = PaperPosition(order.symbol, order.quantity, fill_price)
 
         else:  # SELL
-            revenue = order.quantity * fill_price
-            self._balance += revenue
+            self._balance += notional
 
             if order.symbol in self._positions:
                 pos = self._positions[order.symbol]
@@ -280,7 +416,21 @@ class PaperBroker(BrokerAdapter):
             else:
                 self._positions[order.symbol] = PaperPosition(order.symbol, -order.quantity, fill_price)
 
+        self._balance -= commission
         self._trade_history.append((order.symbol, fill_price, order.quantity, order.side.value))
+
+    def _order_result(self, order: PaperOrder) -> dict[str, Any]:
+        return {
+            "order_id": order.id,
+            "symbol": order.symbol,
+            "side": order.side.value,
+            "order_type": order.order_type.value,
+            "quantity": order.quantity,
+            "price": order.price,
+            "status": order.status.value,
+            "filled_quantity": order.filled_quantity,
+            "filled_price": order.filled_price,
+        }
 
     def get_position(self, symbol: str) -> PaperPosition | None:
         pos = self._positions.get(symbol)
@@ -307,10 +457,11 @@ class PaperBroker(BrokerAdapter):
         return self._trade_history.copy()
 
     def reset(self) -> None:
-        """Reset broker state while preserving initial cash balance."""
+        """Reset broker state while preserving initial cash + realism config."""
         self._balance = self._initial_balance
         self._positions.clear()
         self._orders.clear()
         self._trade_history.clear()
         self.market_prices.clear()
+        self._quotes.clear()
         self._connected = False
