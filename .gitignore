@@ -17,6 +17,11 @@ venv/
 .coverage
 htmlcov/
 
+# Secrets — never commit real credentials (.env.example is the committed template)
+.env
+.env.*
+!.env.example
+
 # Runtime data (SQLite dbs, audit logs, kill-switch flag)
 data/*.db
 data/*.db-wal

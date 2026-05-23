@@ -49,6 +49,9 @@ src/trading_agent/
   data_feed.py             # DataFeed ABC + in-process MessageBus
   feeds/
     csv_replay.py          # CSV / synthetic replay feed
+    live_quote.py          # Real quotes -> PaperBroker (live-data paper mode)
+  broker_factory.py        # Build Alpaca/CCXT brokers from env (paper default)
+  market_hours.py          # US equity RTH gate for PaperBroker
   config.py                # YAML global + TOML per-strategy + ${VAR} refs
   strategy_loader.py       # Resolves and loads per-strategy TOML
   db.py                    # SQLite WAL connection manager
@@ -57,6 +60,46 @@ src/trading_agent/
   models.py / enums.py     # Signal, Order, Position dataclasses + enums
   scripts/demo.py          # End-to-end demo entry point
 ```
+
+## Paper trading on real market data
+
+The `PaperBroker` is a simulator, but it can fill against **real** prices — two ways,
+modeled on Investopedia's stock simulator (real quotes, fake money):
+
+**Path A — Alpaca paper account (broker-hosted, most realistic).** Real data plus
+Alpaca's own server-side fills (spread, partial fills, market hours). Get free paper
+keys at <https://alpaca.markets>, put them in a gitignored `.env` (see `.env.example`):
+
+```python
+from trading_agent.broker_factory import build_alpaca_broker
+broker = build_alpaca_broker()          # paper=True by default
+broker.connect()                         # routes orders to Alpaca's paper account
+```
+
+**Path B — real quotes into the local PaperBroker (self-contained).** A `LiveQuoteFeed`
+polls any broker's `get_quote()` and feeds bid/ask/last into the PaperBroker, so market
+orders fill at the ask/bid and resting limit orders match on real price moves. Crypto
+public tickers need no API key:
+
+```python
+from trading_agent.broker_factory import build_ccxt_broker
+from trading_agent.data_feed import MessageBus
+from trading_agent.feeds import LiveQuoteFeed
+from trading_agent.paper_broker import PaperBroker
+
+source = build_ccxt_broker("binance")            # read-only public ticker source
+paper = PaperBroker(initial_balance=10_000, slippage_bps=2.0, commission_bps=1.0)
+paper.connect()
+feed = LiveQuoteFeed(MessageBus(), source, ["BTC/USDT"], paper_broker=paper, poll_interval=5.0)
+feed.poll_once()                                  # or: await feed.run()
+```
+
+`PaperBroker` realism knobs (all default off — behaviour unchanged unless set):
+`slippage_bps`, `commission_bps`, `is_market_open` (e.g. `market_hours.us_equity_clock()`),
+plus bid/ask-aware fills and limit-order matching via `update_quote()`.
+
+> ⚠️ Live (real-money) trading has never been exercised — only paper + mocked SDKs.
+> Smoke-test against an Alpaca **paper** account before ever setting `paper=False`.
 
 ## Configuration
 

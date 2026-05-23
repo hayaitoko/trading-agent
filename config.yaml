@@ -18,6 +18,14 @@ logging:
   level: INFO
   data_dir: "data"
 
+# Live-data paper trading (Path B): poll a real quote source into the PaperBroker.
+live_data:
+  enabled: false
+  poll_interval_seconds: 5
+  symbols: []              # e.g. ["AAPL", "MSFT"] or ["BTC/USDT"]
+  slippage_bps: 0.0        # adverse market-fill slippage
+  commission_bps: 0.0      # per-trade commission
+
 # Per-asset mode overrides (e.g., force approval for live equities).
 asset_modes:
   # AAPL: approval
