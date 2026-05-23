@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual env
+.venv/
+venv/
+
+# Test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime data (SQLite dbs, audit logs, kill-switch flag)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.jsonl
+data/.kill_switch
+
+# Artoo orchestrator working files
+.artoo/
+.failures/
+project_state.json
