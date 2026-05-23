@@ -1,0 +1,32 @@
+# Global trading-agent configuration. Per-strategy params live in
+# strategies/config/*.toml. Credential values use ${ENV_VAR} refs.
+
+mode: autonomous           # autonomous | approval (default for all assets)
+kill_switch_file: "data/.kill_switch"
+
+risk:
+  max_daily_loss: 1000.0
+  max_position_size: 100.0
+  max_trades_per_hour: 10
+  max_open_positions: 5
+
+approval:
+  timeout_seconds: 300
+  db_path: "data/approvals.db"
+
+logging:
+  level: INFO
+  data_dir: "data"
+
+# Per-asset mode overrides (e.g., force approval for live equities).
+asset_modes:
+  # AAPL: approval
+  # BTC/USDT: autonomous
+
+# Broker credentials. Set these env vars in your shell.
+credentials:
+  alpaca_key:    "${ALPACA_API_KEY}"
+  alpaca_secret: "${ALPACA_SECRET_KEY}"
+  alpaca_paper:  "true"
+  binance_key:    "${BINANCE_API_KEY:}"
+  binance_secret: "${BINANCE_SECRET_KEY:}"
