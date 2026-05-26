@@ -132,7 +132,7 @@ class ManagerAgent:
 config.py        GET /api/endpoints · POST /api/endpoints · DELETE /api/endpoints/{id}
                  GET/PUT /api/settings · GET /api/sources · POST /api/sources · DELETE /api/sources/{id}
                  POST /api/auth/signup · POST /api/auth/login · POST /api/auth/logout · GET /api/me
-bench.py         GET /api/accounts · GET /api/leaderboard · GET /api/positions · GET /api/activity
+bench.py         GET /api/accounts · POST /api/accounts (create trader — wizard) · GET /api/leaderboard · GET /api/positions · GET /api/activity
 research.py      GET /api/research · POST /api/research/run         (run = cost-gated, explicit)
 manager.py       GET /api/chats · POST /api/chat · POST /api/chats (save) · DELETE /api/chats/{id}
 risk.py          GET /api/risk · PUT /api/risk/limits · POST /api/risk/kill
@@ -154,6 +154,20 @@ calls exactly these; keep response shapes matching what `cockpit.html`'s render 
   → **WS-G (cockpit) must map** server fields ↔ the mock's field names: `base_url`↔`url`,
   `enabled`↔`on`, show `key_preview`/`has_key` instead of `key`. Same for `sources`.
 - **Deletes are path-id:** `DELETE /api/endpoints/{id}`, `DELETE /api/sources/{id}`.
+
+### Runtime wiring via `app.state` (added after Wave 2 — the serve entrypoint MUST attach these)
+Several routers read live engine objects off `app.state` *defensively* (degrade gracefully if absent).
+`create_cockpit_app` does NOT attach them yet — **the real serve process must**, or these stay mock/empty:
+- `app.state.bench` — a live `Bench` → powers `bench.py` (accounts/leaderboard/positions/activity),
+  feeds the manager's grounding, and the trader `.symbols` updated by the stock-request `universe_listener`.
+- `app.state.market_watch` — a `MarketMoveWatcher` → live alerts in the notifications feed.
+- (optional) `app.state.research` / `app.state.memory` → richer manager context.
+Without these: notifications = only the (real, per-user) stock requests; manager answers without book
+context; accounts/leaderboard/etc. fall back to the cockpit's mock. **See WS-I.**
+
+### Two tables created outside WS-0 schema (WS-H, idempotent)
+`trader_universe` and `notification_reads` are `CREATE TABLE IF NOT EXISTS` inside WS-H's stores, not in
+`config/db.py`. Works as-is; optionally centralize into WS-0's `SCHEMA` later.
 
 ---
 
