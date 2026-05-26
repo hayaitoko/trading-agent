@@ -22,11 +22,12 @@ htmlcov/
 .env.*
 !.env.example
 
-# Runtime data (SQLite dbs, audit logs, kill-switch flag)
+# Runtime data (SQLite dbs, audit logs, server logs, kill-switch flag)
 data/*.db
 data/*.db-wal
 data/*.db-shm
 data/*.jsonl
+data/*.log
 data/.kill_switch
 
 # Artoo orchestrator working files
