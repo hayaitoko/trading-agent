@@ -9,6 +9,9 @@ verified out-of-band via ``node --check``; here we pin the server contract.
 
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -76,3 +79,52 @@ def test_design_mock_untouched() -> None:
     text = _DESIGN.read_text()
     assert "any credentials work" in text
     assert "function api(" not in text
+
+
+def test_phase2_agent_surfaces_wired(client: TestClient) -> None:
+    # WS-G2: research / manager-chat / notifications+requests / notes / wizard
+    # call exactly the CONTRACTS routes (no invented ones besides the flagged
+    # bench create), through the same api() helper.
+    html = client.get("/").text
+    for marker in (
+        "/api/research",  # research feed
+        "/api/research/run",  # gated, explicit paid trigger
+        "runResearch(",
+        "loadResearch(",
+        "/api/chat",  # manager reply
+        "/api/chats",  # saved-chat list/save/delete
+        "loadChats(",
+        "currentConversationId",  # server-side conversation continuity
+        "/api/notifications",
+        "/api/notifications/read",
+        "loadNotifications(",
+        "/api/requests/",  # request allow/decline
+        "/api/notes",  # advisor notes get/put
+        "loadNotesIn(",
+    ):
+        assert marker in html, f"missing Phase-2 wiring marker: {marker}"
+
+
+def test_phase2_keeps_mock_fallbacks(client: TestClient) -> None:
+    # Each surface must keep its mock array/seed as the 501/offline fallback so an
+    # unfinished WS-C/E/H upstream still renders without errors (same rule as P1).
+    html = client.get("/").text
+    for marker in ("MGR_SEED", "function seedChats(", "let RESEARCH=", "let MEMORY=", "let NOTIFS="):
+        assert marker in html, f"missing mock fallback: {marker}"
+
+
+def test_cockpit_js_syntax_valid(tmp_path: Any) -> None:
+    # JS behaviour is verified out-of-band via `node --check`: pin that the wired
+    # SPA's single <script> block parses, so a bad edit can't ship silently.
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available for JS syntax check")
+    html = _STATIC.read_text()
+    match = re.search(r"<script>(.*)</script>", html, re.S)
+    assert match, "cockpit.html must contain a <script> block"
+    js = tmp_path / "cockpit.js"
+    js.write_text(match.group(1))
+    result = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        [node, "--check", str(js)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr

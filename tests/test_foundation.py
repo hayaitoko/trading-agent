@@ -361,25 +361,16 @@ STUB_ROUTES = [
     ("get", "/api/leaderboard"),
     ("get", "/api/positions"),
     ("get", "/api/activity"),
-    ("get", "/api/research"),
-    ("post", "/api/research/run"),
-    ("get", "/api/chats"),
-    ("post", "/api/chat"),
-    ("post", "/api/chats"),
-    ("delete", "/api/chats/abc"),
+    # /api/research* implemented by WS-C (see tests/test_research.py).
+    # /api/chats* and /api/chat are implemented by WS-E (see tests/test_manager.py).
     ("get", "/api/risk"),
     ("put", "/api/risk/limits"),
     ("post", "/api/risk/kill"),
     ("get", "/api/approvals"),
     ("post", "/api/approvals/abc/approve"),
     ("post", "/api/approvals/abc/reject"),
-    ("get", "/api/notifications"),
-    ("post", "/api/notifications/read"),
-    ("get", "/api/requests"),
-    ("post", "/api/requests/abc/allow"),
-    ("post", "/api/requests/abc/decline"),
-    ("get", "/api/notes"),
-    ("put", "/api/notes"),
+    # notifications/requests/notes are implemented by WS-H (see
+    # tests/test_requests_notes.py); no longer 501 stubs.
 ]
 
 

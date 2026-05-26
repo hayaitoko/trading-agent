@@ -852,7 +852,7 @@ let LIMITS = loadLimits();
 function saveLimits(){ const o={}; LIMITS.forEach(l=>o[l.key]=l.cap); localStorage.setItem("cockpit-limits", JSON.stringify(o));
   putSettings({risk_limits:o}); api("/api/risk/limits",{method:"PUT",body:o}).catch(()=>{}); }
 
-const RESEARCH=[
+let RESEARCH=[
   { who:"claude-opus-4.7", topic:"Apple (AAPL)", ts:"9m", tags:["AAPL","dip-buying","earnings"],
     text:"Apple tends to bounce after a sharp one-day drop when trading volume spikes. I'd rather buy the weakness than chase a rally." },
   { who:"deepseek-v4-pro", topic:"NVIDIA (NVDA)", ts:"22m", tags:["NVDA","chips","tight-stops"],
@@ -866,7 +866,7 @@ const RESEARCH=[
   { who:"kimi-k2.6", topic:"Microsoft (MSFT)", ts:"2h", tags:["MSFT","caution"],
     text:"Microsoft keeps stalling at the same ceiling. Trimming back until it proves it can hold above that level." },
 ];
-const MEMORY=[
+let MEMORY=[
   { who:"claude-opus-4.7", fact:"Got burned oversizing a trade on 5/19 — now keeps any single stock to about 0.9% risk." },
   { who:"deepseek-v4-pro", fact:"Best results come from breakouts backed by heavy volume; ignores the ones on light volume." },
   { who:"gemini-3.5-flash", fact:"Tends to chase moves — reminder to wait for a pullback before buying." },
@@ -904,6 +904,7 @@ let booted = false;         // app booted (declared early so applyTheme can read
 let ACTIVITY = null;        // live activity-log triples [lv,text,ts]; null => mock
 let killActive = false;     // emergency-stop state (GET /api/risk, POST /api/risk/kill)
 const LIVE = {};            // which surfaces resolved to live data
+let currentConversationId = null;  // active manager conversation id (WS-E /api/chat)
 
 function authToken(){ return sessionStorage.getItem("cockpit-token") || ""; }
 
@@ -973,10 +974,75 @@ async function loadSettings(){
 }
 function loadForTab(tab){
   ({ accounts:loadAccounts, positions:loadPositions, leaderboard:loadLeaderboard,
-     approvals:loadApprovals, audit:loadActivity, risk:loadRisk, settings:loadEndpoints
+     approvals:loadApprovals, audit:loadActivity, risk:loadRisk, settings:loadEndpoints,
+     research:loadResearch
    }[tab] || (()=>{}))();
 }
 function updateApPip(){ const p=document.getElementById("apPip"); if(p){ p.textContent=APPROVALS.length||""; p.style.display=APPROVALS.length?"":"none"; } }
+
+/* ----- Phase 2 (WS-G2) agent surfaces: research · chat · notifications · notes -----
+   Same contract as Phase 1 — fetch the CONTRACTS route, normalise onto the mock's
+   render shape, and fall back to the existing mock on 501/empty so an unfinished
+   upstream (WS-C/E/H) never breaks the page. Paid triggers stay explicitly gated. */
+function ago(s){ if(!s) return ""; const d=Math.max(0, Date.now()/1000 - s);
+  if(d<60) return "just now"; if(d<3600) return Math.floor(d/60)+"m";
+  if(d<86400) return Math.floor(d/3600)+"h"; return Math.floor(d/86400)+"d"; }
+function clockFromTs(s){ if(!s) return ""; const d=new Date(s*1000);
+  return isNaN(d.getTime())?"":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}); }
+
+// Research feed ← GET /api/research (a list, or {research,memory}). Memory has no
+// dedicated route, so it stays mock unless the payload includes it.
+function normBrief(r){ return { who:r.who||r.trader||r.trader_id||"research",
+  topic:r.topic||r.ticker||r.title||"Update", ts:r.ts||r.ago||"",
+  tags:r.tags||r.catalysts||[], text:r.text||r.summary||"" }; }
+function normLesson(m){ return { who:m.who||m.trader||m.trader_id||"", fact:m.fact||m.lesson||m.text||"" }; }
+async function loadResearch(){
+  try{ const d=await api("/api/research");
+    const feed=Array.isArray(d)?d:((d&&(d.research||d.briefs||d.feed))||null);
+    const mem =(d&&(d.memory||d.lessons))||null;
+    if(Array.isArray(feed)&&feed.length){ RESEARCH=feed.map(normBrief); LIVE.research=true; } else LIVE.research=false;
+    if(Array.isArray(mem)&&mem.length) MEMORY=mem.map(normLesson);
+  }catch(e){ LIVE.research=false; if(e.status===401&&booted) return signedOut(); }
+  if(booted) render();
+}
+// Gated paid trigger — explicit click, cost shown up front, one batched pass (no loop).
+async function runResearch(){
+  const p=PRICES[researchModel]||[0,0], perRun=6000/1e6*p[0]+1500/1e6*p[1];
+  if(!confirm("Run a research pass now with "+researchModel+"?\nEstimated cost ≈ $"+perRun.toFixed(3)+" (one batched pass).")) return;
+  toast("Research started", researchModel+" · ≈ $"+perRun.toFixed(3), "good");
+  try{ await api("/api/research/run",{method:"POST",body:{model:researchModel}}); await loadResearch();
+    toast("Research updated","new briefs are in","good"); }
+  catch(e){ if(e.status===401&&booted) return signedOut();
+    toast("Research unavailable", e.status===501?"the research agent isn't wired up yet":e.message, "bad"); }
+}
+
+// Notification center ← GET /api/notifications (the unified feed already folds in
+// pending stock-requests as type:"request" items whose id == the /api/requests id,
+// so allow/decline route straight through). Maps onto the mock's NOTIFS shape.
+function normNotif(n){ return { id:String(n.id!=null?n.id:"n"+Math.random().toString(36).slice(2)),
+  type:n.type||"alert", unread:n.unread!==undefined?!!n.unread:!n.read,
+  who:n.who||n.trader||"", t:n.t||n.title||n.text||"", m:n.m||n.message||n.body||"",
+  ts:n.ts||ago(n.created_at) }; }
+async function loadNotifications(){
+  try{ const n=await api("/api/notifications"); const arr=Array.isArray(n)?n:((n&&n.items)||null);
+    // backend-populated surface → keep the mock feed until real items exist (Phase-1 rule)
+    if(Array.isArray(arr)&&arr.length){ NOTIFS=arr.map(normNotif); LIVE.notifs=true; } else LIVE.notifs=false; }
+  catch(e){ LIVE.notifs=false; if(e.status===401&&booted) return signedOut(); }
+  updateBell(); if(document.getElementById("notif").classList.contains("open")) renderNotif();
+}
+
+// Saved manager chats ← GET /api/chats; the rendered transcript travels as `html`
+// (or is rebuilt from `turns`). localStorage history stays the offline fallback.
+function turnsToHtml(turns){ if(!Array.isArray(turns)) return "";
+  return turns.map(t=>{ const u=(t.role==="user"||t.role==="you");
+    return `<div class="msg ${u?"user":"bot"}"><div class="who">${u?"you":"manager"}</div>${esc(t.content||t.text||"")}</div>`; }).join(""); }
+function normChat(c){ return { id:String(c.id), title:c.title||"Chat",
+  ts:c.ts||clockFromTs(c.started_at)||hhmm(), html:c.html||turnsToHtml(c.turns), turns:c.turns }; }
+async function loadChats(){
+  try{ const d=await api("/api/chats");
+    if(Array.isArray(d)){ SAVED=d.map(normChat); LIVE.chats=true; renderChatList(); } else LIVE.chats=false; }
+  catch(e){ LIVE.chats=false; if(e.status===401&&booted) return signedOut(); }
+}
 
 function fleet(){ const start=100000*ACCOUNTS.length, total=ACCOUNTS.reduce((s,a)=>s+a.value,0), pnl=total-start;
   const byret=[...ACCOUNTS].sort((a,b)=>b.ret-a.ret);
@@ -1067,7 +1133,7 @@ const VIEWS = {
               ${p.notes.map(n=>`<div class="agentnote"><span class="src">${n[0]}</span><span>${esc(n[1])}</span></div>`).join("")}
               <div class="sectlabel">Your notes on ${p.name}</div>
               <textarea class="notebox" placeholder="Your own take on ${p.sym}…" data-note="ticker:${p.sym}" oninput="onNote(this)"></textarea>
-              <div class="notehint"><span class="dotok"></span>saved locally · this browser only</div>
+              <div class="notehint"><span class="dotok"></span>saved to your account</div>
             </div>
           </div>
         </div>`;}).join("")}</div>`;
@@ -1078,7 +1144,8 @@ const VIEWS = {
     const mem = researchFilter==="all" ? MEMORY : MEMORY.filter(m=>m.who===researchFilter);
     return head("03 / Research","What they're learning","Each trader's research, notes, and the things it remembers — the thinking behind the trades. This is where research → notes → memory will live.")
       + `<div class="filterbar"><span class="fchip ${researchFilter==="all"?"on":""}" onclick="setResearch('all')">All traders</span>
-        ${traders.map(t=>`<span class="fchip ${researchFilter===t?"on":""}" onclick="setResearch('${t}')">${t}</span>`).join("")}</div>
+        ${traders.map(t=>`<span class="fchip ${researchFilter===t?"on":""}" onclick="setResearch('${t}')">${t}</span>`).join("")}
+        <button class="btn go" style="margin-left:auto;padding:7px 14px;font-size:12px" onclick="runResearch()">↻ Run research now</button></div>
       <div class="rgrid">${feed.map((r,i)=>`<div class="rcard" style="--i:${i}">
         <div class="rh"><span class="rtopic">${r.topic}</span><span class="chip">${r.who}</span><span class="ago">${r.ts} ago</span></div>
         <div class="rtext">${esc(r.text)}</div>
@@ -1250,7 +1317,7 @@ async function toggleEndpoint(id){ const e=ENDPOINTS.find(x=>x.id===id); if(!e) 
 
 /* ===================== ROUTER ===================== */
 let currentTab="accounts";
-function render(){ document.getElementById("view").innerHTML = VIEWS[currentTab](); }
+function render(){ const v=document.getElementById("view"); v.innerHTML = VIEWS[currentTab](); loadNotesIn(v); }
 document.getElementById("tabs").addEventListener("click", e=>{
   const b=e.target.closest(".tab"); if(!b) return;
   document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
@@ -1297,7 +1364,7 @@ function openAcct(i){
         return `<div class="holder"><span class="ha">${p.sym}</span><span class="hn"><span>${p.qty} @ $${money2(p.avg)}</span><span>now $${money(p.qty*p.price)}</span><span class="${c}">${sgn(pl)}$${money(pl)}</span></span></div>`;}).join(""):'<div class="desc">Not holding anything right now.</div>'}
       <div class="sectlabel">Your notes <span style="text-transform:none;letter-spacing:0">— jot down anything you've noticed about this trader</span></div>
       <textarea class="notebox" placeholder="e.g. keep an eye on how much it's risking, likes to buy the dip…" data-note="acct:${a.name}" oninput="onNote(this)"></textarea>
-      <div class="notehint"><span class="dotok"></span>saved on this device</div>
+      <div class="notehint"><span class="dotok"></span>saved to your account</div>
       <div class="collapse"><div class="collapse-head" onclick="toggleCollapse(this)">Everything it's traded · ${hist.length} <span class="chev">▶</span></div>
         <div class="collapse-body" style="padding:4px 0">${hist.map(h=>{ const lv=h.status==="filled"?(h.action==="BUY"?"trade":"trade"):(h.status==="rejected"||h.status==="blocked"?"warn":"info");
           return `<div class="log"><span class="lv ${lv}">${h.action}</span><span class="mono">${h.qty} ${h.sym} @ $${money2(h.price)}</span><span class="code2">${h.status}</span><span style="color:var(--muted)">${h.reason}</span><span class="ts">${h.ts}</span></div>`;}).join("")}</div></div>
@@ -1316,9 +1383,27 @@ function makeDraggable(w, handle){ if(!handle) return; let sx,sy,ox,oy,on=false;
 }
 function toggleCollapse(h){ h.closest(".collapse").classList.toggle("open"); }
 
-/* ===================== NOTES (localStorage) ===================== */
-function onNote(el){ localStorage.setItem("cockpit-note:"+el.dataset.note, el.value); }
-function loadNotesIn(root){ root.querySelectorAll("[data-note]").forEach(el=>{ el.value = localStorage.getItem("cockpit-note:"+el.dataset.note)||""; }); }
+/* ===================== ADVISOR NOTES (server-backed via GET/PUT /api/notes) =====================
+   data-note keys are "acct:<trader>" / "ticker:<symbol>"; map "acct"→scope "trader"
+   to match CONTRACTS notes.scope∈{trader,ticker}. localStorage stays a write-through
+   cache + offline fallback; once the notes route 501s we stop hitting it. */
+function noteScopeRef(key){ const i=key.indexOf(":"); const raw=key.slice(0,i), ref=key.slice(i+1);
+  return { scope: raw==="acct"?"trader":raw, ref }; }
+function onNote(el){ localStorage.setItem("cockpit-note:"+el.dataset.note, el.value);   // local cache + offline fallback
+  if(LIVE.notes===false) return;
+  const {scope,ref}=noteScopeRef(el.dataset.note); clearTimeout(el._noteT);
+  el._noteT=setTimeout(()=>{ api("/api/notes?scope="+encodeURIComponent(scope)+"&ref="+encodeURIComponent(ref),{method:"PUT",body:{text:el.value}})
+    .then(()=>{ LIVE.notes=true; }).catch(e=>{ if(e.status===401&&booted) return signedOut(); LIVE.notes=false; }); }, 600); }   // debounce typing
+async function loadNotesIn(root){
+  const els=[...root.querySelectorAll("[data-note]")];
+  for(const el of els){ el.value = localStorage.getItem("cockpit-note:"+el.dataset.note)||"";   // instant local paint
+    if(LIVE.notes===false) continue;
+    const {scope,ref}=noteScopeRef(el.dataset.note);
+    try{ const d=await api("/api/notes?scope="+encodeURIComponent(scope)+"&ref="+encodeURIComponent(ref));
+      LIVE.notes=true; const text=(d&&typeof d==="object")?(d.text!=null?d.text:(d.note&&d.note.text)||""):(d||"");
+      if(text) el.value=text; }   // server value wins when present, else keep local cache
+    catch(e){ if(e.status===401&&booted) return signedOut(); LIVE.notes=false; } }
+}
 
 /* ===================== MANAGER CHAT ===================== */
 const MGR_SEED=[
@@ -1326,13 +1411,25 @@ const MGR_SEED=[
 ];
 function resetChat(){ const log=document.getElementById("chatLog");
   log.innerHTML = MGR_SEED.map(([who,t])=>`<div class="msg ${who==="you"?"user":"bot"}"><div class="who">${who}</div>${t}</div>`).join("");
-  log.scrollTop=log.scrollHeight; }
-function sendMsg(){ const box=document.getElementById("chatBox"), txt=box.value.trim(); if(!txt) return;
+  log.scrollTop=log.scrollHeight; currentConversationId=null; }
+// Manager reply ← POST /api/chat (reads bench + research + memory server-side).
+// Falls back to the mock canned reply so the chat still answers if WS-E is unwired.
+async function sendMsg(){ const box=document.getElementById("chatBox"), txt=box.value.trim(); if(!txt) return;
   const log=document.getElementById("chatLog");
   log.insertAdjacentHTML("beforeend",`<div class="msg user"><div class="who">you</div>${esc(txt)}</div>`); box.value=""; log.scrollTop=log.scrollHeight;
-  setTimeout(()=>{ log.insertAdjacentHTML("beforeend",`<div class="msg bot"><div class="who">manager</div>(mock) Once wired, the manager model reasons across all six books and answers here. The per-account models only emit buy/sell/hold.</div>`);
-    log.scrollTop=log.scrollHeight; setCtx(Math.min(0.95, ctxFrac+0.06)); }, 420); }
-function wipeCtx(){ document.getElementById("chatLog").innerHTML=`<div class="msg sys">Context wiped · fresh manager conversation</div>`; setCtx(0.02); toast("Context wiped","fresh manager conversation","good"); }
+  try{
+    const data=await api("/api/chat",{method:"POST",body:{message:txt, conversation_id:currentConversationId}});
+    const reply=(data&&(data.reply||data.content||data.text||data.message))||"";
+    if(data&&data.conversation_id) currentConversationId=data.conversation_id;
+    log.insertAdjacentHTML("beforeend",`<div class="msg bot"><div class="who">manager</div>${esc(reply)||"(no reply)"}</div>`); log.scrollTop=log.scrollHeight;
+    if(data&&typeof data.context_frac==="number") setCtx(Math.min(0.98,data.context_frac));
+    else if(data&&typeof data.tokens==="number") setCtx(Math.min(0.98,data.tokens/200000));
+    else setCtx(Math.min(0.95, ctxFrac+0.06));
+  }catch(e){
+    if(e.status===401&&booted) return signedOut();
+    log.insertAdjacentHTML("beforeend",`<div class="msg bot"><div class="who">manager</div>(mock) Once wired, the manager model reasons across all six books and answers here. The per-account models only emit buy/sell/hold.</div>`);
+    log.scrollTop=log.scrollHeight; setCtx(Math.min(0.95, ctxFrac+0.06)); } }
+function wipeCtx(){ document.getElementById("chatLog").innerHTML=`<div class="msg sys">Context wiped · fresh manager conversation</div>`; setCtx(0.02); currentConversationId=null; toast("Context wiped","fresh manager conversation","good"); }
 let ctxFrac=0.38;
 function setCtx(frac){ ctxFrac=frac; const C=2*Math.PI*22;
   document.getElementById("ctxArc").setAttribute("stroke-dashoffset",(C*(1-frac)).toFixed(1));
@@ -1417,9 +1514,20 @@ function renderWiz(){
 }
 function wizSet(k,v){ WIZ[k]=v; if(k==="style") renderWiz(); }
 function wizGo(d){ WIZ.step=Math.max(1,Math.min(3,WIZ.step+d)); renderWiz(); }
-function wizCreate(){
+// Create the trader server-side via the bench resource, then re-pull /api/accounts.
+// NOTE: CONTRACTS' route table lists no explicit create route for the bench
+// router — wired optimistically to POST /api/accounts and flagged. On any
+// error (incl. 501/404 until that route lands) we fall back to the mock's
+// local-only create so the wizard never breaks.
+async function wizCreate(){
   const short=(WIZ.name||WIZ.model.split("/").pop()).trim(), prov=WIZ.model.split("/")[0];
   SLUG[short]=WIZ.model;
+  try{
+    await api("/api/accounts",{method:"POST",body:{name:short, model:WIZ.model, cash:WIZ.cash, style:WIZ.style}});
+    if(!COMPETITORS.includes(short)) COMPETITORS.push(short);
+    closeWin(); gotoTab("accounts"); loadAccounts();
+    toast("Trader added",short+" · funded $"+money(WIZ.cash),"good"); return;
+  }catch(e){ if(e.status===401&&booted) return signedOut(); }   // no create route yet → local fallback
   ACCOUNTS.push({ name:short, prov, value:WIZ.cash, ret:0, status:"idle", cash:WIZ.cash, pos:0, trades:0, win:0, dec:0, act:"HOLD", sym:"—" });
   if(!COMPETITORS.includes(short)) COMPETITORS.push(short);
   closeWin(); currentTab="accounts";
@@ -1446,16 +1554,25 @@ const hhmm=()=>new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"
 function saveChat(silent){ const log=document.getElementById("chatLog");
   const firstUser=[...log.querySelectorAll(".msg.user")].map(m=>m.textContent.replace(/^you/i,"").trim()).find(Boolean);
   const title=firstUser?firstUser.slice(0,42):("Chat · "+hhmm());
-  SAVED.unshift({ id:"c"+Date.now(), title, ts:hhmm(), html:log.innerHTML }); persistChats(); renderChatList();
+  // Server already persists turns per /api/chat; saving just titles the conversation
+  // so it shows in list_saved (SaveIn = {conversation_id, title}). Needs a live id.
+  if(LIVE.chats && currentConversationId){ api("/api/chats",{method:"POST",body:{conversation_id:currentConversationId, title}})
+      .then(loadChats).catch(e=>{ if(e.status===401&&booted) return signedOut(); toast("Couldn't save chat",e.message,"bad"); }); }
+  else { SAVED.unshift({ id:"c"+Date.now(), title, ts:hhmm(), html:log.innerHTML }); persistChats(); renderChatList(); }
   if(!silent) toast("Chat saved","added to Previous chats","good"); }
 function showChatLog(){ document.getElementById("chatHist").hidden=true; document.getElementById("chatLog").hidden=false; document.getElementById("histBtn").classList.remove("on"); }
 function toggleHist(){ const h=document.getElementById("chatHist"); const show=h.hasAttribute("hidden");
   h.hidden=!show; document.getElementById("chatLog").hidden=show; document.getElementById("histBtn").classList.toggle("on",show); if(show) renderChatList(); }
 function newChat(){ const log=document.getElementById("chatLog"); if(log.querySelector(".msg.user")) saveChat(true);
   resetChat(); showChatLog(); toast("New chat","previous one saved to history","good"); }
-function loadChat(id){ const c=SAVED.find(c=>c.id===id); if(!c) return; document.getElementById("chatLog").innerHTML=c.html;
+function loadChat(id){ const c=SAVED.find(c=>String(c.id)===String(id)); if(!c) return;
+  document.getElementById("chatLog").innerHTML = c.html || turnsToHtml(c.turns) || `<div class="msg sys">Conversation restored.</div>`;
+  if(LIVE.chats && c.id) currentConversationId=c.id;   // continue this conversation server-side
   showChatLog(); toast("Chat loaded",c.title); }
-function delChat(e,id){ e.stopPropagation(); SAVED=SAVED.filter(c=>c.id!==id); persistChats(); renderChatList(); }
+function delChat(e,id){ e.stopPropagation();
+  if(LIVE.chats){ api("/api/chats/"+encodeURIComponent(id),{method:"DELETE"})
+      .then(loadChats).catch(err=>{ if(err.status===401&&booted) return signedOut(); toast("Couldn't delete chat",err.message,"bad"); }); return; }
+  SAVED=SAVED.filter(c=>c.id!==id); persistChats(); renderChatList(); }
 
 /* ===================== NOTIFICATION CENTER ===================== */
 let NOTIFS=[
@@ -1479,12 +1596,21 @@ function renderNotif(){ const list=document.getElementById("notifList");
     + (rest.length?`<div class="ntsec">Recent</div>`+rest.map(ntItem).join(""):""); }
 function toggleNotif(e){ if(e&&e.stopPropagation) e.stopPropagation(); pop.classList.remove("open"); paletteBtn.classList.remove("on");
   const n=document.getElementById("notif"), s=document.getElementById("notifScrim"); const open=n.classList.toggle("open");
-  s.hidden=!open; document.getElementById("bellBtn").classList.toggle("on",open); if(open) renderNotif(); }
-function reqAct(id,ok){ const n=NOTIFS.find(x=>x.id===id); if(!n)return; NOTIFS=NOTIFS.filter(x=>x.id!==id);
-  renderNotif(); updateBell(); toast(ok?"Request allowed":"Request declined", n.who+" · "+(ok?"can now trade it":"won't trade it"), ok?"good":"bad"); }
-function markAllRead(){ NOTIFS.forEach(n=>n.unread=false); renderNotif(); updateBell(); toast("Marked all read"); }
+  s.hidden=!open; document.getElementById("bellBtn").classList.toggle("on",open);
+  if(open){ renderNotif(); if(LIVE.notifs!==false) loadNotifications(); } }   // refresh from server on open
+// Allow/decline a stock request ← POST /api/requests/{id}/allow|decline (WS-H).
+async function reqAct(id,ok){ const n=NOTIFS.find(x=>x.id===id); if(!n)return;
+  if(LIVE.notifs){ try{ await api("/api/requests/"+encodeURIComponent(id)+"/"+(ok?"allow":"decline"),{method:"POST"}); }
+    catch(e){ if(e.status===401&&booted) return signedOut(); toast("Action failed",e.message,"bad"); return; } }
+  NOTIFS=NOTIFS.filter(x=>x.id!==id); renderNotif(); updateBell();
+  toast(ok?"Request allowed":"Request declined", (n.who?n.who+" · ":"")+(ok?"can now trade it":"won't trade it"), ok?"good":"bad");
+  if(LIVE.notifs) loadNotifications(); }
+async function markAllRead(){
+  if(LIVE.notifs){ try{ await api("/api/notifications/read",{method:"POST",body:{ids:NOTIFS.filter(n=>n.unread).map(n=>n.id)}}); }
+    catch(e){ if(e.status===401&&booted) return signedOut(); } }
+  NOTIFS.forEach(n=>n.unread=false); renderNotif(); updateBell(); toast("Marked all read"); }
 let simmed=false;
-function simNotif(){ if(simmed)return; simmed=true;
+function simNotif(){ if(simmed||LIVE.notifs)return; simmed=true;   // skip the demo injection once live data is flowing
   NOTIFS.unshift({ id:"n"+Date.now(), type:"request", unread:true, who:"grok-4.3", t:"Wants to start trading Amazon (AMZN)", m:"Asking for your OK before buying a new stock.", ts:"just now" });
   updateBell(); if(document.getElementById("notif").classList.contains("open")) renderNotif();
   toast("New stock request","grok-4.3 wants to trade Amazon (AMZN)","good"); }
@@ -1567,6 +1693,7 @@ async function bootApp(){ if(booted) return; booted=true;
   resetChat(); setCtx(0.38); renderChatList(); renderNotif(); updateBell();
   render(); updatePips();                      // first paint (mock); live loaders re-render as they resolve
   loadAccounts(); loadPositions(); loadApprovals(); loadEndpoints();  // graceful mock fallback on 501
+  loadNotifications(); loadChats();            // Phase 2: bell badge + saved chats from the server
   const clock=()=>document.getElementById("clock").textContent=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
   clock(); setInterval(clock,1000);
   setTimeout(simNotif, 16000); }
