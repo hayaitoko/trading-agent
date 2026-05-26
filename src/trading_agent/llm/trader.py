@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from .openrouter import OpenRouterError, parse_json_object
 
 if TYPE_CHECKING:
+    from ..data.history import HistoryService
     from ..strategy import Strategy
     from .openrouter import OpenRouterClient
 
@@ -93,6 +94,7 @@ class LLMTrader:
         lookback: int = 30,
         temperature: float = 0.3,
         max_tokens: int = 800,
+        history: HistoryService | None = None,
     ) -> None:
         self.model = model
         self.client = client
@@ -101,6 +103,10 @@ class LLMTrader:
         self.lookback = lookback
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # WS-A: when injected, the trader sees a richer historical + fundamentals
+        # context block instead of just the last `lookback` closes. Optional so
+        # the bench/back-compat path (no history) is unchanged.
+        self.history = history
         self._bars: dict[str, deque[dict[str, Any]]] = {
             s: deque(maxlen=lookback) for s in self.symbols
         }
@@ -141,6 +147,10 @@ class LLMTrader:
     # --- internals ----------------------------------------------------------
 
     def _build_context(self, account: dict[str, Any]) -> str:
+        # When a HistoryService is injected, delegate to its richer context block
+        # (downsampled long view + dense recent OHLCV window + fundamentals).
+        if self.history is not None:
+            return self.history.context_block(self.symbols, account)
         lines = [
             f"Cash available: {account.get('cash', 0):,.2f}",
             f"Positions: {account.get('positions', [])}",
