@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Trading Agent — Alerts</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+    --muted: #8b949e; --action: #1f6feb; --warn: #d29922; --crit: #f85149;
+    --info: #2ea043; --ok: #2ea043;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  }
+  header {
+    position: sticky; top: 0; background: var(--panel);
+    border-bottom: 1px solid var(--border); padding: 12px 16px; z-index: 10;
+  }
+  header .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .status { font-size: 12px; color: var(--muted); }
+  .status .dot { color: var(--ok); }
+  .account {
+    display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 13px;
+  }
+  .account .k { color: var(--muted); }
+  .account .v { font-variant-numeric: tabular-nums; }
+  .pnl-pos { color: var(--ok); } .pnl-neg { color: var(--crit); }
+  main { padding: 12px 16px 40px; max-width: 720px; margin: 0 auto; }
+  section { margin-bottom: 22px; }
+  .sec-title {
+    display: flex; align-items: center; gap: 8px; font-size: 13px;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px;
+  }
+  .badge {
+    min-width: 20px; text-align: center; border-radius: 10px; padding: 1px 7px;
+    font-size: 12px; background: var(--border); color: var(--text);
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-left-width: 3px;
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+  }
+  .card.action { border-left-color: var(--action); }
+  .card.warning { border-left-color: var(--warn); }
+  .card.critical { border-left-color: var(--crit); }
+  .card.info { border-left-color: var(--info); }
+  .card .title { font-weight: 600; }
+  .card .body { color: var(--muted); font-size: 13px; margin-top: 2px; word-break: break-word; }
+  .card .ts { color: var(--muted); font-size: 11px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; }
+  button {
+    flex: 1; border: none; border-radius: 6px; padding: 10px; font-size: 14px;
+    font-weight: 600; color: #fff; cursor: pointer;
+  }
+  button.approve { background: var(--info); }
+  button.reject { background: var(--crit); }
+  button:disabled { opacity: .5; }
+  .empty { color: var(--muted); font-size: 13px; font-style: italic; padding: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>Trading Agent — Alerts</h1>
+    <span class="status" id="status"><span class="dot">●</span> connecting…</span>
+  </div>
+  <div class="account" id="account"></div>
+</header>
+<main>
+  <section>
+    <div class="sec-title">Pending approvals <span class="badge" id="c-approvals">0</span></div>
+    <div id="approvals"></div>
+  </section>
+  <section>
+    <div class="sec-title">Risk alerts <span class="badge" id="c-risk">0</span></div>
+    <div id="risk"></div>
+  </section>
+  <section>
+    <div class="sec-title">Market moves <span class="badge" id="c-market">0</span></div>
+    <div id="market"></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let busy = new Set();
+
+function fmtTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  if (isNaN(d)) return iso;
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function num(v) {
+  return (v === null || v === undefined) ? "—"
+    : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderAccount(a) {
+  const el = $("account");
+  if (!a) { el.innerHTML = ""; return; }
+  if (a.error) { el.innerHTML = `<span class="k">account:</span> <span class="v">${a.error}</span>`; return; }
+  const pnl = a.pnl ?? 0;
+  const cls = pnl >= 0 ? "pnl-pos" : "pnl-neg";
+  const sign = pnl >= 0 ? "+" : "";
+  el.innerHTML = `
+    <span><span class="k">cash</span> <span class="v">${num(a.cash)}</span></span>
+    <span><span class="k">value</span> <span class="v">${num(a.market_value)}</span></span>
+    <span><span class="k">P&L</span> <span class="v ${cls}">${sign}${num(pnl)}</span></span>
+    <span><span class="k">positions</span> <span class="v">${a.positions_count ?? 0}</span></span>`;
+}
+
+function card(n) {
+  const div = document.createElement("div");
+  div.className = `card ${n.severity}`;
+  let html = `<div class="title">${n.title}</div>
+              <div class="body">${n.body || ""}</div>
+              <div class="ts">${fmtTime(n.timestamp)}</div>`;
+  if (n.actionable && n.proposal_id) {
+    const pid = n.proposal_id;
+    const dis = busy.has(pid) ? "disabled" : "";
+    html += `<div class="actions">
+      <button class="approve" ${dis} onclick="decide('${pid}','approve')">Approve</button>
+      <button class="reject" ${dis} onclick="decide('${pid}','reject')">Reject</button></div>`;
+  }
+  div.innerHTML = html;
+  return div;
+}
+
+function fill(containerId, items) {
+  const el = $(containerId);
+  el.innerHTML = "";
+  if (!items.length) {
+    const e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = "Nothing here.";
+    el.appendChild(e);
+    return;
+  }
+  items.forEach((n) => el.appendChild(card(n)));
+}
+
+async function decide(pid, action) {
+  busy.add(pid);
+  try {
+    const r = await fetch(`/api/approvals/${pid}/${action}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert(`${action} failed: ${e.detail || r.status}`);
+    }
+  } catch (e) {
+    alert(`${action} failed: ${e}`);
+  } finally {
+    busy.delete(pid);
+    refresh();
+  }
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/notifications", { cache: "no-store" });
+    const d = await r.json();
+    renderAccount(d.account);
+    $("c-approvals").textContent = d.counts.approvals;
+    $("c-risk").textContent = d.counts.risk;
+    $("c-market").textContent = d.counts.market;
+    fill("approvals", d.approvals);
+    fill("risk", d.risk);
+    fill("market", d.market);
+    $("status").innerHTML = `<span class="dot">●</span> live · ${fmtTime(d.generated_at)}`;
+  } catch (e) {
+    $("status").innerHTML = `<span class="dot" style="color:var(--crit)">●</span> offline`;
+  }
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
