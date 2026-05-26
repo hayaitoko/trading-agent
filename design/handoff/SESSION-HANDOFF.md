@@ -68,3 +68,30 @@ on `ws0-foundation` (foundation → docs → Wave1 → Wave2). No deletions, no 
 - Endpoint API masks keys (`key_preview`/`has_key`, never raw); cockpit maps `base_url`↔`url`, `enabled`↔`on`.
 - Agent memory writes are allowlisted (no prompts). Key memory: `trading-agent-agent-architecture`,
   `trading-agent-cockpit-redesign`.
+
+---
+
+## ▶ NEXT AGENT: hand this WS-I prompt to Lukas (do NOT run it in your own context)
+
+WS-I is run the same way as the other workstreams — as a **separate Claude Code instance Lukas fires
+in its own terminal**, not inside your context. So **don't implement WS-I yourself.** Instead, give
+Lukas the copy-paste prompt below and let him launch it. (After it finishes, do the integration pass +
+checkpoint commit, like the earlier waves.)
+
+> You are working in the repo `/home/hayai/projects/trading-agent-build-a-python-trading`. Use its
+> `.venv` for everything. **Step 1 — get oriented:** explore the repo, then read
+> `design/handoff/SESSION-HANDOFF.md`, `design/handoff/CONTRACTS.md` (the shared law, incl. the
+> "Runtime wiring via app.state" and the `POST /api/accounts` create route), and your brief
+> `design/handoff/workstreams/I-engine-wiring.md` — that brief is your spec.
+>
+> Implement **Workstream I — Engine wiring:** make `web/routers/bench.py`, `risk.py`, and
+> `approvals.py` return live data from `app.state.bench` (`Bench`/`BenchController`), `RiskManager`,
+> and `ApprovalQueue`; add `POST /api/accounts` (the add-trader wizard create route); attach
+> `app.state.bench` + `app.state.market_watch` in the serve entrypoint; and reconcile the cosmetic
+> manager model picker (persist the cockpit selector to the settings key `resolve_manager_ref` reads).
+> Remove the routes you implement from `tests/test_foundation.py`'s `STUB_ROUTES` (shed-your-own-rows).
+>
+> **Rules:** stay within the files named in the brief; match the cockpit's expected response shapes
+> (see the mock arrays in `design/cockpit.html`); keep response keys aligned with CONTRACTS. Add tests.
+> Before finishing run `.venv/bin/pytest`, `.venv/bin/ruff check .`, `.venv/bin/mypy src` and report
+> results. Flag any shared-interface change. Do not push to GitHub or merge branches.
