@@ -1,0 +1,23 @@
+"""Notifications router (WS-H/G fill in; over notification center). Stubbed 501."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from ...config.users import current_user
+
+router = APIRouter(tags=["notifications"])
+
+_NOT_IMPLEMENTED = "not implemented yet"
+
+
+@router.get("/api/notifications")
+def notifications(user_id: str = Depends(current_user)) -> dict[str, Any]:
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
+
+
+@router.post("/api/notifications/read")
+def mark_read(user_id: str = Depends(current_user)) -> dict[str, Any]:
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)

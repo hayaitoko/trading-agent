@@ -1,32 +1,64 @@
-"""FastAPI application for the notification center.
+"""FastAPI applications for the trading agent.
 
-Endpoints:
-    GET  /                              -> single-page UI
-    GET  /api/notifications             -> NotificationCenter.snapshot()
-    POST /api/approvals/{pid}/approve   -> ApprovalQueue.approve() (executes)
-    POST /api/approvals/{pid}/reject    -> ApprovalQueue.reject()
-    GET  /api/health                    -> liveness
+Two apps live here:
 
-The app holds references to a live ``NotificationCenter`` and ``ApprovalQueue``;
-approve/reject run the queue's executor, so the app must share the process (and
-the in-memory broker) that owns that executor. ``trading-agent-serve`` wires
-this up end to end.
+1. :func:`create_app` — the original single-process **notification-center** app
+   (live ``NotificationCenter`` + ``ApprovalQueue``), wired end to end by
+   ``trading-agent-serve``. Unchanged.
+
+2. :func:`create_cockpit_app` — the **multi-user cockpit** app (WS-0). It mounts
+   one router per workstream (``CONTRACTS.md §HTTP route table``), wires the
+   SQLite-backed per-user spine (auth/sessions, settings, endpoint registry) onto
+   ``app.state``, and serves the cockpit SPA. ``config`` is fully implemented;
+   every other router answers 501 until its owning stream fills it in.
+
+The module exposes a lazily-built default cockpit ``app`` so
+``uvicorn trading_agent.web.app:app`` works without import-time DB side effects
+for callers that only want :func:`create_app` / :func:`create_cockpit_app`.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+
+from ..config.db import Database
+from ..config.endpoints import EndpointRegistry
+from ..config.settings_store import SettingsStore
+from .routers import approvals as approvals_router
+from .routers import bench as bench_router
+from .routers import config as config_router
+from .routers import manager as manager_router
+from .routers import notes as notes_router
+from .routers import notifications as notifications_router
+from .routers import requests as requests_router
+from .routers import research as research_router
+from .routers import risk as risk_router
 
 if TYPE_CHECKING:
     from ..approval_queue import ApprovalQueue
     from .notifications import NotificationCenter
 
 _STATIC_DIR = Path(__file__).parent / "static"
+
+# Every workstream router, in route-table order. WS-G copies cockpit.html into
+# static/ and swaps the mock data for fetch() calls against these.
+_COCKPIT_ROUTERS = (
+    config_router.router,
+    bench_router.router,
+    research_router.router,
+    manager_router.router,
+    risk_router.router,
+    approvals_router.router,
+    notifications_router.router,
+    requests_router.router,
+    notes_router.router,
+)
 
 
 class Decision(BaseModel):
@@ -80,3 +112,54 @@ def create_app(
         return JSONResponse({"status": "rejected"})
 
     return app
+
+
+def create_cockpit_app(
+    db: Database | None = None,
+    *,
+    transport: httpx.BaseTransport | None = None,
+    title: str = "Trading Agent — Cockpit",
+) -> FastAPI:
+    """Build the multi-user cockpit app (WS-0 spine + all stream routers).
+
+    ``db`` lets tests pass an isolated ``Database(tmp_path)``; ``transport`` is a
+    test seam injected into every endpoint client so model calls can be mocked.
+    """
+    database = db if db is not None else Database()
+    app = FastAPI(title=title, docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app.state.db = database
+    app.state.settings = SettingsStore(database)
+    app.state.endpoints = EndpointRegistry(database, transport=transport)
+
+    for router in _COCKPIT_ROUTERS:
+        app.include_router(router)
+
+    @app.get("/api/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/", include_in_schema=False)
+    def index() -> Any:
+        cockpit = _STATIC_DIR / "cockpit.html"
+        if cockpit.exists():  # WS-G drops the wired SPA here
+            return FileResponse(cockpit)
+        return JSONResponse(
+            {"app": "trading-agent cockpit", "note": "UI pending WS-G; API under /api"}
+        )
+
+    return app
+
+
+# Lazily-built default cockpit app for `uvicorn trading_agent.web.app:app`.
+# Built on first attribute access (PEP 562) so importing this module for its
+# factories doesn't touch the default data/config.db.
+_default_app: FastAPI | None = None
+
+
+def __getattr__(name: str) -> Any:
+    if name == "app":
+        global _default_app
+        if _default_app is None:
+            _default_app = create_cockpit_app()
+        return _default_app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
