@@ -101,6 +101,10 @@ def _build_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     import uvicorn
 
+    argv = sys.argv[1:] if argv is None else argv
+    if "--cockpit" in argv:
+        return cockpit_main(argv)
+
     args = _build_args(argv)
     _load_dotenv(Path(".env"))
     args.data_dir.mkdir(parents=True, exist_ok=True)
@@ -383,7 +387,4 @@ def cockpit_main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    # `--cockpit` selects the multi-user cockpit; default stays the alerts demo.
-    if "--cockpit" in sys.argv:
-        sys.exit(cockpit_main())
     sys.exit(main())

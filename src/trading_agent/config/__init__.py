@@ -59,9 +59,13 @@ def _substitute_env_vars(content: str) -> str:
         spec = match.group(1)
         if ":" in spec:
             name, default = spec.split(":", 1)
+            return os.environ.get(name, default)
         else:
-            name, default = spec, ""
-        return os.environ.get(name, default)
+            name = spec
+        value = os.environ.get(name)
+        if value is None or value == "":
+            return match.group(0)
+        return value
 
     return _ENV_VAR_RE.sub(replace, content)
 

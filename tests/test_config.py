@@ -33,9 +33,9 @@ def test_substitute_env_vars_with_default_overridden():
         assert _substitute_env_vars("x=${SET:fallback}") == "x=real"
 
 
-def test_substitute_env_vars_missing_no_default_yields_empty():
+def test_substitute_env_vars_missing_no_default_preserves_placeholder():
     with patch.dict(os.environ, {}, clear=True):
-        assert _substitute_env_vars("x=${NOPE}") == "x="
+        assert _substitute_env_vars("x=${NOPE}") == "x=${NOPE}"
 
 
 def test_substitute_env_vars_no_refs_passthrough():
@@ -146,6 +146,16 @@ def test_get_credentials_missing_env_var_raises():
     config = {"credentials": {"api_key": "${DEFINITELY_NOT_SET_XYZ}"}}
     env = {k: v for k, v in os.environ.items() if k != "DEFINITELY_NOT_SET_XYZ"}
     with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(ConfigError, match="DEFINITELY_NOT_SET_XYZ"):
+            get_credentials(config)
+
+
+def test_loaded_config_preserves_missing_required_credential_refs(tmp_path):
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("credentials:\n  api_key: ${DEFINITELY_NOT_SET_XYZ}\n")
+    env = {k: v for k, v in os.environ.items() if k != "DEFINITELY_NOT_SET_XYZ"}
+    with patch.dict(os.environ, env, clear=True):
+        config = load_config(cfg)
         with pytest.raises(ConfigError, match="DEFINITELY_NOT_SET_XYZ"):
             get_credentials(config)
 

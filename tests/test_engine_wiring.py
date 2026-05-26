@@ -23,6 +23,7 @@ from trading_agent.bench.controller import BenchController
 from trading_agent.config.db import Database
 from trading_agent.llm.openrouter import OpenRouterClient
 from trading_agent.risk_manager import RiskManager
+from trading_agent.scripts import serve
 from trading_agent.scripts.serve import build_cockpit
 from trading_agent.web.app import create_cockpit_app
 
@@ -252,6 +253,12 @@ def test_approvals_pending_and_approve(client: TestClient) -> None:
     assert client.get("/api/approvals").json() == []
 
 
+def test_approvals_render_asset_signals(client: TestClient) -> None:
+    queue: ApprovalQueue = client.app.state.approvals
+    queue.add({"asset": "AAPL", "side": "LONG", "amount": 2})
+    assert client.get("/api/approvals").json()[0]["t"] == "Buy 2 shares of AAPL"
+
+
 def test_approvals_reject_and_missing(client: TestClient) -> None:
     queue: ApprovalQueue = client.app.state.approvals
     pid = queue.add({"symbol": "NVDA", "side": "SELL", "quantity": 3})
@@ -323,3 +330,15 @@ def test_build_cockpit_with_client_enables_controller(tmp_path: Path) -> None:
         assert isinstance(app.state.bench_controller, BenchController)
     finally:
         app.state.approvals.close()
+
+
+def test_serve_console_entrypoint_routes_cockpit(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_cockpit_main(argv: list[str] | None = None) -> int:
+        captured["argv"] = argv
+        return 17
+
+    monkeypatch.setattr(serve, "cockpit_main", fake_cockpit_main)
+    assert serve.main(["--cockpit", "--no-feed"]) == 17
+    assert captured["argv"] == ["--cockpit", "--no-feed"]

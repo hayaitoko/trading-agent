@@ -42,7 +42,7 @@ def _approval_public(record: ApprovalRecord) -> dict[str, Any]:
     """Map an ApprovalRecord onto the cockpit's pending-approval card."""
     sig = record.signal or {}
     side = str(sig.get("side") or sig.get("action") or "").upper()
-    symbol = sig.get("symbol") or sig.get("ticker") or "?"
+    symbol = sig.get("asset") or sig.get("symbol") or sig.get("ticker") or "?"
     amount = sig.get("amount") or sig.get("quantity") or sig.get("qty")
     verb = _VERB.get(side, side.title() or "Trade")
     qty = f"{amount:g} shares of " if isinstance(amount, (int, float)) else ""
