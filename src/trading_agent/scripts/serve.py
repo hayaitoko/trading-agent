@@ -28,21 +28,29 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..approval_queue import ApprovalQueue
 from ..audit import AuditLogger
+from ..bench.bench import Bench
+from ..bench.controller import BenchController
+from ..config.db import Database
 from ..data_feed import MessageBus
 from ..db import DatabaseManager
 from ..enums import Mode
 from ..feeds import synthetic_mean_reverting_bars
+from ..llm.openrouter import OpenRouterClient, OpenRouterError
 from ..paper_broker import PaperBroker
 from ..risk_manager import RiskLimits, RiskManager
 from ..signal_router import SignalRouter, _signal_to_order
 from ..strategies.mean_reversion import MeanReversionStrategy
-from ..web.app import create_app
+from ..web.app import create_app, create_cockpit_app
 from ..web.market_watch import MarketMoveWatcher
 from ..web.notifications import NotificationCenter
+
+if TYPE_CHECKING:
+    import httpx
+    from fastapi import FastAPI
 
 SCOPE = "smoke"
 DEFAULT_SYMBOL = "SYNTH-USD"
@@ -231,5 +239,151 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+# =============================================================================
+# Cockpit (multi-user) serve entrypoint — WS-I engine wiring.
+#
+# `create_cockpit_app` deliberately leaves app.state.bench (etc.) unset so unit
+# tests get graceful-empty routers. The *serve* process attaches the live engine
+# here, per CONTRACTS §"Runtime wiring via app.state". `build_cockpit` is the
+# testable factory (no threads, import-safe); `cockpit_main` is the CLI that adds
+# a price feed + uvicorn. Run with::
+#
+#     python -m trading_agent.scripts.serve --cockpit            # via __main__
+#     uvicorn trading_agent.scripts.serve:build_cockpit --factory --host 0.0.0.0
+# =============================================================================
+
+DEFAULT_COCKPIT_SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "META"]
+
+
+def _echo_executor(signal: dict[str, Any]) -> dict[str, Any]:
+    """Minimal approval-queue executor for the cockpit.
+
+    The bench auto-trades and never enqueues approvals, so this is effectively
+    unused; it exists only so a manually-enqueued proposal can still be approved
+    rather than raising 'no executor configured'.
+    """
+    return signal
+
+
+def build_cockpit(
+    *,
+    db: Database | None = None,
+    symbols: list[str] | None = None,
+    initial_balance: float = 100_000.0,
+    max_position_size: float = 1_000.0,
+    cadence_seconds: int = 300,
+    data_dir: str | Path | None = None,
+    threshold_pct: float = 1.5,
+    openrouter_client: OpenRouterClient | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> FastAPI:
+    """Cockpit app with the live trading engine attached to ``app.state``.
+
+    Attaches ``bench``, ``market_watch``, ``risk``, ``approvals`` always, and
+    ``bench_controller`` when an OpenRouter key/client is available (the
+    add-trader wizard needs it; without it the read surfaces still work and the
+    create route answers 503).
+    """
+    base_dir = Path(data_dir) if data_dir is not None else Path("data")
+    base_dir.mkdir(parents=True, exist_ok=True)
+    syms = list(symbols) if symbols else list(DEFAULT_COCKPIT_SYMBOLS)
+
+    app = create_cockpit_app(db, transport=transport)
+    bench = Bench(syms, initial_balance=initial_balance, max_position_size=max_position_size)
+    app.state.bench = bench
+    app.state.market_watch = MarketMoveWatcher(threshold_pct=threshold_pct)
+    app.state.risk = RiskManager(kill_switch_file=base_dir / ".kill_switch")
+    app.state.approvals = ApprovalQueue(db_path=base_dir / "approvals.db", executor=_echo_executor)
+
+    client = openrouter_client
+    if client is None:
+        try:
+            client = OpenRouterClient(zdr=True, transport=transport)
+        except OpenRouterError:
+            client = None  # no key -> reads still work; add-trader returns 503
+    if client is not None:
+        app.state.bench_controller = BenchController(
+            bench, client, symbols=syms, cadence_seconds=cadence_seconds
+        )
+    return app
+
+
+def _cockpit_args(argv: list[str] | None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Trading-agent cockpit server (multi-user)")
+    p.add_argument("--cockpit", action="store_true", help="(routing flag; ignored here)")
+    p.add_argument("--host", default="0.0.0.0", help="bind address — 0.0.0.0 for LAN access")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--symbols", default=",".join(DEFAULT_COCKPIT_SYMBOLS))
+    p.add_argument("--initial-balance", type=float, default=100_000.0)
+    p.add_argument("--cadence", type=int, default=300, help="decision cadence seconds")
+    p.add_argument("--data-dir", type=Path, default=Path("data"))
+    p.add_argument("--models", default="", help="comma-separated OpenRouter slugs to seed")
+    p.add_argument("--no-feed", action="store_true", help="don't run the synthetic price feed")
+    p.add_argument("--bars", type=int, default=500)
+    p.add_argument("--seed", type=int, default=11)
+    p.add_argument("--bar-interval", type=float, default=1.0)
+    return p.parse_args(argv)
+
+
+def cockpit_main(argv: list[str] | None = None) -> int:
+    """CLI: build the cockpit, drive a synthetic price feed, serve over uvicorn."""
+    import uvicorn
+
+    args = _cockpit_args(argv)
+    _load_dotenv(Path(".env"))
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+
+    app = build_cockpit(
+        symbols=symbols,
+        initial_balance=args.initial_balance,
+        cadence_seconds=args.cadence,
+        data_dir=args.data_dir,
+    )
+    bench = app.state.bench
+    watch = app.state.market_watch
+    controller = getattr(app.state, "bench_controller", None)
+    if controller is None:
+        print("note: no OPENROUTER_API_KEY — add-trader is disabled until one is set.")
+    for slug in (m.strip() for m in args.models.split(",") if m.strip()):
+        if controller is not None:
+            controller.add_model(slug)
+
+    stop = threading.Event()
+
+    def run_synthetic() -> None:
+        seed = args.seed
+        while not stop.is_set():
+            series = {
+                s: synthetic_mean_reverting_bars(s, n=args.bars, seed=seed + i)
+                for i, s in enumerate(symbols)
+            }
+            for idx in range(args.bars):
+                if stop.is_set():
+                    return
+                for s in symbols:
+                    bar = series[s][idx]
+                    bench.observe_bar(bar)
+                    watch.observe(bar.get("symbol"), bar.get("close"))
+                stop.wait(args.bar_interval)
+            seed += len(symbols)
+
+    if not args.no_feed:
+        threading.Thread(target=run_synthetic, name="cockpit-feed", daemon=True).start()
+
+    print("=== trading-agent cockpit (multi-user) ===")
+    print(f"open  http://{args.host}:{args.port}/   (Ctrl-C to stop)")
+    try:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    finally:
+        stop.set()
+        if controller is not None:
+            controller.stop()
+        app.state.approvals.close()
+    return 0
+
+
 if __name__ == "__main__":
+    # `--cockpit` selects the multi-user cockpit; default stays the alerts demo.
+    if "--cockpit" in sys.argv:
+        sys.exit(cockpit_main())
     sys.exit(main())

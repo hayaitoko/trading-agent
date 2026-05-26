@@ -161,7 +161,12 @@ Several routers read live engine objects off `app.state` *defensively* (degrade 
 - `app.state.bench` — a live `Bench` → powers `bench.py` (accounts/leaderboard/positions/activity),
   feeds the manager's grounding, and the trader `.symbols` updated by the stock-request `universe_listener`.
 - `app.state.market_watch` — a `MarketMoveWatcher` → live alerts in the notifications feed.
+- `app.state.bench_controller` — a `BenchController` → `POST /api/accounts` add-trader wizard create.
+- `app.state.risk` — a live `RiskManager` → powers `risk.py` (status/limits/kill).
+- `app.state.approvals` — a live `ApprovalQueue` → powers `approvals.py` (list/approve/reject).
 - (optional) `app.state.research` / `app.state.memory` → richer manager context.
+(WS-I attaches `bench`/`bench_controller`/`market_watch`/`risk`/`approvals` in `serve.py build_cockpit`;
+all reads are defensive → absent degrades to `[]` / 503.)
 Without these: notifications = only the (real, per-user) stock requests; manager answers without book
 context; accounts/leaderboard/etc. fall back to the cockpit's mock. **See WS-I.**
 

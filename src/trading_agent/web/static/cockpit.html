@@ -970,6 +970,11 @@ async function loadSettings(){
   if(SETTINGS.theme) applyTheme(SETTINGS.theme, true);     // silent: don't re-persist
   if(SETTINGS.embed_model) embedModel = SETTINGS.embed_model;
   if(SETTINGS.vstore) vectorStore = SETTINGS.vstore;
+  // Restore the manager-model selector from the saved setting (string slug or
+  // {endpoint_id,model}) so the left-rail picker reflects what the chat uses.
+  const mm = SETTINGS.manager_model, ms = document.getElementById("model");
+  const slug = (typeof mm === "string") ? mm : (mm && mm.model);
+  if(ms && slug) ms.value = slug;
   LIMITS = loadLimits();
 }
 function loadForTab(tab){
@@ -1436,7 +1441,10 @@ function setCtx(frac){ ctxFrac=frac; const C=2*Math.PI*22;
   document.getElementById("ctxPct").textContent=Math.round(frac*100)+"%";
   document.getElementById("ctxTok").textContent=Math.round(frac*200)+"k / 200k tok"; }
 document.getElementById("model").addEventListener("change", e=>{
-  document.getElementById("chatWho").textContent = "model: "+e.target.value.split("/").pop()+" · all 6 books"; });
+  document.getElementById("chatWho").textContent = "model: "+e.target.value.split("/").pop()+" · all 6 books";
+  // Persist to the `manager_model` user setting WS-E's resolve_manager_ref reads
+  // (a bare slug → it picks the first enabled endpoint). Drives the live chat.
+  putSettings({ manager_model: e.target.value }); });
 
 /* ===================== ACTIONS ===================== */
 async function resolveAp(i,ok){ const item=APPROVALS[i]; if(!item)return;

@@ -354,38 +354,14 @@ def test_per_user_isolation_over_http(client: TestClient) -> None:
 
 
 # --- HTTP: stub routers ------------------------------------------------------
-
-
-STUB_ROUTES = [
-    ("get", "/api/accounts"),
-    ("get", "/api/leaderboard"),
-    ("get", "/api/positions"),
-    ("get", "/api/activity"),
-    # /api/research* implemented by WS-C (see tests/test_research.py).
-    # /api/chats* and /api/chat are implemented by WS-E (see tests/test_manager.py).
-    ("get", "/api/risk"),
-    ("put", "/api/risk/limits"),
-    ("post", "/api/risk/kill"),
-    ("get", "/api/approvals"),
-    ("post", "/api/approvals/abc/approve"),
-    ("post", "/api/approvals/abc/reject"),
-    # notifications/requests/notes are implemented by WS-H (see
-    # tests/test_requests_notes.py); no longer 501 stubs.
-]
-
-
-@pytest.mark.parametrize("method,path", STUB_ROUTES)
-def test_stub_routes_501_when_authed(client: TestClient, method: str, path: str) -> None:
-    client.post("/api/auth/signup", json={"username": "kim", "password": "pw"})
-    resp = getattr(client, method)(path)
-    assert resp.status_code == 501, f"{method.upper()} {path} -> {resp.status_code}"
-
-
-@pytest.mark.parametrize("method,path", STUB_ROUTES)
-def test_stub_routes_401_when_unauthed(client: TestClient, method: str, path: str) -> None:
-    # auth runs before the 501 body
-    resp = getattr(client, method)(path)
-    assert resp.status_code == 401, f"{method.upper()} {path} -> {resp.status_code}"
+#
+# There are no 501 stub routes left. Every former stub is now implemented:
+#   /api/accounts · /api/leaderboard · /api/positions · /api/activity ·
+#   /api/risk · /api/risk/limits · /api/risk/kill · /api/approvals* — WS-I engine
+#     wiring (see tests/test_engine_wiring.py);
+#   /api/research* — WS-C (tests/test_research.py);
+#   /api/chat[s]* — WS-E (tests/test_manager.py);
+#   notifications/requests/notes — WS-H (tests/test_requests_notes.py).
 
 
 def test_health_open_without_auth(client: TestClient) -> None:
