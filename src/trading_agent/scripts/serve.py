@@ -328,7 +328,7 @@ def build_cockpit(
 
     # WS-A intelligence: research briefs (shared per user) + per-trader memory +
     # the gated reflector. Built once at serve start; lights up the manager chat
-    # and (P2/P5) the trader decision path.
+    # and the trader decision path.
     _attach_intelligence(app, base_dir, owner_user_id, transport)
 
     client = openrouter_client
@@ -338,8 +338,21 @@ def build_cockpit(
         except OpenRouterError:
             client = None  # no key -> reads still work; add-trader returns 503
     if client is not None:
+        # Thread the intelligence layer into the controller so every trader it
+        # adds decides on history + research + its own memory, and reflects after
+        # each round. owner_user_id stays the *explicit* hint — the controller
+        # re-resolves it lazily (fresh-box safe), matching _attach_intelligence.
         app.state.bench_controller = BenchController(
-            bench, client, symbols=syms, cadence_seconds=cadence_seconds
+            bench,
+            client,
+            symbols=syms,
+            cadence_seconds=cadence_seconds,
+            history=history,
+            research=app.state.research,
+            memory=app.state.memory,
+            reflector=app.state.reflector,
+            owner_user_id=owner_user_id,
+            db=app.state.db,
         )
     return app
 
@@ -366,7 +379,10 @@ def _attach_intelligence(
     settings = app.state.settings
     registry = app.state.endpoints
 
-    owner = owner_user_id if owner_user_id is not None else resolve_owner_user_id(db)
+    # Resolve the owner properly (explicit id/username → env → single-user), so the
+    # embedder + memory bind to a real user_id, not a raw CLI string.
+    owner = resolve_owner_user_id(db, explicit=owner_user_id)
+    app.state.owner_user_id = owner
     mem_path = os.environ.get("TRADING_AGENT_MEMORY_DB") or str(base_dir / "memory.db")
     vstore_name = settings.get(owner, "vstore", "sqlite-vec") if owner else "sqlite-vec"
     vstore = make_vector_store(vstore_name, path=mem_path)
@@ -383,6 +399,28 @@ def _attach_intelligence(
     return owner
 
 
+def _print_intelligence_status(app: FastAPI) -> None:
+    """One line on whether the WS-A trader-intelligence layer is live."""
+    owner = getattr(app.state, "owner_user_id", None)
+    if not owner:
+        print(
+            "intelligence: OFF — no owner resolved; traders run history-only. "
+            "Set --owner <user>, TRADING_AGENT_OWNER_ID, or sign up exactly one user."
+        )
+        return
+    try:
+        endpoints = app.state.endpoints.list(owner)
+        embed_ok = any(e.type == "local" and e.enabled for e in endpoints)
+    except Exception:
+        embed_ok = False
+    embed = (
+        "local embed endpoint present"
+        if embed_ok
+        else "no local embed endpoint — research/memory recall skipped until one is added"
+    )
+    print(f"intelligence: ON — owner {owner}; research + reflection wired; {embed}.")
+
+
 def _cockpit_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Trading-agent cockpit server (multi-user)")
     p.add_argument("--cockpit", action="store_true", help="(routing flag; ignored here)")
@@ -392,6 +430,12 @@ def _cockpit_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--initial-balance", type=float, default=100_000.0)
     p.add_argument("--cadence", type=int, default=300, help="decision cadence seconds")
     p.add_argument("--data-dir", type=Path, default=Path("data"))
+    p.add_argument(
+        "--owner",
+        default=None,
+        help="bind the trader-intelligence layer to this user (id or username); "
+        "falls back to TRADING_AGENT_OWNER_ID, then a lone signed-up user",
+    )
     p.add_argument("--models", default="", help="comma-separated OpenRouter slugs to seed")
     p.add_argument("--no-feed", action="store_true", help="don't run the synthetic price feed")
     p.add_argument("--bars", type=int, default=500)
@@ -413,12 +457,14 @@ def cockpit_main(argv: list[str] | None = None) -> int:
         initial_balance=args.initial_balance,
         cadence_seconds=args.cadence,
         data_dir=args.data_dir,
+        owner_user_id=args.owner,
     )
     bench = app.state.bench
     watch = app.state.market_watch
     controller = getattr(app.state, "bench_controller", None)
     if controller is None:
         print("note: no OPENROUTER_API_KEY — add-trader is disabled until one is set.")
+    _print_intelligence_status(app)
     for slug in (m.strip() for m in args.models.split(",") if m.strip()):
         if controller is not None:
             controller.add_model(slug)

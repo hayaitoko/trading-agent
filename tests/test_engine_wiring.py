@@ -437,6 +437,67 @@ def test_controller_research_read_toggle_off(tmp_path: Path) -> None:
     assert trader.memory is not None  # memory recall unaffected by the research toggle
 
 
+# --- WS-A P5: serve --owner + controller intelligence wiring ----------------
+
+
+def test_build_cockpit_controller_carries_intelligence(tmp_path: Path) -> None:
+    from trading_agent.config.users import create_user
+
+    db = Database(tmp_path / "c.db")
+    user = create_user(db, "solo", "pw")  # single user → owner resolves
+    app = build_cockpit(
+        db=db,
+        data_dir=tmp_path,
+        transport=_mock_transport(),
+        openrouter_client=OpenRouterClient(api_key="k", transport=_mock_transport()),
+    )
+    try:
+        controller = app.state.bench_controller
+        assert controller.owner_id == user.id
+        assert controller.research is app.state.research
+        assert controller.memory is app.state.memory
+        assert controller.reflector is app.state.reflector
+        assert controller.history is app.state.history
+        # a trader added through this controller carries the intelligence + owner
+        controller.add_model("test/m", name="alpha")
+        trader = app.state.bench._competitors["alpha"].trader  # type: ignore[attr-defined]
+        assert trader.owner_user_id == user.id
+        assert trader.memory is app.state.memory
+        assert trader.history is app.state.history
+    finally:
+        app.state.approvals.close()
+
+
+def test_cockpit_args_parse_owner() -> None:
+    from trading_agent.scripts.serve import _cockpit_args
+
+    ns = _cockpit_args(["--cockpit", "--owner", "alice", "--no-feed"])
+    assert ns.owner == "alice"
+    assert _cockpit_args(["--cockpit"]).owner is None
+
+
+def test_intelligence_status_line(tmp_path: Path, capsys: Any) -> None:
+    from trading_agent.config.users import create_user
+    from trading_agent.scripts.serve import _print_intelligence_status
+
+    off = build_cockpit(db=Database(tmp_path / "a.db"), data_dir=tmp_path / "a", transport=_mock_transport())
+    try:
+        _print_intelligence_status(off)  # zero users → OFF
+        assert "intelligence: OFF" in capsys.readouterr().out
+    finally:
+        off.state.approvals.close()
+
+    db = Database(tmp_path / "b.db")
+    create_user(db, "solo", "pw")
+    on = build_cockpit(db=db, data_dir=tmp_path / "b", transport=_mock_transport())
+    try:
+        _print_intelligence_status(on)  # one user → ON
+        out = capsys.readouterr().out
+        assert "intelligence: ON" in out and "no local embed endpoint" in out
+    finally:
+        on.state.approvals.close()
+
+
 def test_serve_console_entrypoint_routes_cockpit(monkeypatch: Any) -> None:
     captured: dict[str, Any] = {}
 
