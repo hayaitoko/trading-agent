@@ -23,6 +23,15 @@ DEFAULTS: dict[str, Any] = {
     "research_cadence": "off",
     "daily_usd_ceiling": 5.0,  # cost-gating ceiling (CONTRACTS §Cost-gating)
     "risk_limits": {},
+    # WS-A trader intelligence: how much research/memory each trader pulls per
+    # decision, and the gated post-round reflection cadence/cost. daily_usd_ceiling
+    # above is the shared hard gate; these only shape volume and frequency.
+    "trader_research_read": True,  # let traders read shared research briefs
+    "trader_research_k": 5,  # briefs pulled into a decision
+    "trader_memory_recall_k": 5,  # own lessons recalled into a decision
+    "reflection_cadence_rounds": 4,  # reflect every N rounds (0 = never on cadence)
+    "reflection_model": None,  # None → cheap DEFAULT_REFLECTION_MODEL
+    "reflection_estimated_usd": 0.01,  # per-book distill pre-check estimate
 }
 
 

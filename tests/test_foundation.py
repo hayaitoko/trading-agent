@@ -161,6 +161,18 @@ def test_settings_roundtrip_and_defaults(db: Database) -> None:
     assert allv["vstore"] == DEFAULTS["vstore"]  # default merged in
 
 
+def test_ws_a_trader_intelligence_defaults(db: Database) -> None:
+    """WS-A P4: the trader/reflection knobs ship with sane defaults."""
+    store = SettingsStore(db)
+    assert store.get("u1", "trader_research_read") is True
+    assert store.get("u1", "trader_research_k") == 5
+    assert store.get("u1", "trader_memory_recall_k") == 5
+    assert store.get("u1", "reflection_cadence_rounds") == 4
+    assert store.get("u1", "reflection_model") is None
+    assert store.get("u1", "reflection_estimated_usd") == 0.01
+    assert store.all("u1")["reflection_cadence_rounds"] == 4  # surfaced in the merged view
+
+
 def test_settings_isolated_per_user(db: Database) -> None:
     store = SettingsStore(db)
     store.set("u1", "theme", "light")

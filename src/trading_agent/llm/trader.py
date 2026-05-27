@@ -16,8 +16,6 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from ..memory.format import format_lessons
-from ..research.format import format_briefs
 from .openrouter import OpenRouterError, parse_json_object
 
 if TYPE_CHECKING:
@@ -231,6 +229,9 @@ class LLMTrader:
                 briefs = list(research.recent(owner, k))
         except Exception:
             return ""
+        # Lazy import breaks the config.endpoints → llm → research import cycle.
+        from ..research.format import format_briefs
+
         return format_briefs(briefs, header="## Research briefs (most relevant)")
 
     def _briefs_by_symbol(self, research: Any, k: int) -> list[Any]:
@@ -259,6 +260,8 @@ class LLMTrader:
         except Exception:
             # No local embed endpoint (EmbedError) or a flaky store: still decide.
             return ""
+        from ..memory.format import format_lessons  # lazy: avoid import cycle
+
         return format_lessons(lessons, header="## Your past lessons", show_trader=False)
 
     def _coerce_decisions(self, raw: Any) -> list[TradeDecision]:

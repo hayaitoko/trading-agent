@@ -11,10 +11,11 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any
 
-from ..llm.trader import LLMTrader
+from ..llm.trader import _MEMORY_RECALL_K, _RESEARCH_K, LLMTrader
 
 if TYPE_CHECKING:
     from ..config.db import Database
+    from ..config.settings_store import SettingsStore
     from ..data.history import HistoryService
     from ..llm.openrouter import OpenRouterClient
     from .bench import Bench
@@ -77,6 +78,7 @@ class BenchController:
         self.reflector = reflector
         self._owner_explicit = owner_user_id
         self.db = db
+        self._settings_store: SettingsStore | None = None
         self._cached_owner_id: str | None = owner_user_id
         self._round = 0  # decision rounds completed (drives the reflection cadence)
         self._last_returns: dict[str, float] = {}  # per-book return_pct at last reflection
@@ -100,6 +102,14 @@ class BenchController:
             self._cached_owner_id = resolve_owner_user_id(self.db, explicit=self._owner_explicit)
         return self._cached_owner_id
 
+    def _settings(self) -> SettingsStore | None:
+        """The per-user settings store, built lazily from ``db`` (None if no db)."""
+        if self._settings_store is None and self.db is not None:
+            from ..config.settings_store import SettingsStore
+
+            self._settings_store = SettingsStore(self.db)
+        return self._settings_store
+
     # --- Roster -------------------------------------------------------------
 
     def add_model(
@@ -110,6 +120,17 @@ class BenchController:
         cash: float | None = None,
         style: str | None = None,
     ) -> str:
+        owner = self.owner_id
+        research, research_k, memory_k = self.research, _RESEARCH_K, _MEMORY_RECALL_K
+        settings = self._settings()
+        if owner is not None and settings is not None:
+            # Per-owner knobs (WS-A): research read toggle + recall breadth.
+            if not settings.get(owner, "trader_research_read", True):
+                research = None
+            research_k = int(settings.get(owner, "trader_research_k", _RESEARCH_K) or _RESEARCH_K)
+            memory_k = int(
+                settings.get(owner, "trader_memory_recall_k", _MEMORY_RECALL_K) or _MEMORY_RECALL_K
+            )
         trader = LLMTrader(
             model,
             self.client,
@@ -117,9 +138,11 @@ class BenchController:
             name=name or model,
             style=style,
             history=self.history,
-            research=self.research,
+            research=research,
             memory=self.memory,
-            owner_user_id=self.owner_id,
+            owner_user_id=owner,
+            research_k=research_k,
+            memory_k=memory_k,
         )
         self.bench.add_competitor(
             trader.name, trader, initial_balance=cash, style=style

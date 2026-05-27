@@ -390,6 +390,53 @@ def test_build_cockpit_lights_up_memory_with_owner(tmp_path: Path) -> None:
         app.state.approvals.close()
 
 
+# --- WS-A P4: controller threads per-owner knobs into the trader -------------
+
+
+def _added_trader(bench: Bench, name: str) -> Any:
+    return bench._competitors[name].trader  # type: ignore[attr-defined]
+
+
+def test_controller_threads_recall_k_from_settings(tmp_path: Path) -> None:
+    from trading_agent.config.settings_store import SettingsStore
+    from trading_agent.config.users import create_user
+
+    db = Database(tmp_path / "c.db")
+    user = create_user(db, "solo", "pw")
+    settings = SettingsStore(db)
+    settings.set(user.id, "trader_research_k", 2)
+    settings.set(user.id, "trader_memory_recall_k", 3)
+    research, memory = object(), object()
+    bench = Bench(["AAPL"], initial_balance=100_000.0)
+    controller = BenchController(
+        bench, OpenRouterClient(api_key="k", transport=_mock_transport()),
+        symbols=["AAPL"], research=research, memory=memory, owner_user_id=user.id, db=db,
+    )
+    controller.add_model("test/m", name="alpha")
+    trader = _added_trader(bench, "alpha")
+    assert trader.research_k == 2 and trader.memory_k == 3
+    assert trader.research is research and trader.memory is memory
+    assert trader.owner_user_id == user.id
+
+
+def test_controller_research_read_toggle_off(tmp_path: Path) -> None:
+    from trading_agent.config.settings_store import SettingsStore
+    from trading_agent.config.users import create_user
+
+    db = Database(tmp_path / "c.db")
+    user = create_user(db, "solo", "pw")
+    SettingsStore(db).set(user.id, "trader_research_read", False)
+    bench = Bench(["AAPL"], initial_balance=100_000.0)
+    controller = BenchController(
+        bench, OpenRouterClient(api_key="k", transport=_mock_transport()),
+        symbols=["AAPL"], research=object(), memory=object(), owner_user_id=user.id, db=db,
+    )
+    controller.add_model("test/m", name="alpha")
+    trader = _added_trader(bench, "alpha")
+    assert trader.research is None  # research reads disabled for this owner
+    assert trader.memory is not None  # memory recall unaffected by the research toggle
+
+
 def test_serve_console_entrypoint_routes_cockpit(monkeypatch: Any) -> None:
     captured: dict[str, Any] = {}
 

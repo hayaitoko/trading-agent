@@ -428,6 +428,21 @@ def test_resolve_ref_raises_without_enabled_endpoint(db: Database) -> None:
         resolve_manager_ref(SettingsStore(db), reg, "u1")
 
 
+def test_resolve_reflection_ref_defaults_and_honors_setting(db: Database) -> None:
+    from trading_agent.config.endpoints import EndpointRegistry
+    from trading_agent.manager.agent import DEFAULT_REFLECTION_MODEL, resolve_reflection_ref
+
+    reg = EndpointRegistry(db)
+    ep = reg.add("u1", "openrouter", "OR", api_key="k")
+    settings = SettingsStore(db)
+    # default reflection_model (None) → the cheap default on the enabled endpoint
+    ref = resolve_reflection_ref(settings, reg, "u1")
+    assert ref.endpoint_id == ep.id and ref.model == DEFAULT_REFLECTION_MODEL
+    # a bare-slug setting wins
+    settings.set("u1", "reflection_model", "deepseek/deepseek-v4-flash")
+    assert resolve_reflection_ref(settings, reg, "u1").model == "deepseek/deepseek-v4-flash"
+
+
 # --- HTTP routes -------------------------------------------------------------
 
 
