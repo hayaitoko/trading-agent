@@ -28,6 +28,10 @@ def _buy(symbol: str, qty: float) -> DecisionResult:
     return DecisionResult(decisions=[TradeDecision(symbol, "BUY", qty)], comment="buy")
 
 
+def _sell(symbol: str, qty: float) -> DecisionResult:
+    return DecisionResult(decisions=[TradeDecision(symbol, "SELL", qty)], comment="sell")
+
+
 def test_add_competitor_isolated_book() -> None:
     bench = Bench(["AAPL"], initial_balance=5000.0)
     comp = bench.add_competitor("opus", ScriptedTrader("opus"))
@@ -137,3 +141,42 @@ def test_remove_competitor() -> None:
     bench.add_competitor("m", ScriptedTrader("m"))
     bench.remove_competitor("m")
     assert bench.names() == []
+
+
+def test_per_trader_funding_and_return_basis() -> None:
+    # A bench-wide default of 100k, but this trader is funded with 5k.
+    bench = Bench(["AAPL"], initial_balance=100_000.0)
+    bench.add_competitor(
+        "small", ScriptedTrader("small", [_buy("AAPL", 10)]), initial_balance=5_000.0
+    )
+    bench.observe_bar({"symbol": "AAPL", "close": 100.0})
+    bench.run_decisions()  # buys 10 @ 100 -> 1000 spent, 4000 cash
+    bench.observe_bar({"symbol": "AAPL", "close": 150.0})  # position now worth 1500
+
+    row = bench.leaderboard()[0]
+    assert row["initial_balance"] == 5_000.0
+    assert row["account_value"] == pytest.approx(5_500.0)
+    assert row["pnl"] == pytest.approx(500.0)
+    # +500 measured against the trader's own 5k base = 10%, not 0.5% of 100k
+    assert row["return_pct"] == pytest.approx(10.0)
+
+
+def test_realized_pnl_and_win_surface_in_leaderboard() -> None:
+    bench = Bench(["AAPL"], initial_balance=10_000.0)
+    bench.add_competitor("t", ScriptedTrader("t", [_buy("AAPL", 10), _sell("AAPL", 10)]))
+    bench.observe_bar({"symbol": "AAPL", "close": 100.0})
+    bench.run_decisions()  # buy 10 @ 100
+    bench.observe_bar({"symbol": "AAPL", "close": 120.0})
+    bench.run_decisions()  # sell 10 @ 120 -> realized +200
+
+    row = bench.leaderboard()[0]
+    assert row["realized_pnl"] == pytest.approx(200.0)
+    assert row["wins"] == 1
+    assert row["losses"] == 0
+
+
+def test_style_recorded_on_competitor_and_leaderboard() -> None:
+    bench = Bench(["AAPL"])
+    comp = bench.add_competitor("m", ScriptedTrader("m"), style="swing trader")
+    assert comp.style == "swing trader"
+    assert bench.leaderboard()[0]["style"] == "swing trader"

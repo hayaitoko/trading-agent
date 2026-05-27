@@ -71,6 +71,11 @@ class PaperBroker(BrokerAdapter):
         self._positions: dict[str, PaperPosition] = {}
         self._orders: dict[str, PaperOrder] = {}
         self._trade_history: list[tuple[str, float, float, str]] = []
+        # Realized-P&L ledger: total realized + the per-close P&L of every trade
+        # that reduced or closed a position (used for win/loss counts). Gross of
+        # commission; commission is a separate cash drag, not a position outcome.
+        self._realized_pnl: float = 0.0
+        self._closed_pnls: list[float] = []
         # Last-price view, kept for valuation + get_quote backward compatibility.
         self.market_prices: dict[str, float] = {}
         # Richer per-symbol quote: {'bid': float|None, 'ask': float|None, 'last': float|None}.
@@ -362,6 +367,21 @@ class PaperBroker(BrokerAdapter):
         order.filled_quantity = order.quantity
         order.filled_price = fill_price
 
+        # Realized P&L: the portion of this fill that closes existing exposure,
+        # priced against the position's average entry — captured *before* the
+        # position is mutated below. A sell against a long, or a buy against a
+        # short, realizes gain/loss; opening/adding does not.
+        closed_qty = 0.0
+        realized = 0.0
+        existing = self._positions.get(order.symbol)
+        if existing is not None:
+            if order.side == OrderSide.SELL and existing.quantity > 0:
+                closed_qty = min(order.quantity, existing.quantity)
+                realized = closed_qty * (fill_price - existing.avg_price)
+            elif order.side == OrderSide.BUY and existing.quantity < 0:
+                closed_qty = min(order.quantity, -existing.quantity)
+                realized = closed_qty * (existing.avg_price - fill_price)
+
         notional = order.quantity * fill_price
         commission = notional * self.commission_bps / 10_000.0
 
@@ -418,6 +438,9 @@ class PaperBroker(BrokerAdapter):
 
         self._balance -= commission
         self._trade_history.append((order.symbol, fill_price, order.quantity, order.side.value))
+        if closed_qty > 0:
+            self._realized_pnl += realized
+            self._closed_pnls.append(realized)
 
     def _order_result(self, order: PaperOrder) -> dict[str, Any]:
         return {
@@ -456,12 +479,28 @@ class PaperBroker(BrokerAdapter):
     def get_trade_history(self) -> list[tuple[str, float, float, str]]:
         return self._trade_history.copy()
 
+    def get_realized_pnl(self) -> float:
+        """Total realized profit/loss from closed (or reduced) positions."""
+        return self._realized_pnl
+
+    def get_win_loss(self) -> tuple[int, int]:
+        """Count of closing trades that realized a gain vs. a loss.
+
+        Break-even closes (exactly 0) count as neither, so a win rate computed
+        as ``wins / (wins + losses)`` excludes them from the denominator.
+        """
+        wins = sum(1 for p in self._closed_pnls if p > 0)
+        losses = sum(1 for p in self._closed_pnls if p < 0)
+        return wins, losses
+
     def reset(self) -> None:
         """Reset broker state while preserving initial cash + realism config."""
         self._balance = self._initial_balance
         self._positions.clear()
         self._orders.clear()
         self._trade_history.clear()
+        self._realized_pnl = 0.0
+        self._closed_pnls.clear()
         self.market_prices.clear()
         self._quotes.clear()
         self._connected = False

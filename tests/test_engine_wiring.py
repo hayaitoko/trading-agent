@@ -187,6 +187,18 @@ def test_create_trader_adds_competitor(client: TestClient) -> None:
     assert "kimi" in {a["name"] for a in client.get("/api/accounts").json()}
 
 
+def test_create_trader_honors_cash_funding(client: TestClient) -> None:
+    # bench-wide default is 100k; this trader asks for 5k and should get exactly that.
+    r = client.post(
+        "/api/accounts",
+        json={"name": "thrifty", "model": "z-ai/glm-5.1", "cash": 5_000},
+    )
+    assert r.status_code == 200
+    row = next(a for a in client.get("/api/accounts").json() if a["name"] == "thrifty")
+    assert row["cash"] == pytest.approx(5_000.0)
+    assert row["value"] == pytest.approx(5_000.0)  # untraded -> value == funding
+
+
 def test_create_trader_duplicate_is_409(client: TestClient) -> None:
     body = {"model": "anthropic/claude-opus-4.7", "name": "opus"}
     assert client.post("/api/accounts", json=body).status_code == 409
@@ -195,6 +207,15 @@ def test_create_trader_duplicate_is_409(client: TestClient) -> None:
 def test_create_trader_503_without_controller(bare_client: TestClient) -> None:
     r = bare_client.post("/api/accounts", json={"model": "z-ai/glm-5.1"})
     assert r.status_code == 503
+
+
+def test_account_row_computes_win_rate() -> None:
+    from trading_agent.web.routers.bench import _account_row
+
+    row = {"name": "x", "model": "anthropic/claude-opus-4.7", "wins": 3, "losses": 1}
+    assert _account_row(row, {})["win"] == 75  # 3 / (3 + 1)
+    # no closed trades -> 0, never a divide-by-zero
+    assert _account_row({"name": "y", "model": "a/b"}, {})["win"] == 0
 
 
 # --- risk --------------------------------------------------------------------

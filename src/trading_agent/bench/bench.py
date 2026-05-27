@@ -58,6 +58,8 @@ class Competitor:
     trader: Trader
     broker: PaperBroker
     risk: RiskManager
+    initial_balance: float = 100_000.0
+    style: str | None = None
     decisions: deque[DecisionLogEntry] = field(default_factory=lambda: deque(maxlen=50))
     last_comment: str = ""
     error: str | None = None
@@ -84,20 +86,45 @@ class Bench:
 
     # --- Roster -------------------------------------------------------------
 
-    def add_competitor(self, name: str, trader: Trader) -> Competitor:
+    def add_competitor(
+        self,
+        name: str,
+        trader: Trader,
+        *,
+        initial_balance: float | None = None,
+        max_position_size: float | None = None,
+        style: str | None = None,
+    ) -> Competitor:
+        """Register a competitor with its own paper book.
+
+        ``initial_balance`` / ``max_position_size`` default to the bench-wide
+        values but can be set per trader (the add-trader wizard's starting cash).
+        ``style`` is recorded for reporting; the trader itself carries the prompt.
+        """
         with self._lock:
             if name in self._competitors:
                 raise ValueError(f"Competitor {name!r} already registered")
-            broker = PaperBroker(initial_balance=self.initial_balance)
+            balance = self.initial_balance if initial_balance is None else float(initial_balance)
+            max_pos = (
+                self.max_position_size if max_position_size is None else float(max_position_size)
+            )
+            broker = PaperBroker(initial_balance=balance)
             broker.connect()
             # seed any known prices so valuation/fills work immediately
             if self._last_prices:
                 broker.update_market_prices(dict(self._last_prices))
             risk = RiskManager(
-                limits=RiskLimits(max_position_size=self.max_position_size),
+                limits=RiskLimits(max_position_size=max_pos),
                 kill_switch_file=None,
             )
-            comp = Competitor(name=name, trader=trader, broker=broker, risk=risk)
+            comp = Competitor(
+                name=name,
+                trader=trader,
+                broker=broker,
+                risk=risk,
+                initial_balance=balance,
+                style=style,
+            )
             self._competitors[name] = comp
             return comp
 
@@ -202,19 +229,25 @@ class Bench:
             rows = []
             for comp in self._competitors.values():
                 value = comp.broker.get_account_value(prices)
-                pnl = value - self.initial_balance
+                base = comp.initial_balance
+                pnl = value - base
+                wins, losses = comp.broker.get_win_loss()
                 rows.append(
                     {
                         "name": comp.name,
                         "model": getattr(comp.trader, "model", comp.name),
                         "account_value": value,
+                        "initial_balance": base,
                         "cash": comp.broker.get_balance()["cash"],
                         "pnl": pnl,
-                        "return_pct": (pnl / self.initial_balance * 100.0)
-                        if self.initial_balance else 0.0,
+                        "return_pct": (pnl / base * 100.0) if base else 0.0,
+                        "realized_pnl": comp.broker.get_realized_pnl(),
+                        "wins": wins,
+                        "losses": losses,
                         "positions": comp.broker.get_positions(),
                         "trades": len(comp.broker.get_trade_history()),
                         "decisions": comp.decision_count,
+                        "style": comp.style,
                         "last_comment": comp.last_comment,
                         "error": comp.error,
                     }

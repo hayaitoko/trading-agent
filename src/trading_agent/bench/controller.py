@@ -62,9 +62,20 @@ class BenchController:
 
     # --- Roster -------------------------------------------------------------
 
-    def add_model(self, model: str, name: str | None = None) -> str:
-        trader = LLMTrader(model, self.client, symbols=self.symbols, name=name or model)
-        self.bench.add_competitor(trader.name, trader)
+    def add_model(
+        self,
+        model: str,
+        name: str | None = None,
+        *,
+        cash: float | None = None,
+        style: str | None = None,
+    ) -> str:
+        trader = LLMTrader(
+            model, self.client, symbols=self.symbols, name=name or model, style=style
+        )
+        self.bench.add_competitor(
+            trader.name, trader, initial_balance=cash, style=style
+        )
         return trader.name
 
     def remove(self, name: str) -> None:

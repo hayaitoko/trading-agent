@@ -15,9 +15,10 @@ the ``ACCOUNTS`` / ``POSITIONS`` arrays and the leaderboard / activity-log rows)
 - positions: ``{sym, name, price, chg, pct, seed, trend, holders[], notes[]}``
 - activity: ``{lv, text, ts}`` tri
 
-The engine has no single configurable per-trader starting cash or win-rate
-ledger, so the wizard's ``cash``/``style`` are accepted but not honored, and
-``win`` is reported as 0 (no realized-P&L tracking yet). See WS-I handoff.
+The add-trader wizard's ``cash``/``style`` are honored: ``cash`` funds the new
+competitor's paper book and ``style`` is folded into its trader prompt. ``win``
+is the realized win rate (% of closed trades that booked a gain), computed from
+the bench's realized-P&L ledger.
 """
 
 from __future__ import annotations
@@ -41,9 +42,8 @@ router = APIRouter(tags=["bench"])
 
 
 class CreateTrader(BaseModel):
-    """Add-trader wizard payload. ``cash``/``style`` are accepted for forward
-    compatibility but not yet honored by the bench engine (fixed initial balance,
-    no per-trader style)."""
+    """Add-trader wizard payload. ``cash`` sets the competitor's starting paper
+    balance and ``style`` is folded into its trader prompt (both honored)."""
 
     model: str
     name: str | None = None
@@ -90,6 +90,9 @@ def _account_row(row: dict[str, Any], latest: dict[str, dict[str, Any]]) -> dict
     else:
         act, sym = "HOLD", "—"
     decisions = int(row.get("decisions", 0) or 0)
+    wins = int(row.get("wins", 0) or 0)
+    losses = int(row.get("losses", 0) or 0)
+    closed = wins + losses
     return {
         "name": row.get("name"),
         "prov": _provider_of(model),
@@ -97,11 +100,12 @@ def _account_row(row: dict[str, Any], latest: dict[str, dict[str, Any]]) -> dict
         "value": row.get("account_value", 0.0),
         "ret": row.get("return_pct", 0.0),
         "pnl": row.get("pnl", 0.0),
+        "realized": row.get("realized_pnl", 0.0),
         "status": "error" if row.get("error") else ("trading" if decisions else "idle"),
         "cash": row.get("cash", 0.0),
         "pos": len(row.get("positions") or []),
         "trades": row.get("trades", 0),
-        "win": 0,  # no realized-P&L ledger in the engine yet
+        "win": round(wins / closed * 100) if closed else 0,  # realized win rate %
         "dec": decisions,
         "act": act,
         "sym": sym,
@@ -217,7 +221,7 @@ def create_account(
     if not model:
         raise HTTPException(status_code=422, detail="model is required")
     try:
-        name = controller.add_model(model, body.name)
+        name = controller.add_model(model, body.name, cash=body.cash, style=body.style)
     except ValueError as exc:  # duplicate competitor name
         raise HTTPException(status_code=409, detail=str(exc))
 

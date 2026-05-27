@@ -21,6 +21,18 @@ def broker() -> PaperBroker:
     return b
 
 
+def _buy(broker: PaperBroker, symbol: str, amount: float) -> None:
+    broker.place_order(
+        {"symbol": symbol, "side": OrderSide.BUY, "order_type": OrderType.MARKET, "amount": amount}
+    )
+
+
+def _sell(broker: PaperBroker, symbol: str, amount: float) -> None:
+    broker.place_order(
+        {"symbol": symbol, "side": OrderSide.SELL, "order_type": OrderType.MARKET, "amount": amount}
+    )
+
+
 # --- connection guard --------------------------------------------------------
 
 
@@ -173,3 +185,54 @@ def test_get_account_value_ignores_unpriced_symbols(broker: PaperBroker):
     # No mark for AAPL in arg -> only cash contributes.
     val = broker.get_account_value({})
     assert val == pytest.approx(9_000.0)
+
+
+# --- realized-P&L ledger -----------------------------------------------------
+
+
+def test_profitable_close_is_a_win(broker: PaperBroker) -> None:
+    _buy(broker, "AAPL", 10)
+    broker.update_market_prices({"AAPL": 120.0})
+    _sell(broker, "AAPL", 10)
+    assert broker.get_realized_pnl() == pytest.approx(200.0)  # 10 * (120 - 100)
+    assert broker.get_win_loss() == (1, 0)
+
+
+def test_losing_close_is_a_loss(broker: PaperBroker) -> None:
+    _buy(broker, "AAPL", 10)
+    broker.update_market_prices({"AAPL": 90.0})
+    _sell(broker, "AAPL", 10)
+    assert broker.get_realized_pnl() == pytest.approx(-100.0)
+    assert broker.get_win_loss() == (0, 1)
+
+
+def test_partial_close_realizes_proportional_pnl(broker: PaperBroker) -> None:
+    _buy(broker, "AAPL", 10)
+    broker.update_market_prices({"AAPL": 110.0})
+    _sell(broker, "AAPL", 4)
+    assert broker.get_realized_pnl() == pytest.approx(40.0)  # 4 * (110 - 100)
+    assert broker.get_win_loss() == (1, 0)  # one closing event, not four
+
+
+def test_opening_a_position_realizes_nothing(broker: PaperBroker) -> None:
+    _buy(broker, "AAPL", 5)
+    assert broker.get_realized_pnl() == 0.0
+    assert broker.get_win_loss() == (0, 0)
+
+
+def test_naked_short_is_rejected_and_realizes_nothing(broker: PaperBroker) -> None:
+    # The paper broker only sells what you already hold (no naked shorts), so a
+    # sell from flat is rejected and books no realized P&L.
+    _sell(broker, "AAPL", 10)
+    assert broker.get_position("AAPL") is None
+    assert broker.get_realized_pnl() == 0.0
+    assert broker.get_win_loss() == (0, 0)
+
+
+def test_reset_clears_realized_ledger(broker: PaperBroker) -> None:
+    _buy(broker, "AAPL", 10)
+    broker.update_market_prices({"AAPL": 120.0})
+    _sell(broker, "AAPL", 10)
+    broker.reset()
+    assert broker.get_realized_pnl() == 0.0
+    assert broker.get_win_loss() == (0, 0)

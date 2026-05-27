@@ -81,6 +81,17 @@ _SYSTEM_PROMPT = (
 )
 
 
+def _system_prompt(style: str | None) -> str:
+    """Base trading prompt, optionally given a mandated trading style."""
+    if not style or not style.strip():
+        return _SYSTEM_PROMPT
+    return (
+        f"{_SYSTEM_PROMPT}\n\nYour mandated trading style is: {style.strip()}. "
+        "Let this style shape which symbols you trade, your position sizing, and how "
+        "often you turn the book over — while still respecting your cash and the risk rules."
+    )
+
+
 class LLMTrader:
     """A model that trades by reasoning over recent bars + its portfolio."""
 
@@ -95,6 +106,7 @@ class LLMTrader:
         temperature: float = 0.3,
         max_tokens: int = 800,
         history: HistoryService | None = None,
+        style: str | None = None,
     ) -> None:
         self.model = model
         self.client = client
@@ -103,6 +115,10 @@ class LLMTrader:
         self.lookback = lookback
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # An optional mandated trading style (from the add-trader wizard) folded
+        # into the system prompt once at construction.
+        self.style = style
+        self.system_prompt = _system_prompt(style)
         # WS-A: when injected, the trader sees a richer historical + fundamentals
         # context block instead of just the last `lookback` closes. Optional so
         # the bench/back-compat path (no history) is unchanged.
@@ -118,7 +134,7 @@ class LLMTrader:
 
     def decide(self, account: dict[str, Any]) -> DecisionResult:
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": self._build_context(account)},
         ]
         try:

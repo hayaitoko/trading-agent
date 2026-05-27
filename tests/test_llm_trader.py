@@ -120,3 +120,21 @@ def test_strategy_trader_surfaces_latest_signal() -> None:
 def test_strategy_trader_satisfies_protocol() -> None:
     trader = StrategyTrader(_FakeStrategy([]), name="baseline")
     assert isinstance(trader, Trader)
+
+
+# --- mandated trading style --------------------------------------------------
+
+
+def test_style_folded_into_system_prompt() -> None:
+    client = FakeClient(content='{"decisions": [], "comment": "ok"}')
+    trader = LLMTrader("m", client, symbols=["AAPL"], style="aggressive momentum")
+    assert "aggressive momentum" in trader.system_prompt
+    trader.decide({"cash": 1000, "positions": []})
+    system_msg = client.calls[0]["messages"][0]
+    assert system_msg["role"] == "system"
+    assert "aggressive momentum" in system_msg["content"]
+
+
+def test_no_style_uses_base_prompt() -> None:
+    trader = LLMTrader("m", FakeClient(content="{}"), symbols=["AAPL"])
+    assert "mandated trading style" not in trader.system_prompt
