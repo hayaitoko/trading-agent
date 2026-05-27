@@ -492,3 +492,20 @@ def test_http_chats_isolated_per_user(http: TestClient) -> None:
 def test_http_chat_requires_auth(http: TestClient) -> None:
     assert http.post("/api/chat", json={"message": "hi"}).status_code == 401
     assert http.get("/api/chats").status_code == 401
+
+
+def test_http_chat_grounds_in_app_state_research_and_memory(
+    http: TestClient, captured: list[dict[str, Any]]
+) -> None:
+    """WS-A P1: research/memory wired onto app.state surface in the manager prompt
+    (the same seam build_cockpit now populates)."""
+    _signup_with_endpoint(http)
+    http.app.state.research = FakeResearch(
+        [FakeBrief("NVDA", "earnings beat, strong guidance", 0.7, ["Q1 earnings"])]
+    )
+    http.app.state.memory = FakeMemory({"opus": [FakeLesson("don't chase gaps on TSLA", "opus")]})
+    r = http.post("/api/chat", json={"message": "what should I watch?"})
+    assert r.status_code == 200, r.text
+    system = captured[-1]["body"]["messages"][0]["content"]
+    assert "NVDA" in system and "earnings beat" in system
+    assert "don't chase gaps on TSLA" in system

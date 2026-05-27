@@ -353,6 +353,43 @@ def test_build_cockpit_with_client_enables_controller(tmp_path: Path) -> None:
         app.state.approvals.close()
 
 
+# --- WS-A P1: intelligence stores on app.state -------------------------------
+
+
+def test_build_cockpit_attaches_research_without_owner(tmp_path: Path) -> None:
+    """No users → research still attaches (structured reads), but the per-trader
+    memory + reflector stay dark (history-only)."""
+    from trading_agent.research.store import ResearchStore
+
+    app = build_cockpit(
+        db=Database(tmp_path / "c.db"), data_dir=tmp_path, transport=_mock_transport()
+    )
+    try:
+        assert isinstance(app.state.research, ResearchStore)
+        assert app.state.memory is None
+        assert app.state.reflector is None
+        # the shared vector db lands under data_dir, never the repo's data/.
+        assert (tmp_path / "memory.db").exists()
+    finally:
+        app.state.approvals.close()
+
+
+def test_build_cockpit_lights_up_memory_with_owner(tmp_path: Path) -> None:
+    """A single resolvable user (lazy fallback) → memory + reflector attach."""
+    from trading_agent.config.users import create_user
+    from trading_agent.memory.reflect import Reflector
+    from trading_agent.memory.store import MemoryStore
+
+    db = Database(tmp_path / "c.db")
+    create_user(db, "solo", "pw")  # exactly one user → resolve_owner_user_id binds it
+    app = build_cockpit(db=db, data_dir=tmp_path, transport=_mock_transport())
+    try:
+        assert isinstance(app.state.memory, MemoryStore)
+        assert isinstance(app.state.reflector, Reflector)
+    finally:
+        app.state.approvals.close()
+
+
 def test_serve_console_entrypoint_routes_cockpit(monkeypatch: Any) -> None:
     captured: dict[str, Any] = {}
 

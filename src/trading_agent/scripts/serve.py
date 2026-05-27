@@ -278,6 +278,7 @@ def build_cockpit(
     cadence_seconds: int = 300,
     data_dir: str | Path | None = None,
     threshold_pct: float = 1.5,
+    owner_user_id: str | None = None,
     openrouter_client: OpenRouterClient | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> FastAPI:
@@ -287,6 +288,11 @@ def build_cockpit(
     ``bench_controller`` when an OpenRouter key/client is available (the
     add-trader wizard needs it; without it the read surfaces still work and the
     create route answers 503).
+
+    The WS-A intelligence layer (``research`` / ``memory`` / ``reflector``) is
+    attached too. It binds to one ``owner_user_id`` (explicit, else resolved from
+    the env / single-user fallback); when no owner resolves, memory/reflection
+    stay dark (history-only) exactly like the manager's None-guards.
     """
     base_dir = Path(data_dir) if data_dir is not None else Path("data")
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -298,17 +304,6 @@ def build_cockpit(
     app.state.market_watch = MarketMoveWatcher(threshold_pct=threshold_pct)
     app.state.risk = RiskManager(kill_switch_file=base_dir / ".kill_switch")
     app.state.approvals = ApprovalQueue(db_path=base_dir / "approvals.db", executor=_echo_executor)
-
-    client = openrouter_client
-    if client is None:
-        try:
-            client = OpenRouterClient(zdr=True, transport=transport)
-        except OpenRouterError:
-            client = None  # no key -> reads still work; add-trader returns 503
-    if client is not None:
-        app.state.bench_controller = BenchController(
-            bench, client, symbols=syms, cadence_seconds=cadence_seconds
-        )
 
     # Real market data for the cockpit charts + fundamentals popup. Bars come
     # from the same Alpaca data key as the live books; fundamentals from whatever
@@ -325,11 +320,67 @@ def build_cockpit(
         from ..data.providers.polygon import PolygonProvider
 
         fundamentals_provider = PolygonProvider()
-    app.state.history = build_history_service(
+    history = build_history_service(
         bar_provider=AlpacaBarProvider(),
         fundamentals_provider=fundamentals_provider,
     )
+    app.state.history = history
+
+    # WS-A intelligence: research briefs (shared per user) + per-trader memory +
+    # the gated reflector. Built once at serve start; lights up the manager chat
+    # and (P2/P5) the trader decision path.
+    _attach_intelligence(app, base_dir, owner_user_id, transport)
+
+    client = openrouter_client
+    if client is None:
+        try:
+            client = OpenRouterClient(zdr=True, transport=transport)
+        except OpenRouterError:
+            client = None  # no key -> reads still work; add-trader returns 503
+    if client is not None:
+        app.state.bench_controller = BenchController(
+            bench, client, symbols=syms, cadence_seconds=cadence_seconds
+        )
     return app
+
+
+def _attach_intelligence(
+    app: FastAPI,
+    base_dir: Path,
+    owner_user_id: str | None,
+    transport: httpx.BaseTransport | None,
+) -> str | None:
+    """Attach ``research`` / ``memory`` / ``reflector`` to ``app.state``.
+
+    Returns the resolved owner (or None). The research store always attaches (its
+    structured reads need no embedder); the per-trader memory + reflector attach
+    only once an owner resolves *and* an embedder can be built, since both are
+    user-namespaced. The shared vector DB lives under ``data_dir`` unless
+    ``TRADING_AGENT_MEMORY_DB`` overrides it, so tests stay self-contained.
+    """
+    from ..config.users import resolve_owner_user_id
+    from ..memory import MemoryStore, Reflector, make_embedder, make_vector_store
+    from ..research import ResearchStore
+
+    db: Database = app.state.db
+    settings = app.state.settings
+    registry = app.state.endpoints
+
+    owner = owner_user_id if owner_user_id is not None else resolve_owner_user_id(db)
+    mem_path = os.environ.get("TRADING_AGENT_MEMORY_DB") or str(base_dir / "memory.db")
+    vstore_name = settings.get(owner, "vstore", "sqlite-vec") if owner else "sqlite-vec"
+    vstore = make_vector_store(vstore_name, path=mem_path)
+
+    # LocalEmbedder.__init__ is safe with no Ollama — EmbedError is lazy at embed().
+    embedder = make_embedder(registry, settings, owner, transport=transport) if owner else None
+
+    app.state.research = ResearchStore(db, vstore, embedder)
+    memory = MemoryStore(vstore, embedder) if (owner and embedder is not None) else None
+    app.state.memory = memory
+    app.state.reflector = (
+        Reflector(memory, settings=settings, registry=registry) if memory is not None else None
+    )
+    return owner
 
 
 def _cockpit_args(argv: list[str] | None) -> argparse.Namespace:
