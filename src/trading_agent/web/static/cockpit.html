@@ -158,7 +158,7 @@ select:focus,.input:focus{ border-color:var(--accent);
   font-family:var(--mono); font-size:13px; font-weight:600; }
 .cmeta{ flex:1; min-width:0; }
 .cmeta .clabel{ font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.16em;
-  color:var(--muted); margin:0 0 3px; }
+  color:var(--muted); margin:0 0 3px; display:flex; align-items:center; gap:8px; }
 .cmeta .ctok{ font-family:var(--mono); font-size:12px; color:var(--text); margin-bottom:8px; }
 .wipe{ width:100%; background:transparent; border:var(--hair); color:var(--muted); border-radius:7px;
   padding:6px 0; font-family:var(--mono); font-size:10px; font-weight:500; cursor:pointer;
@@ -186,6 +186,22 @@ select:focus,.input:focus{ border-color:var(--accent);
 .msg.sys{ align-self:center; background:transparent; border:1px dashed var(--border);
   color:var(--muted); font-family:var(--mono); font-size:11px; text-align:center; }
 @keyframes msgIn{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+/* manager "thinking" — cycling fun verbs in animated gradient ink */
+.gradient-ink{ background:linear-gradient(90deg,var(--accent),var(--pos),var(--warn),var(--accent));
+  background-size:300% 100%; -webkit-background-clip:text; background-clip:text;
+  -webkit-text-fill-color:transparent; color:transparent; animation:inkShift 3s linear infinite; }
+@keyframes inkShift{ to{ background-position:300% 0; } }
+.msg.typing{ align-self:flex-start; background:var(--panel-hi); border:var(--hair);
+  border-bottom-left-radius:5px; display:flex; align-items:center; gap:9px; padding:11px 14px; }
+.msg.typing .word{ font-family:var(--mono); font-size:12.5px; font-weight:600; text-transform:lowercase;
+  letter-spacing:.02em; transition:opacity .18s ease; }
+.tdots{ display:inline-flex; gap:3px; }
+.tdots i{ width:5px; height:5px; border-radius:50%; background:var(--accent); display:block;
+  animation:tBounce 1.1s ease-in-out infinite; }
+.tdots i:nth-child(2){ animation-delay:.16s; } .tdots i:nth-child(3){ animation-delay:.32s; }
+@keyframes tBounce{ 0%,100%{ transform:translateY(0); opacity:.4; } 50%{ transform:translateY(-4px); opacity:1; } }
+.think{ margin-left:auto; font-family:var(--mono); font-size:9.5px; font-weight:600;
+  text-transform:lowercase; letter-spacing:.02em; white-space:nowrap; }
 .chat-input{ border-top:var(--hair); padding:13px; display:flex; gap:9px; align-items:flex-end; }
 .chat-input textarea{ resize:none; height:42px; max-height:120px; border-radius:11px; padding:10px 12px;
   background:color-mix(in srgb,var(--bg) 60%, transparent); border:var(--hair); flex:1; font-size:13px;
@@ -433,6 +449,8 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 /* ---- window-in-window modal ---- */
 .overlay{ position:fixed; inset:0; z-index:120; background:color-mix(in srgb,var(--bg) 55%, rgba(0,0,0,.55));
   backdrop-filter:blur(4px); animation:fade .2s ease; }
+/* ToS can be opened from the login screen (#auth, z-index:200), so it must sit above it */
+#tosOverlay{ z-index:340; }
 @keyframes fade{ from{opacity:0;} to{opacity:1;} }
 .window{ position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:min(640px,92vw); max-height:88vh;
   display:flex; flex-direction:column; background:var(--panel); border:var(--hair); border-radius:var(--radius);
@@ -442,15 +460,47 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 .win-bar{ display:flex; align-items:center; gap:10px; padding:13px 16px; border-bottom:var(--hair); cursor:grab;
   background:linear-gradient(var(--panel-hi),var(--panel)); }
 .win-bar:active{ cursor:grabbing; }
-.win-bar .dots{ display:flex; gap:6px; }
-.win-bar .dots i{ width:11px; height:11px; border-radius:50%; display:block; }
 .win-bar .ttl{ font-family:var(--mono); font-size:12.5px; letter-spacing:.02em; }
+.win-bar .dots{ display:none; } /* removed mac-style traffic lights — non-functional */
 .win-bar .x{ margin-left:auto; background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:18px;
   line-height:1; width:28px; height:28px; border-radius:7px; transition:.14s; }
 .win-bar .x:hover{ color:var(--neg); background:color-mix(in srgb,var(--neg) 14%,transparent); }
 .win-body{ padding:18px; overflow-y:auto; }
 .win-stats{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:16px 0; }
 .win-stats .stat{ background:color-mix(in srgb,var(--bg) 45%,transparent); border:var(--hair); border-radius:var(--radius-sm); padding:10px 12px; }
+/* ---- interactive price chart (crosshair + Yahoo-style tooltip) ---- */
+.tf-row{ display:flex; gap:5px; flex-wrap:wrap; margin:8px 0 11px; }
+.tf{ font-family:var(--mono); font-size:11px; padding:5px 11px; border-radius:7px; cursor:pointer;
+  background:transparent; border:var(--hair); color:var(--muted); transition:.14s; }
+.tf:hover{ color:var(--text); border-color:var(--accent); }
+.tf.on{ background:color-mix(in srgb,var(--accent) 18%,transparent); color:var(--text); border-color:var(--accent); }
+.chartwrap{ position:relative; width:100%; height:300px; touch-action:none; cursor:crosshair;
+  border:var(--hair); border-radius:var(--radius-sm); overflow:hidden;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 30%,transparent),transparent); }
+.chartwrap svg{ display:block; width:100%; height:100%; }
+.chartwrap .cx{ position:absolute; top:0; bottom:0; width:1px; opacity:0; pointer-events:none;
+  background:color-mix(in srgb,var(--text) 45%,transparent); }
+.chartwrap .cdot{ position:absolute; width:10px; height:10px; border-radius:50%; opacity:0; pointer-events:none;
+  transform:translate(-50%,-50%); box-shadow:0 0 0 3px color-mix(in srgb,var(--bg) 65%,transparent); }
+.chart-tip{ position:absolute; top:8px; left:0; opacity:0; pointer-events:none; z-index:3; min-width:140px;
+  background:color-mix(in srgb,var(--panel) 92%,transparent); border:var(--hair); border-radius:8px;
+  padding:8px 10px; font-family:var(--mono); font-size:10.5px; line-height:1.55; box-shadow:var(--shadow); backdrop-filter:blur(3px); }
+.chart-tip .tt-date{ color:var(--muted); margin-bottom:3px; }
+.chart-tip .tt-row{ display:flex; justify-content:space-between; gap:16px; }
+.chart-meta{ display:flex; align-items:baseline; gap:10px; margin:2px 0; }
+.chart-meta .px{ font-size:26px; font-family:var(--serif); }
+.chart-empty{ display:flex; align-items:center; justify-content:center; height:100%; padding:0 22px;
+  color:var(--muted); font-family:var(--mono); font-size:12px; line-height:1.6; text-align:center; }
+/* ---- fundamentals grid (yahoo-style key statistics) ---- */
+.fgrid{ display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--border);
+  border:var(--hair); border-radius:var(--radius-sm); overflow:hidden; margin-top:4px; }
+.fgrid .fr{ display:flex; justify-content:space-between; gap:12px; padding:8px 12px; background:var(--panel); font-size:12px; }
+.fgrid .fr .fk{ color:var(--muted); } .fgrid .fr .fv{ font-family:var(--mono); color:var(--text); }
+.fnote{ font-family:var(--mono); font-size:11px; color:var(--muted); padding:9px 0; line-height:1.6; }
+.sym-open{ margin:2px 0 12px; width:100%; background:transparent; border:var(--hair); color:var(--muted);
+  border-radius:7px; padding:7px 0; font-family:var(--mono); font-size:10.5px; cursor:pointer;
+  text-transform:uppercase; letter-spacing:.1em; transition:.16s; }
+.sym-open:hover{ border-color:var(--accent); color:var(--text); }
 
 /* auth */
 #auth{ position:fixed; inset:0; z-index:200; display:grid; place-items:center; padding:24px;
@@ -621,7 +671,7 @@ td b{ font-weight:700; letter-spacing:-.01em; }
           <div class="pct" id="ctxPct">38%</div>
         </div>
         <div class="cmeta">
-          <p class="clabel">Manager context</p>
+          <p class="clabel">Manager context<span class="think gradient-ink" id="thinkTag" hidden></span></p>
           <div class="ctok" id="ctxTok">76k / 200k tok</div>
           <button class="wipe" onclick="wipeCtx()">Wipe conversation</button>
         </div>
@@ -682,14 +732,18 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 </div>
 <div class="overlay" id="tosOverlay" hidden onclick="if(event.target===this)closeTos()">
   <div class="window" id="tosWin" style="width:min(560px,92vw)">
-    <div class="win-bar"><span class="dots"><i style="background:var(--neg)"></i><i style="background:var(--warn)"></i><i style="background:var(--pos)"></i></span>
-      <span class="ttl">terms-of-service.txt</span><button class="x" onclick="closeTos()">×</button></div>
+    <div class="win-bar">      <span class="ttl">terms-of-service.txt</span><button class="x" onclick="closeTos()">×</button></div>
     <div class="win-body" style="font-size:13px;line-height:1.6;color:var(--muted)">
-      <p style="color:var(--text);font-family:var(--serif);font-size:17px;margin:0 0 12px">Terms of Service</p>
-      <p><b style="color:var(--text)">1. Practice only.</b> Helm places pretend trades using real market prices. No real money is ever used, and nothing here is financial advice.</p>
-      <p><b style="color:var(--text)">2. Local account.</b> Your account lives in this browser. There is no server-side account in this build.</p>
-      <p><b style="color:var(--text)">3. AI costs.</b> Running a trading round uses paid AI services, which costs real money. You decide when rounds run.</p>
-      <p><b style="color:var(--text)">4. No warranty.</b> Provided as-is for research. You are responsible for any keys you connect.</p>
+      <p style="color:var(--text);font-family:var(--serif);font-size:17px;margin:0 0 4px">Terms of Service</p>
+      <p style="font-size:11.5px;margin:0 0 14px">Last updated 26 May 2026 · By creating an account or using Helm you accept these terms.</p>
+      <p><b style="color:var(--text)">1. What Helm is.</b> Helm is a personal, non-commercial research tool that runs AI-driven <i>paper</i> (simulated) trades against real market data. It is provided for educational and experimental use only.</p>
+      <p><b style="color:var(--text)">2. Not financial advice.</b> Nothing in Helm is investment, financial, legal, or tax advice, and it is not a solicitation or recommendation to buy or sell any security. The operator is not a broker-dealer, investment adviser, or fiduciary. You are solely responsible for any decision you make and any trade you place anywhere.</p>
+      <p><b style="color:var(--text)">3. AI output can be wrong.</b> Trades, analysis, and chat are generated by automated AI models that are frequently inaccurate, incomplete, or out of date. Do not rely on them. Market data may be delayed or wrong, and past simulated performance does not predict real results.</p>
+      <p><b style="color:var(--text)">4. Your keys, accounts &amp; costs.</b> Any API keys or brokerage connections you add are used at your own risk and remain your responsibility. Running AI rounds and connecting third-party services (e.g. OpenRouter, Alpaca) can incur real costs and is governed by <i>their</i> terms — you must comply with them and with all applicable laws.</p>
+      <p><b style="color:var(--text)">5. Real-money trading.</b> If a future or self-hosted configuration is connected to a live brokerage, all resulting orders, losses, fees, and tax consequences are entirely yours. The operator does not execute trades for you and is not responsible for any financial loss.</p>
+      <p><b style="color:var(--text)">6. No warranty.</b> Helm is provided “as is” and “as available,” without warranties of any kind, express or implied, including merchantability, fitness for a particular purpose, accuracy, or uninterrupted availability. It may change, break, or be discontinued at any time, and data may be lost.</p>
+      <p><b style="color:var(--text)">7. Limitation of liability.</b> To the maximum extent permitted by law, the operator shall not be liable for any direct, indirect, incidental, or consequential damages — including trading or financial losses, lost data, or lost profits — arising from your use of Helm. You agree to indemnify and hold the operator harmless from claims arising out of your use or your connected accounts.</p>
+      <p><b style="color:var(--text)">8. Eligibility &amp; changes.</b> You must be legally able to enter this agreement in your jurisdiction. These terms may be updated; continued use means you accept the changes.</p>
       <button class="btn go" style="margin-top:8px" onclick="closeTos()">I understand</button>
     </div>
   </div>
@@ -1127,6 +1181,7 @@ const VIEWS = {
             <div class="stat"><div class="k">Mkt val</div><div class="v">$${(mv/1000).toFixed(1)}k</div></div>
             <div class="stat"><div class="k">Net P&amp;L</div><div class="v ${npcls}">${sgn(npnl)}$${money(npnl)}</div></div>
           </div>
+          <button class="sym-open" onclick="openSymbol('${p.sym}')">📈 Chart &amp; financials</button>
           <div class="collapse">
             <div class="collapse-head" onclick="toggleCollapse(this)">Who holds it &amp; what they think <span class="chev">▶</span></div>
             <div class="collapse-body">
@@ -1346,8 +1401,7 @@ function openAcct(i){
   const a=ACCOUNTS[i], pnl=a.value-100000, cls=a.ret>=0?"pos":"neg", col=cssvar(a.ret>=0?"--pos":"--neg");
   const positions=acctPositions(a.name), hist=tradeHistory(a);
   win.innerHTML = `
-    <div class="win-bar" id="winBar"><span class="dots"><i style="background:var(--neg)"></i><i style="background:var(--warn)"></i><i style="background:var(--pos)"></i></span>
-      <span class="ttl">${a.name} · practice account</span><button class="x" onclick="closeWin()">×</button></div>
+    <div class="win-bar" id="winBar">      <span class="ttl">${a.name} · practice account</span><button class="x" onclick="closeWin()">×</button></div>
     <div class="win-body">
       <div class="card-head" style="margin-bottom:6px"><span class="st ${a.status}"></span><span class="name" style="font-size:16px">${a.name}</span><span class="chip">${a.prov}</span>
         <span class="chip" style="margin-left:auto">${SLUG[a.name]||""}</span></div>
@@ -1366,7 +1420,7 @@ function openAcct(i){
       </div>
       <div class="sectlabel">What it's holding now</div>
       ${positions.length?positions.map(p=>{ const pl=(p.price-p.avg)*p.qty,c=pl>=0?"pos":"neg";
-        return `<div class="holder"><span class="ha">${p.sym}</span><span class="hn"><span>${p.qty} @ $${money2(p.avg)}</span><span>now $${money(p.qty*p.price)}</span><span class="${c}">${sgn(pl)}$${money(pl)}</span></span></div>`;}).join(""):'<div class="desc">Not holding anything right now.</div>'}
+        return `<div class="holder"><span class="ha" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px" onclick="openSymbol('${p.sym}')">${p.sym}</span><span class="hn"><span>${p.qty} @ $${money2(p.avg)}</span><span>now $${money(p.qty*p.price)}</span><span class="${c}">${sgn(pl)}$${money(pl)}</span></span></div>`;}).join(""):'<div class="desc">Not holding anything right now.</div>'}
       <div class="sectlabel">Your notes <span style="text-transform:none;letter-spacing:0">— jot down anything you've noticed about this trader</span></div>
       <textarea class="notebox" placeholder="e.g. keep an eye on how much it's risking, likes to buy the dip…" data-note="acct:${a.name}" oninput="onNote(this)"></textarea>
       <div class="notehint"><span class="dotok"></span>saved to your account</div>
@@ -1387,6 +1441,103 @@ function makeDraggable(w, handle){ if(!handle) return; let sx,sy,ox,oy,on=false;
   document.onmouseup=()=>{ on=false; document.body.style.userSelect=""; };
 }
 function toggleCollapse(h){ h.closest(".collapse").classList.toggle("open"); }
+
+/* ===================== SYMBOL CHART + FINANCIALS (real data only) ===================== */
+const TF_RANGES=["1D","5D","1M","6M","YTD","1Y","5Y","ALL"];
+let _sym={ sym:null, range:"1D" };
+function openSymbol(sym){
+  sym=String(sym||"").toUpperCase();
+  const pos=(POSITIONS||[]).find(p=>p.sym===sym); const name=pos?pos.name:"";
+  _sym={ sym, range:"1D" };
+  win.innerHTML=`
+    <div class="win-bar" id="winBar"><span class="ttl">${sym} · live market data</span><button class="x" onclick="closeWin()">×</button></div>
+    <div class="win-body">
+      <div class="card-head" style="margin-bottom:2px"><span class="tk-sym" style="font-size:18px">${sym}</span><span class="tk-name">${esc(name)}</span></div>
+      <div class="chart-meta"><span class="px" id="symPx">—</span><span class="pnl" id="symChg"></span></div>
+      <div class="tf-row" id="tfRow">${TF_RANGES.map(r=>`<button class="tf${r==="1D"?" on":""}" onclick="setSymRange('${r}')">${r}</button>`).join("")}</div>
+      <div class="chartwrap" id="chartWrap"><div class="chart-empty">Loading real ${sym} prices…</div></div>
+      <div class="sectlabel" style="margin-top:16px">Key statistics</div>
+      <div id="fundWrap"><div class="fnote">Loading…</div></div>
+    </div>`;
+  overlay.hidden=false; win.style.left="50%"; win.style.top="50%"; win.style.transform="translate(-50%,-50%)";
+  makeDraggable(win, win.querySelector("#winBar"));
+  loadSymRange("1D"); loadFundamentals(sym);
+}
+function setSymRange(r){ _sym.range=r;
+  document.querySelectorAll("#tfRow .tf").forEach(b=>b.classList.toggle("on", b.textContent===r));
+  loadSymRange(r); }
+async function loadSymRange(range){
+  const wrap=document.getElementById("chartWrap"); if(!wrap) return; const sym=_sym.sym;
+  wrap.innerHTML=`<div class="chart-empty">Loading real ${sym} prices…</div>`;
+  try{
+    const data=await api(`/api/history/${encodeURIComponent(sym)}?range=${encodeURIComponent(range)}`);
+    if(_sym.sym!==sym || _sym.range!==range) return; // a newer request superseded this one
+    if(!data.bars||!data.bars.length){ wrap.innerHTML=`<div class="chart-empty">No bars for ${sym} in this range (market may be closed).</div>`; return; }
+    drawPriceChart(wrap, data);
+    const up=(data.change||0)>=0, px=document.getElementById("symPx"), cg=document.getElementById("symChg");
+    if(px) px.textContent="$"+money2(data.last);
+    if(cg){ cg.className="pnl "+(up?"pos":"neg"); cg.textContent=`${sgn(data.change)}${money2(Math.abs(data.change))} (${sgn(data.change_pct)}${Math.abs(data.change_pct).toFixed(2)}%) · ${range}`; }
+  }catch(e){
+    if(e.status===401&&booted) return signedOut();
+    wrap.innerHTML=`<div class="chart-empty">Live data unavailable — ${esc(e.message||"error")}.<br>(Data is always real here; nothing is mocked.)</div>`;
+  }
+}
+function drawPriceChart(wrap, data){
+  const bars=data.bars, n=bars.length, W=1000, H=300;
+  const mn=Math.min(...bars.map(b=>b.l)), mx=Math.max(...bars.map(b=>b.h)), rng=(mx-mn)||1;
+  const X=i=> n<2?0 : i/(n-1)*W;
+  const Y=v=> H-((v-mn)/rng)*H;
+  const line=bars.map((b,i)=>`${i?"L":"M"}${X(i).toFixed(1)} ${Y(b.c).toFixed(1)}`).join(" ");
+  const area=`M0 ${H} L`+bars.map((b,i)=>`${X(i).toFixed(1)} ${Y(b.c).toFixed(1)}`).join(" L")+` L${W} ${H} Z`;
+  const up=(data.change||0)>=0, col=cssvar(up?"--pos":"--neg"), gid="g"+Math.random().toString(36).slice(2,7);
+  wrap.innerHTML=`
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="${col}" stop-opacity="0.30"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+      <path d="${area}" fill="url(#${gid})"/>
+      <path d="${line}" fill="none" stroke="${col}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
+    </svg>
+    <div class="cx" id="cxLine"></div><div class="cdot" id="cxDot" style="background:${col}"></div><div class="chart-tip" id="cxTip"></div>`;
+  const cx=wrap.querySelector("#cxLine"), dot=wrap.querySelector("#cxDot"), tip=wrap.querySelector("#cxTip");
+  function move(ev){
+    const rect=wrap.getBoundingClientRect(), clientX=ev.touches?ev.touches[0].clientX:ev.clientX;
+    let fx=(clientX-rect.left)/rect.width; fx=Math.max(0,Math.min(1,fx));
+    const i=Math.round(fx*(n-1)), b=bars[i], px=(n<2?0:i/(n-1))*100, py=(Y(b.c)/H)*100;
+    cx.style.left=px+"%"; cx.style.opacity="1"; dot.style.left=px+"%"; dot.style.top=py+"%"; dot.style.opacity="1";
+    const dt=new Date(b.t), ds=(dt&&!isNaN(dt.getTime()))?dt.toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):b.t;
+    tip.innerHTML=`<div class="tt-date">${ds}</div>`
+      +`<div class="tt-row"><span>Open</span><b>${money2(b.o)}</b></div>`
+      +`<div class="tt-row"><span>High</span><b>${money2(b.h)}</b></div>`
+      +`<div class="tt-row"><span>Low</span><b>${money2(b.l)}</b></div>`
+      +`<div class="tt-row"><span>Close</span><b>${money2(b.c)}</b></div>`
+      +`<div class="tt-row"><span>Vol</span><b>${fmtNum(b.v)}</b></div>`;
+    tip.style.opacity="1";
+    const tw=tip.offsetWidth||150; let lp=px/100*rect.width+12; if(lp+tw>rect.width) lp=px/100*rect.width-tw-12; if(lp<0)lp=4;
+    tip.style.left=lp+"px";
+  }
+  function leave(){ cx.style.opacity="0"; dot.style.opacity="0"; tip.style.opacity="0"; }
+  wrap.addEventListener("pointermove",move); wrap.addEventListener("pointerleave",leave);
+  wrap.addEventListener("touchmove",move,{passive:true});
+}
+async function loadFundamentals(sym){
+  const wrap=document.getElementById("fundWrap"); if(!wrap) return;
+  try{
+    const f=await api(`/api/fundamentals/${encodeURIComponent(sym)}`);
+    const rows=[["Name",f.name],["Sector",f.sector],["Market Cap",f.market_cap!=null?fmtCap(f.market_cap):null],
+      ["P/E (TTM)",f.pe],["EPS (TTM)",f.eps],["Dividend Yield",f.dividend_yield!=null?f.dividend_yield+"%":null],
+      ["Beta",f.beta],["52W High",f.week52_high!=null?money2(f.week52_high):null],["52W Low",f.week52_low!=null?money2(f.week52_low):null]
+    ].filter(r=>r[1]!=null&&r[1]!=="");
+    wrap.innerHTML=rows.length
+      ?`<div class="fgrid">${rows.map(r=>`<div class="fr"><span class="fk">${r[0]}</span><span class="fv">${esc(String(r[1]))}</span></div>`).join("")}</div><div class="fnote">source: ${esc(f.source||"provider")} · live</div>`
+      :`<div class="fnote">No fundamental fields returned for ${sym}.</div>`;
+  }catch(e){
+    if(e.status===401&&booted) return signedOut();
+    const why=e.status===503?"no fundamentals provider configured — add a free FINNHUB_API_KEY to enable real company stats":(e.message||"unavailable");
+    wrap.innerHTML=`<div class="fnote">Fundamentals unavailable — ${esc(why)}.</div>`;
+  }
+}
+function fmtNum(v){ v=+v||0; if(v>=1e9)return (v/1e9).toFixed(2)+"B"; if(v>=1e6)return (v/1e6).toFixed(2)+"M"; if(v>=1e3)return (v/1e3).toFixed(1)+"K"; return String(Math.round(v)); }
+function fmtCap(v){ v=+v; if(v>=1e12)return "$"+(v/1e12).toFixed(2)+"T"; if(v>=1e9)return "$"+(v/1e9).toFixed(2)+"B"; if(v>=1e6)return "$"+(v/1e6).toFixed(2)+"M"; return "$"+fmtNum(v); }
 
 /* ===================== ADVISOR NOTES (server-backed via GET/PUT /api/notes) =====================
    data-note keys are "acct:<trader>" / "ticker:<symbol>"; map "acct"→scope "trader"
@@ -1417,11 +1568,32 @@ const MGR_SEED=[
 function resetChat(){ const log=document.getElementById("chatLog");
   log.innerHTML = MGR_SEED.map(([who,t])=>`<div class="msg ${who==="you"?"user":"bot"}"><div class="who">${who}</div>${t}</div>`).join("");
   log.scrollTop=log.scrollHeight; currentConversationId=null; }
+// Playful "thinking" verbs (à la the Claude CLI) — cycled while the manager replies.
+const THINK_WORDS=["noodling","percolating","pollinating","ruminating","marinating","simmering",
+  "cogitating","tessellating","untangling","conjuring","calibrating","ideating","mulling","finagling",
+  "scheming","brewing","deliberating","vibing","crunching","frolicking","wrangling","spelunking",
+  "sleuthing","contemplating","percippitating","hobnobbing","galvanizing","synthesizing"];
+let thinkTimer=null;
+const pickWord=()=>THINK_WORDS[Math.floor(Math.random()*THINK_WORDS.length)]+"…";
+function startThinking(){
+  const log=document.getElementById("chatLog"), tag=document.getElementById("thinkTag");
+  log.insertAdjacentHTML("beforeend",`<div class="msg typing" id="typing"><span class="word gradient-ink" id="typword">${pickWord()}</span><span class="tdots"><i></i><i></i><i></i></span></div>`);
+  log.scrollTop=log.scrollHeight;
+  if(tag){ tag.hidden=false; tag.textContent=pickWord(); }
+  thinkTimer=setInterval(()=>{ const w=pickWord(), tw=document.getElementById("typword");
+    if(tw) tw.textContent=w; if(tag) tag.textContent=w; }, 1500);
+}
+function stopThinking(){
+  clearInterval(thinkTimer); thinkTimer=null;
+  const t=document.getElementById("typing"); if(t) t.remove();
+  const tag=document.getElementById("thinkTag"); if(tag){ tag.hidden=true; tag.textContent=""; }
+}
 // Manager reply ← POST /api/chat (reads bench + research + memory server-side).
 // Falls back to the mock canned reply so the chat still answers if WS-E is unwired.
 async function sendMsg(){ const box=document.getElementById("chatBox"), txt=box.value.trim(); if(!txt) return;
   const log=document.getElementById("chatLog");
   log.insertAdjacentHTML("beforeend",`<div class="msg user"><div class="who">you</div>${esc(txt)}</div>`); box.value=""; log.scrollTop=log.scrollHeight;
+  startThinking();
   try{
     const data=await api("/api/chat",{method:"POST",body:{message:txt, conversation_id:currentConversationId}});
     const reply=(data&&(data.reply||data.content||data.text||data.message))||"";
@@ -1433,7 +1605,8 @@ async function sendMsg(){ const box=document.getElementById("chatBox"), txt=box.
   }catch(e){
     if(e.status===401&&booted) return signedOut();
     log.insertAdjacentHTML("beforeend",`<div class="msg bot"><div class="who">manager</div>(mock) Once wired, the manager model reasons across all six books and answers here. The per-account models only emit buy/sell/hold.</div>`);
-    log.scrollTop=log.scrollHeight; setCtx(Math.min(0.95, ctxFrac+0.06)); } }
+    log.scrollTop=log.scrollHeight; setCtx(Math.min(0.95, ctxFrac+0.06));
+  }finally{ stopThinking(); } }
 function wipeCtx(){ document.getElementById("chatLog").innerHTML=`<div class="msg sys">Context wiped · fresh manager conversation</div>`; setCtx(0.02); currentConversationId=null; toast("Context wiped","fresh manager conversation","good"); }
 let ctxFrac=0.38;
 function setCtx(frac){ ctxFrac=frac; const C=2*Math.PI*22;
@@ -1507,8 +1680,7 @@ function renderWiz(){
     <div class="reviewrow"><span class="rk">Style</span><span class="rv">${WIZ.style}</span></div>`;
   }
   win.innerHTML=`
-    <div class="win-bar" id="winBar"><span class="dots"><i style="background:var(--neg)"></i><i style="background:var(--warn)"></i><i style="background:var(--pos)"></i></span>
-      <span class="ttl">Add a trader · step ${WIZ.step} of 3</span><button class="x" onclick="closeWin()">×</button></div>
+    <div class="win-bar" id="winBar">      <span class="ttl">Add a trader · step ${WIZ.step} of 3</span><button class="x" onclick="closeWin()">×</button></div>
     <div class="win-body">
       <div class="wiz-steps">${[1,2,3].map(n=>`<i class="${n<=WIZ.step?"on":""}"></i>`).join("")}</div>
       ${bodyHTML}

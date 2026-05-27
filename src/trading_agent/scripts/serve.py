@@ -309,6 +309,26 @@ def build_cockpit(
         app.state.bench_controller = BenchController(
             bench, client, symbols=syms, cadence_seconds=cadence_seconds
         )
+
+    # Real market data for the cockpit charts + fundamentals popup. Bars come
+    # from the same Alpaca data key as the live books; fundamentals from whatever
+    # provider has a key in the environment (real data only — no synthetic feed).
+    from ..data.history import FundamentalsProvider, build_history_service
+    from ..data.providers.alpaca import AlpacaBarProvider
+
+    fundamentals_provider: FundamentalsProvider | None = None
+    if os.environ.get("FINNHUB_API_KEY"):
+        from ..data.providers.finnhub import FinnhubProvider
+
+        fundamentals_provider = FinnhubProvider()
+    elif os.environ.get("POLYGON_API_KEY"):
+        from ..data.providers.polygon import PolygonProvider
+
+        fundamentals_provider = PolygonProvider()
+    app.state.history = build_history_service(
+        bar_provider=AlpacaBarProvider(),
+        fundamentals_provider=fundamentals_provider,
+    )
     return app
 
 

@@ -34,6 +34,7 @@ from .routers import approvals as approvals_router
 from .routers import bench as bench_router
 from .routers import config as config_router
 from .routers import manager as manager_router
+from .routers import market as market_router
 from .routers import notes as notes_router
 from .routers import notifications as notifications_router
 from .routers import requests as requests_router
@@ -52,6 +53,7 @@ _COCKPIT_ROUTERS = (
     config_router.router,
     bench_router.router,
     research_router.router,
+    market_router.router,
     manager_router.router,
     risk_router.router,
     approvals_router.router,
