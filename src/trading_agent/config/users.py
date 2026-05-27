@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 import time
 import uuid
@@ -29,6 +30,11 @@ _DKLEN = 32
 
 SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
 SESSION_COOKIE = "session"
+
+# Env fallback for the bench owner (WS-A). The trader-intelligence layer binds
+# one owner_user_id so research/memory/settings/cost-gate (all user-namespaced)
+# have an identity off the request path. See resolve_owner_user_id.
+OWNER_ENV = "TRADING_AGENT_OWNER_ID"
 
 
 @dataclass
@@ -109,6 +115,41 @@ def authenticate(db: Database, username: str, password: str) -> User:
     if row is None or not verify_hash(password, row["pw_hash"]):
         raise AuthError("invalid username or password")
     return _row_to_user(row)
+
+
+# --- owner resolution (WS-A trader intelligence) -----------------------------
+
+
+def list_user_ids(db: Database) -> list[str]:
+    """Every user id, oldest first. Used to detect the single-operator case."""
+    rows = db.query("SELECT id FROM users ORDER BY created_at, id")
+    return [str(row["id"]) for row in rows]
+
+
+def resolve_owner_user_id(db: Database, *, explicit: str | None = None) -> str | None:
+    """Resolve the one ``user_id`` the bench's intelligence layer binds to.
+
+    Priority: ``explicit`` (the ``--owner`` CLI flag) → the :data:`OWNER_ENV`
+    env var → a **lazy single-user fallback** (if exactly one user exists, it is
+    the owner) → ``None`` (intelligence features stay dark: history-only, like
+    the manager's None-guards).
+
+    A requested value (explicit or env) may be a ``user_id`` *or* a ``username``
+    — the operator's convenience. A *stale* request (names no existing user)
+    resolves to ``None`` rather than silently binding a different account; this
+    is also what lets callers re-resolve each round on a fresh box, picking up
+    the owner once they sign up. The single-user fallback only applies when no
+    request was made.
+    """
+    requested = (explicit or os.environ.get(OWNER_ENV) or "").strip()
+    if requested:
+        if get_user(db, requested) is not None:
+            return requested  # matched a real user id
+        row = db.query_one("SELECT id FROM users WHERE username = ?", (requested,))
+        return str(row["id"]) if row is not None else None  # username, else stale → None
+
+    ids = list_user_ids(db)
+    return ids[0] if len(ids) == 1 else None  # lone operator, else zero/many → None
 
 
 # --- sessions ----------------------------------------------------------------

@@ -163,3 +163,73 @@ def test_loaded_config_preserves_missing_required_credential_refs(tmp_path):
 def test_get_credentials_no_credentials_block_returns_empty():
     assert get_credentials({}) == {}
     assert get_credentials({"other": "x"}) == {}
+
+
+# --- owner resolution (WS-A) --------------------------------------------------
+
+
+@pytest.fixture
+def users_db(tmp_path):
+    from trading_agent.config.db import Database
+
+    return Database(tmp_path / "config.db")
+
+
+def test_resolve_owner_explicit_id_wins(users_db, monkeypatch):
+    from trading_agent.config.users import create_user, resolve_owner_user_id
+
+    monkeypatch.delenv("TRADING_AGENT_OWNER_ID", raising=False)
+    a = create_user(users_db, "alice", "pw")
+    create_user(users_db, "bob", "pw")  # second user → no single-user fallback
+    assert resolve_owner_user_id(users_db, explicit=a.id) == a.id
+
+
+def test_resolve_owner_explicit_accepts_username(users_db, monkeypatch):
+    from trading_agent.config.users import create_user, resolve_owner_user_id
+
+    monkeypatch.delenv("TRADING_AGENT_OWNER_ID", raising=False)
+    a = create_user(users_db, "alice", "pw")
+    create_user(users_db, "bob", "pw")
+    assert resolve_owner_user_id(users_db, explicit="alice") == a.id
+
+
+def test_resolve_owner_env_var(users_db, monkeypatch):
+    from trading_agent.config.users import create_user, resolve_owner_user_id
+
+    a = create_user(users_db, "alice", "pw")
+    create_user(users_db, "bob", "pw")
+    monkeypatch.setenv("TRADING_AGENT_OWNER_ID", a.id)
+    assert resolve_owner_user_id(users_db) == a.id
+    # explicit beats env
+    assert resolve_owner_user_id(users_db, explicit="bob") != a.id
+
+
+def test_resolve_owner_single_user_fallback(users_db, monkeypatch):
+    from trading_agent.config.users import create_user, resolve_owner_user_id
+
+    monkeypatch.delenv("TRADING_AGENT_OWNER_ID", raising=False)
+    only = create_user(users_db, "solo", "pw")
+    assert resolve_owner_user_id(users_db) == only.id
+
+
+def test_resolve_owner_zero_or_many_is_none(users_db, monkeypatch):
+    from trading_agent.config.users import create_user, list_user_ids, resolve_owner_user_id
+
+    monkeypatch.delenv("TRADING_AGENT_OWNER_ID", raising=False)
+    assert resolve_owner_user_id(users_db) is None  # zero users
+    create_user(users_db, "alice", "pw")
+    create_user(users_db, "bob", "pw")
+    assert len(list_user_ids(users_db)) == 2
+    assert resolve_owner_user_id(users_db) is None  # ambiguous → dark
+
+
+def test_resolve_owner_stale_id_is_none_until_signup(users_db, monkeypatch):
+    """A request naming no existing user resolves to None (no silent mis-bind),
+    then binds once that user is created — the lazy re-resolution path."""
+    from trading_agent.config.users import create_user, resolve_owner_user_id
+
+    monkeypatch.delenv("TRADING_AGENT_OWNER_ID", raising=False)
+    create_user(users_db, "bob", "pw")  # a lone, different user exists
+    assert resolve_owner_user_id(users_db, explicit="alice") is None  # stale → None, not bob
+    alice = create_user(users_db, "alice", "pw")
+    assert resolve_owner_user_id(users_db, explicit="alice") == alice.id  # now binds
