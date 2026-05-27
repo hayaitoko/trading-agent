@@ -42,6 +42,12 @@ CADENCE_OPTIONS = [
 
 MIN_CADENCE = 5
 
+# WS-A reflection defaults (overridable per-user in settings).
+DEFAULT_REFLECTION_CADENCE = 4  # reflect every N rounds …
+DEFAULT_REFLECTION_USD = 0.01  # … conservative per-trader distill cost estimate
+_NOTABLE_PNL_DELTA_PCT = 5.0  # … or early when a book's return swings this much
+_REFLECTION_DECISION_WINDOW = 10  # cap a book's decision log fed to reflection
+
 
 class BenchController:
     def __init__(
@@ -54,6 +60,7 @@ class BenchController:
         history: HistoryService | None = None,
         research: Any = None,
         memory: Any = None,
+        reflector: Any = None,
         owner_user_id: str | None = None,
         db: Database | None = None,
     ) -> None:
@@ -66,9 +73,13 @@ class BenchController:
         self.history = history
         self.research = research
         self.memory = memory
+        # The gated reflector drives the post-round write path; None → no learning.
+        self.reflector = reflector
         self._owner_explicit = owner_user_id
         self.db = db
         self._cached_owner_id: str | None = owner_user_id
+        self._round = 0  # decision rounds completed (drives the reflection cadence)
+        self._last_returns: dict[str, float] = {}  # per-book return_pct at last reflection
         self._running = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -151,10 +162,110 @@ class BenchController:
                 self.bench.run_decisions()
             except Exception:  # never let one bad tick kill the loop
                 continue
+            self._maybe_reflect()  # gated, self-contained — never raises
 
     def tick_now(self) -> None:
         """Run one decision round immediately (manual trigger from the UI)."""
         self.bench.run_decisions()
+        self._maybe_reflect()
+
+    # --- Reflection (WS-A write path) ---------------------------------------
+
+    def _maybe_reflect(self) -> None:
+        """After a round, maybe distill a few durable lessons per book.
+
+        Guarded every which way so it can never kill the cadence loop: needs a
+        reflector + a resolved owner, fires only on the cadence (or a notable
+        P&L swing), and resolves a cheap model ref. The whole body is wrapped —
+        any failure is swallowed; a budget exhaustion stops the round early.
+        """
+        reflector = self.reflector
+        owner = self.owner_id
+        if reflector is None or owner is None:
+            return
+        self._round += 1
+        try:
+            if not self._reflection_due(owner):
+                return
+            from ..manager.agent import resolve_reflection_ref
+
+            ref = resolve_reflection_ref(reflector.settings, reflector.registry, owner)
+            self._reflect_each_book(owner, ref, reflector)
+        except Exception:
+            return  # any setup/resolution failure: skip this round, keep looping
+
+    def _reflection_due(self, owner: str) -> bool:
+        cadence = int(self.reflector.settings.get(owner, "reflection_cadence_rounds", DEFAULT_REFLECTION_CADENCE) or 0)
+        if cadence > 0 and self._round % cadence == 0:
+            return True
+        return self._notable_pnl_delta()
+
+    def _notable_pnl_delta(self) -> bool:
+        """True if any book's return moved ≥ threshold since the last reflection."""
+        try:
+            rows = self.bench.leaderboard()
+        except Exception:
+            return False
+        for row in rows:
+            name, ret = row.get("name"), row.get("return_pct")
+            if name is None or not isinstance(ret, (int, float)):
+                continue
+            if abs(float(ret) - self._last_returns.get(name, 0.0)) >= _NOTABLE_PNL_DELTA_PCT:
+                return True
+        return False
+
+    def _reflect_each_book(self, owner: str, ref: Any, reflector: Any) -> None:
+        from ..memory.reflect import CostGateError
+
+        estimated = float(
+            reflector.settings.get(owner, "reflection_estimated_usd", DEFAULT_REFLECTION_USD)
+            or DEFAULT_REFLECTION_USD
+        )
+        # Read the shared, locked views once (never comp.decisions directly).
+        leaderboard = {r.get("name"): r for r in self.bench.leaderboard()}
+        decisions = self.bench.recent_decisions(limit=200)
+        for name in self.bench.names():
+            context = self._reflection_context(name, leaderboard.get(name, {}), decisions)
+            try:
+                reflector.reflect_from_context(
+                    owner, name, context, ref,
+                    estimated_usd=estimated, tags=["auto-reflection"],
+                )
+            except CostGateError:
+                break  # daily ceiling reached — stop spending this round
+            except Exception:
+                continue  # one book's failure must not block the rest
+        # Re-baseline the P&L-delta gate to the post-reflection state.
+        baseline: dict[str, float] = {}
+        for row in self.bench.leaderboard():
+            nm = row.get("name")
+            if nm is not None:
+                baseline[str(nm)] = float(row.get("return_pct", 0.0) or 0.0)
+        self._last_returns = baseline
+
+    def _reflection_context(self, name: str, row: dict[str, Any], decisions: list[dict[str, Any]]) -> str:
+        """A compact round summary for one book: its P&L row + own recent decisions."""
+        lines = [f"Trader: {name}"]
+        if row:
+            lines.append(
+                f"P&L {row.get('pnl', 0):+,.0f} ({row.get('return_pct', 0):+.2f}%), "
+                f"account value ${row.get('account_value', 0):,.0f}, "
+                f"wins {row.get('wins', 0)} / losses {row.get('losses', 0)}, "
+                f"{row.get('trades', 0)} trades over {row.get('decisions', 0)} decisions"
+            )
+        own = [d for d in decisions if d.get("competitor") == name][:_REFLECTION_DECISION_WINDOW]
+        lines.append("Recent decisions (newest first):")
+        if not own:
+            lines.append("  (none this window)")
+        for d in own:
+            line = (
+                f"  {d.get('timestamp', '')} {d.get('action', '?')} "
+                f"{d.get('quantity', '')} {d.get('symbol', '')} [{d.get('status', '?')}]"
+            )
+            if d.get("reason"):
+                line += f" — {d['reason']}"
+            lines.append(line.rstrip())
+        return "\n".join(lines)
 
     # --- Model menu ---------------------------------------------------------
 

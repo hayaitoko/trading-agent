@@ -36,14 +36,20 @@ if TYPE_CHECKING:
 __all__ = [
     "CostGateError",
     "DEFAULT_MANAGER_MODEL",
+    "DEFAULT_REFLECTION_MODEL",
     "ManagerAgent",
     "ManagerConfigError",
     "resolve_manager_ref",
+    "resolve_reflection_ref",
 ]
 
 # Cheap default overseer model (cockpit's featured cheap pick). Overridable via
 # the ``manager_model`` user setting.
 DEFAULT_MANAGER_MODEL = "google/gemini-3.5-flash"
+
+# Cheap default for the post-round reflection distill (WS-A). Overridable via the
+# ``reflection_model`` user setting.
+DEFAULT_REFLECTION_MODEL = "google/gemini-3.5-flash"
 
 # Per-message guards. The structural cap is one call/message; CostGate adds the
 # daily $ ceiling. The estimate is conservative and only used for the pre-check;
@@ -101,17 +107,22 @@ def _prefer_endpoint(endpoints: list[Any]) -> Any:
     return sorted(endpoints, key=lambda e: (_TYPE_PRIORITY.get(e.type, 9), e.name))[0]
 
 
-def resolve_manager_ref(
-    settings: SettingsStore, registry: EndpointRegistry, user_id: str
+def _resolve_ref(
+    settings: SettingsStore,
+    registry: EndpointRegistry,
+    user_id: str,
+    *,
+    key: str,
+    default: str,
 ) -> ModelRef:
-    """Turn the ``manager_model`` setting into a concrete :class:`ModelRef`.
+    """Turn a model setting (``key``) into a concrete :class:`ModelRef`.
 
-    Accepts either ``{"endpoint_id", "model"}`` (a pinned endpoint) or a bare
-    model slug string (then the user's first enabled endpoint is chosen,
-    preferring OpenRouter). Falls back to :data:`DEFAULT_MANAGER_MODEL`. Raises
+    The setting is either ``{"endpoint_id", "model"}`` (a pinned endpoint) or a
+    bare model slug string (then the user's first enabled endpoint is chosen,
+    preferring OpenRouter). Falls back to ``default`` for the model. Raises
     :class:`ManagerConfigError` if the user has no enabled endpoint.
     """
-    raw = settings.get(user_id, "manager_model", None)
+    raw = settings.get(user_id, key, None)
     endpoint_id: str | None = None
     model: str | None = None
     if isinstance(raw, dict):
@@ -119,7 +130,7 @@ def resolve_manager_ref(
         model = raw.get("model") or None
     elif isinstance(raw, str):
         model = raw.strip() or None
-    model = model or DEFAULT_MANAGER_MODEL
+    model = model or default
 
     if endpoint_id is not None:
         pinned = registry.get(user_id, endpoint_id)
@@ -135,6 +146,24 @@ def resolve_manager_ref(
         endpoint_id = _prefer_endpoint(enabled).id
 
     return ModelRef(endpoint_id=endpoint_id, model=model)
+
+
+def resolve_manager_ref(
+    settings: SettingsStore, registry: EndpointRegistry, user_id: str
+) -> ModelRef:
+    """Resolve the ``manager_model`` setting to a :class:`ModelRef`."""
+    return _resolve_ref(
+        settings, registry, user_id, key="manager_model", default=DEFAULT_MANAGER_MODEL
+    )
+
+
+def resolve_reflection_ref(
+    settings: SettingsStore, registry: EndpointRegistry, user_id: str
+) -> ModelRef:
+    """Resolve the ``reflection_model`` setting to a :class:`ModelRef` (WS-A)."""
+    return _resolve_ref(
+        settings, registry, user_id, key="reflection_model", default=DEFAULT_REFLECTION_MODEL
+    )
 
 
 class ManagerAgent:

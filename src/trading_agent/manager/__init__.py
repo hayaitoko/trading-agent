@@ -16,18 +16,22 @@ from __future__ import annotations
 
 from .agent import (
     DEFAULT_MANAGER_MODEL,
+    DEFAULT_REFLECTION_MODEL,
     ManagerAgent,
     ManagerConfigError,
     resolve_manager_ref,
+    resolve_reflection_ref,
 )
 from .chat import Conversation, ConversationStore, Turn
 
 __all__ = [
     "DEFAULT_MANAGER_MODEL",
+    "DEFAULT_REFLECTION_MODEL",
     "Conversation",
     "ConversationStore",
     "ManagerAgent",
     "ManagerConfigError",
     "Turn",
     "resolve_manager_ref",
+    "resolve_reflection_ref",
 ]
