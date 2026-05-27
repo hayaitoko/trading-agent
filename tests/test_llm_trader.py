@@ -1,5 +1,6 @@
 """Tests for LLMTrader / StrategyTrader / decision mapping (no network)."""
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from trading_agent.llm.openrouter import ChatResult, OpenRouterError
@@ -11,6 +12,7 @@ from trading_agent.llm.trader import (
     Trader,
     decision_to_signal,
 )
+from trading_agent.memory.embed import EmbedError
 
 
 class FakeClient:
@@ -138,3 +140,171 @@ def test_style_folded_into_system_prompt() -> None:
 def test_no_style_uses_base_prompt() -> None:
     trader = LLMTrader("m", FakeClient(content="{}"), symbols=["AAPL"])
     assert "mandated trading style" not in trader.system_prompt
+
+
+# --- WS-A P2: layered research + memory context ------------------------------
+
+
+@dataclass
+class _Brief:
+    ticker: str
+    summary: str
+    sentiment: float = 0.0
+    catalysts: list[str] = field(default_factory=list)
+    id: str = ""
+
+
+@dataclass
+class _Lesson:
+    text: str
+    trader_id: str = ""
+
+
+class _FakeResearch:
+    """Duck-typed ResearchStore: records recall calls, serves canned briefs."""
+
+    def __init__(
+        self,
+        *,
+        search: list[_Brief] | None = None,
+        by_symbol: dict[str, list[_Brief]] | None = None,
+        recent: list[_Brief] | None = None,
+    ) -> None:
+        self._search = search or []
+        self._by_symbol = by_symbol or {}
+        self._recent = recent or []
+        self.calls: list[tuple[str, str]] = []
+
+    def search(self, owner: str, query: str, k: int) -> list[_Brief]:
+        self.calls.append(("search", query))
+        return self._search[:k]
+
+    def get(self, owner: str, ticker: str) -> list[_Brief]:
+        self.calls.append(("get", ticker))
+        return self._by_symbol.get(ticker, [])
+
+    def recent(self, owner: str, k: int) -> list[_Brief]:
+        self.calls.append(("recent", str(k)))
+        return self._recent[:k]
+
+
+class _FakeMemory:
+    """Duck-typed MemoryStore: serves canned lessons or raises on recall."""
+
+    def __init__(self, lessons: list[_Lesson] | None = None, raises: Exception | None = None) -> None:
+        self._lessons = lessons or []
+        self._raises = raises
+        self.recall_calls: list[tuple[str, str]] = []
+
+    def recall(self, owner: str, trader_id: str, query: str, k: int) -> list[_Lesson]:
+        self.recall_calls.append((owner, trader_id))
+        if self._raises is not None:
+            raise self._raises
+        return self._lessons[:k]
+
+
+def _user_msg(client: FakeClient) -> str:
+    return client.calls[0]["messages"][1]["content"]
+
+
+def test_trader_layers_research_and_memory_blocks() -> None:
+    client = FakeClient(content='{"decisions": []}')
+    research = _FakeResearch(search=[_Brief("AAPL", "buyable dip on volume", 0.4, ["earnings"])])
+    memory = _FakeMemory([_Lesson("don't chase gaps on AAPL", "alpha")])
+    trader = LLMTrader(
+        "m", client, symbols=["AAPL"], name="alpha",
+        research=research, memory=memory, owner_user_id="u1",
+    )
+    result = trader.decide({"cash": 1000, "positions": []})
+    assert result.error is None
+    msg = _user_msg(client)
+    assert "Research briefs" in msg and "buyable dip on volume" in msg
+    assert "Your past lessons" in msg and "don't chase gaps on AAPL" in msg
+    # exactly one decision trailer, never doubled
+    assert msg.count("Return your JSON decision now.") == 1
+    # recall keys on the trader's own name (closes the recall/reflect loop)
+    assert memory.recall_calls == [("u1", "alpha")]
+
+
+def test_memory_omitted_on_embed_error_but_decision_made() -> None:
+    client = FakeClient(content='{"decisions": [{"symbol": "AAPL", "action": "HOLD", "quantity": 0}]}')
+    research = _FakeResearch(search=[_Brief("AAPL", "still constructive", 0.2)])
+    memory = _FakeMemory(raises=EmbedError("no local embed endpoint"))
+    trader = LLMTrader(
+        "m", client, symbols=["AAPL"], name="alpha",
+        research=research, memory=memory, owner_user_id="u1",
+    )
+    result = trader.decide({"cash": 1000, "positions": []})
+    assert result.error is None  # the EmbedError never reaches the decision
+    msg = _user_msg(client)
+    assert "still constructive" in msg  # research still present
+    assert "Your past lessons" not in msg  # memory block dropped
+
+
+def test_owner_none_omits_research_and_memory() -> None:
+    client = FakeClient(content='{"decisions": []}')
+    research = _FakeResearch(search=[_Brief("AAPL", "should not appear", 0.9)])
+    memory = _FakeMemory([_Lesson("should not appear either", "alpha")])
+    trader = LLMTrader(
+        "m", client, symbols=["AAPL"], name="alpha",
+        research=research, memory=memory, owner_user_id=None,
+    )
+    trader.decide({"cash": 1000, "positions": []})
+    msg = _user_msg(client)
+    assert "should not appear" not in msg
+    assert "Research briefs" not in msg and "Your past lessons" not in msg
+    assert memory.recall_calls == []  # never queried without an owner
+
+
+def test_research_falls_back_search_then_symbol_then_recent() -> None:
+    client = FakeClient(content='{"decisions": []}')
+    # search empty, per-symbol empty, recent has one → recent is what renders
+    research = _FakeResearch(recent=[_Brief("MSFT", "recent fallback brief", -0.1)])
+    trader = LLMTrader("m", client, symbols=["AAPL"], research=research, owner_user_id="u1")
+    trader.decide({"cash": 1000, "positions": []})
+    msg = _user_msg(client)
+    assert "recent fallback brief" in msg
+    assert [c[0] for c in research.calls] == ["search", "get", "recent"]
+
+
+def test_research_per_symbol_fallback_when_search_empty() -> None:
+    client = FakeClient(content='{"decisions": []}')
+    research = _FakeResearch(by_symbol={"AAPL": [_Brief("AAPL", "from per-symbol get", 0.3, id="b1")]})
+    trader = LLMTrader("m", client, symbols=["AAPL"], research=research, owner_user_id="u1")
+    trader.decide({"cash": 1000, "positions": []})
+    msg = _user_msg(client)
+    assert "from per-symbol get" in msg
+    assert "recent" not in [c[0] for c in research.calls]  # didn't need recent
+
+
+def test_no_stores_keeps_30_close_fallback_and_single_trailer() -> None:
+    client = FakeClient(content='{"decisions": []}')
+    trader = LLMTrader("m", client, symbols=["AAPL"], lookback=5)
+    for px in (100, 101, 102):
+        trader.observe({"symbol": "AAPL", "close": px})
+    trader.decide({"cash": 1000, "positions": []})
+    msg = _user_msg(client)
+    assert "100" in msg and "102" in msg  # close prices, unchanged path
+    assert "Research briefs" not in msg and "Your past lessons" not in msg
+    assert msg.count("Return your JSON decision now.") == 1
+
+
+class _FakeHistory:
+    """Duck-typed HistoryService: honors include_trailer like the real one."""
+
+    def context_block(self, symbols: list[str], account: dict[str, Any], *, include_trailer: bool = True) -> str:
+        body = f"RICH HISTORY for {', '.join(symbols)}"
+        return body + "\n\nReturn your JSON decision now." if include_trailer else body
+
+
+def test_history_block_composes_without_double_trailer() -> None:
+    client = FakeClient(content='{"decisions": []}')
+    trader = LLMTrader(
+        "m", client, symbols=["AAPL"], history=_FakeHistory(),
+        research=_FakeResearch(search=[_Brief("AAPL", "rich-path brief", 0.1)]),
+        owner_user_id="u1",
+    )
+    trader.decide({"cash": 1000, "positions": []})
+    msg = _user_msg(client)
+    assert "RICH HISTORY for AAPL" in msg and "rich-path brief" in msg
+    assert msg.count("Return your JSON decision now.") == 1

@@ -217,12 +217,18 @@ class HistoryService:
         self._fund_cache[symbol] = (now, data)
         return data
 
-    def context_block(self, symbols: Any, account: dict[str, Any]) -> str:
+    def context_block(
+        self, symbols: Any, account: dict[str, Any], *, include_trailer: bool = True
+    ) -> str:
         """Assemble the richer prompt context: long view + recent window + fundamentals.
 
         Fetches once per symbol (cached), then renders. If the rendered block
         exceeds ``max_chars`` it is re-rendered with fewer recent rows / long
         samples until it fits — never refetching.
+
+        ``include_trailer`` (default True) appends the standalone "Return your
+        JSON decision now." line. The trader sets it False so it can layer
+        research/memory after this block and emit a single trailer of its own.
         """
         syms = [str(s) for s in symbols]
         data: dict[str, tuple[list[Bar], list[Bar], dict[str, Any] | None]] = {}
@@ -233,11 +239,11 @@ class HistoryService:
 
         recent_n = self.depth.recent_lookback
         long_n = self.depth.downsample_long_to
-        block = self._render(syms, account, data, recent_n, long_n)
+        block = self._render(syms, account, data, recent_n, long_n, include_trailer)
         while len(block) > self.max_chars and not (recent_n <= 3 and long_n <= 5):
             recent_n = max(3, recent_n // 2)
             long_n = max(5, long_n // 2)
-            block = self._render(syms, account, data, recent_n, long_n)
+            block = self._render(syms, account, data, recent_n, long_n, include_trailer)
         return block
 
     # --- internals ----------------------------------------------------------
@@ -256,6 +262,7 @@ class HistoryService:
         data: dict[str, tuple[list[Bar], list[Bar], dict[str, Any] | None]],
         recent_n: int,
         long_n: int,
+        include_trailer: bool = True,
     ) -> str:
         cash = float(account.get("cash", 0) or 0)
         lines = [
@@ -267,7 +274,8 @@ class HistoryService:
             long_bars, recent_bars, fund = data[symbol]
             lines.append("")
             lines.extend(self._render_symbol(symbol, long_bars, recent_bars, fund, recent_n, long_n))
-        lines.extend(["", "Return your JSON decision now."])
+        if include_trailer:
+            lines.extend(["", "Return your JSON decision now."])
         return "\n".join(lines)
 
     def _render_symbol(

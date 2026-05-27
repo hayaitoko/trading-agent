@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 from ..llm.trader import LLMTrader
 
 if TYPE_CHECKING:
+    from ..config.db import Database
+    from ..data.history import HistoryService
     from ..llm.openrouter import OpenRouterClient
     from .bench import Bench
 
@@ -49,16 +51,43 @@ class BenchController:
         *,
         symbols: list[str],
         cadence_seconds: int = 300,
+        history: HistoryService | None = None,
+        research: Any = None,
+        memory: Any = None,
+        owner_user_id: str | None = None,
+        db: Database | None = None,
     ) -> None:
         self.bench = bench
         self.client = client
         self.symbols = list(symbols)
         self.cadence_seconds = max(MIN_CADENCE, cadence_seconds)
+        # WS-A intelligence wiring threaded into every LLMTrader (all optional;
+        # None → that trader degrades exactly as the bench did before WS-A).
+        self.history = history
+        self.research = research
+        self.memory = memory
+        self._owner_explicit = owner_user_id
+        self.db = db
+        self._cached_owner_id: str | None = owner_user_id
         self._running = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._models_cache: dict[str, Any] | None = None
+
+    @property
+    def owner_id(self) -> str | None:
+        """The bound owner, resolved lazily and cached once non-None.
+
+        A fresh box has zero users until someone signs up, so resolving once at
+        construction would freeze None forever; we re-resolve each access until
+        it sticks (explicit value → env → single-user fallback, see
+        :func:`config.users.resolve_owner_user_id`)."""
+        if self._cached_owner_id is None and self.db is not None:
+            from ..config.users import resolve_owner_user_id
+
+            self._cached_owner_id = resolve_owner_user_id(self.db, explicit=self._owner_explicit)
+        return self._cached_owner_id
 
     # --- Roster -------------------------------------------------------------
 
@@ -71,7 +100,15 @@ class BenchController:
         style: str | None = None,
     ) -> str:
         trader = LLMTrader(
-            model, self.client, symbols=self.symbols, name=name or model, style=style
+            model,
+            self.client,
+            symbols=self.symbols,
+            name=name or model,
+            style=style,
+            history=self.history,
+            research=self.research,
+            memory=self.memory,
+            owner_user_id=self.owner_id,
         )
         self.bench.add_competitor(
             trader.name, trader, initial_balance=cash, style=style

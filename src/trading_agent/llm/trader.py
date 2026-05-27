@@ -16,6 +16,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from ..memory.format import format_lessons
+from ..research.format import format_briefs
 from .openrouter import OpenRouterError, parse_json_object
 
 if TYPE_CHECKING:
@@ -24,6 +26,11 @@ if TYPE_CHECKING:
     from .openrouter import OpenRouterClient
 
 _VALID_ACTIONS = {"BUY", "SELL", "HOLD"}
+
+# WS-A defaults: how many research briefs / memory lessons to pull into a single
+# decision. Kept small — recall embeds the query per trader per round.
+_RESEARCH_K = 5
+_MEMORY_RECALL_K = 5
 
 
 @dataclass
@@ -106,6 +113,11 @@ class LLMTrader:
         temperature: float = 0.3,
         max_tokens: int = 800,
         history: HistoryService | None = None,
+        research: Any = None,
+        memory: Any = None,
+        owner_user_id: str | None = None,
+        research_k: int = _RESEARCH_K,
+        memory_k: int = _MEMORY_RECALL_K,
         style: str | None = None,
     ) -> None:
         self.model = model
@@ -123,6 +135,15 @@ class LLMTrader:
         # context block instead of just the last `lookback` closes. Optional so
         # the bench/back-compat path (no history) is unchanged.
         self.history = history
+        # WS-A intelligence (all duck-typed so there's no import cycle): the
+        # shared research store, the trader's private memory, and the owner the
+        # two are namespaced by. Any of them None → that block is simply omitted
+        # and the decision is still made — the manager's defensive pattern.
+        self.research = research
+        self.memory = memory
+        self.owner_user_id = owner_user_id
+        self.research_k = research_k
+        self.memory_k = memory_k
         self._bars: dict[str, deque[dict[str, Any]]] = {
             s: deque(maxlen=lookback) for s in self.symbols
         }
@@ -163,10 +184,22 @@ class LLMTrader:
     # --- internals ----------------------------------------------------------
 
     def _build_context(self, account: dict[str, Any]) -> str:
-        # When a HistoryService is injected, delegate to its richer context block
-        # (downsampled long view + dense recent OHLCV window + fundamentals).
-        if self.history is not None:
-            return self.history.context_block(self.symbols, account)
+        """Layered, gracefully-degrading context.
+
+        Body (rich history if injected, else the last-``lookback`` closes) +
+        research briefs + the trader's own past lessons, each block dropped if
+        its source is absent or errors, then a single JSON-decision trailer.
+        """
+        body = (
+            self.history.context_block(self.symbols, account, include_trailer=False)
+            if self.history is not None
+            else self._fallback_body(account)
+        )
+        parts = [body, self._research_block(), self._memory_block()]
+        return "\n\n".join(p for p in parts if p) + "\n\nReturn your JSON decision now."
+
+    def _fallback_body(self, account: dict[str, Any]) -> str:
+        """The original cash/positions + last-``lookback`` closes body (no trailer)."""
         lines = [
             f"Cash available: {account.get('cash', 0):,.2f}",
             f"Positions: {account.get('positions', [])}",
@@ -177,8 +210,56 @@ class LLMTrader:
         for symbol, bars in self._bars.items():
             closes = [round(float(b["close"]), 2) for b in bars if b.get("close") is not None]
             lines.append(f"  {symbol}: {closes[-self.lookback:]}")
-        lines.append("\nReturn your JSON decision now.")
         return "\n".join(lines)
+
+    def _recall_query(self) -> str:
+        """The semantic query for research/memory recall: this round's universe."""
+        return f"trading decision for {', '.join(self.symbols)}"
+
+    def _research_block(self) -> str:
+        """Shared per-user briefs relevant to this round (semantic → per-symbol →
+        recent). Omitted when there's no owner/store or anything errors."""
+        research = self.research
+        if research is None or self.owner_user_id is None:
+            return ""
+        owner, k = self.owner_user_id, self.research_k
+        try:
+            briefs = list(research.search(owner, self._recall_query(), k))
+            if not briefs:
+                briefs = self._briefs_by_symbol(research, k)
+            if not briefs:
+                briefs = list(research.recent(owner, k))
+        except Exception:
+            return ""
+        return format_briefs(briefs, header="## Research briefs (most relevant)")
+
+    def _briefs_by_symbol(self, research: Any, k: int) -> list[Any]:
+        """Structured per-ticker briefs (the no-embedder fallback), deduped to ``k``."""
+        out: list[Any] = []
+        seen: set[str] = set()
+        for symbol in self.symbols:
+            for brief in research.get(self.owner_user_id, symbol):
+                bid = str(getattr(brief, "id", "") or id(brief))
+                if bid in seen:
+                    continue
+                seen.add(bid)
+                out.append(brief)
+                if len(out) >= k:
+                    return out
+        return out
+
+    def _memory_block(self) -> str:
+        """This trader's own past lessons (recalled under ``self.name``). Omitted
+        on no owner/store, or when embeddings are unavailable (EmbedError)."""
+        memory = self.memory
+        if memory is None or self.owner_user_id is None:
+            return ""
+        try:
+            lessons = memory.recall(self.owner_user_id, self.name, self._recall_query(), self.memory_k)
+        except Exception:
+            # No local embed endpoint (EmbedError) or a flaky store: still decide.
+            return ""
+        return format_lessons(lessons, header="## Your past lessons", show_trader=False)
 
     def _coerce_decisions(self, raw: Any) -> list[TradeDecision]:
         out: list[TradeDecision] = []

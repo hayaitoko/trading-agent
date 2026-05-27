@@ -23,7 +23,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..config.endpoints import ModelRef
+from ..memory.format import format_lessons
 from ..memory.reflect import CostGate, CostGateError
+from ..research.format import format_briefs
 from ..web.notifications import Notification, _utcnow_iso
 
 if TYPE_CHECKING:
@@ -319,22 +321,7 @@ class ManagerAgent:
             briefs = self._research.recent(user_id, _RESEARCH_BRIEFS)
         except Exception:
             return ""
-        if not briefs:
-            return ""
-        lines = ["## Recent research briefs"]
-        for brief in briefs:
-            ticker = getattr(brief, "ticker", None) or "?"
-            summary = getattr(brief, "summary", "") or ""
-            sentiment = getattr(brief, "sentiment", None)
-            head = f"{ticker}"
-            if isinstance(sentiment, (int, float)):
-                head += f" (sentiment {sentiment:+.2f})"
-            catalysts = getattr(brief, "catalysts", None) or []
-            line = f"{head}: {summary}".strip()
-            if catalysts:
-                line += f" | catalysts: {', '.join(str(c) for c in catalysts[:3])}"
-            lines.append(line)
-        return "\n".join(lines)
+        return format_briefs(briefs, header="## Recent research briefs")
 
     def _memory_block(self, user_id: str, query: str, snap: dict[str, Any]) -> str:
         if self._memory is None:
@@ -342,21 +329,12 @@ class ManagerAgent:
         names = [str(r.get("name")) for r in (snap.get("leaderboard") or []) if r.get("name")]
         if not names:
             return ""
-        seen: set[str] = set()
-        gathered: list[tuple[str, str]] = []  # (trader, lesson text)
+        gathered: list[Any] = []  # lesson objects, tagged by their own trader_id
         for name in names:
             try:
-                lessons = self._memory.recall(user_id, name, query, _MEMORIES_PER_BOOK)
+                gathered.extend(self._memory.recall(user_id, name, query, _MEMORIES_PER_BOOK))
             except Exception:
                 continue
-            for lesson in lessons:
-                text = (getattr(lesson, "text", "") or "").strip()
-                if text and text not in seen:
-                    seen.add(text)
-                    gathered.append((name, text))
-        if not gathered:
-            return ""
-        lines = ["## Relevant trader memories"]
-        for trader, text in gathered[:_MAX_MEMORIES]:
-            lines.append(f"[{trader}] {text}")
-        return "\n".join(lines)
+        return format_lessons(
+            gathered, header="## Relevant trader memories", show_trader=True, limit=_MAX_MEMORIES
+        )

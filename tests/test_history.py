@@ -198,7 +198,12 @@ def test_resolve_depth_variants() -> None:
 
 
 class _SentinelHistory:
-    def context_block(self, symbols: Any, account: dict[str, Any]) -> str:
+    def context_block(
+        self, symbols: Any, account: dict[str, Any], *, include_trailer: bool = True
+    ) -> str:
+        # The trader composes around this block (research/memory then a single
+        # trailer of its own), so it asks for the body without the trailer.
+        assert include_trailer is False
         return "RICH-CONTEXT-BLOCK"
 
 
@@ -206,7 +211,8 @@ def test_trader_uses_history_when_injected() -> None:
     client = FakeChatClient()
     trader = LLMTrader("m", client, symbols=["AAPL"], history=_SentinelHistory())  # type: ignore[arg-type]
     trader.decide({"cash": 1000, "positions": []})
-    assert client.messages[1]["content"] == "RICH-CONTEXT-BLOCK"
+    content = client.messages[1]["content"]
+    assert content == "RICH-CONTEXT-BLOCK\n\nReturn your JSON decision now."
 
 
 def test_trader_falls_back_to_closes_without_history() -> None:
