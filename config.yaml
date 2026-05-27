@@ -26,6 +26,15 @@ live_data:
   slippage_bps: 0.0        # adverse market-fill slippage
   commission_bps: 0.0      # per-trade commission
 
+# Crypto: symbols tagged here trade 24/7 (no US-RTH gate) and allow fractional
+# quantities. The CryptoTickerFeed polls a ccxt exchange (public price data needs
+# no key) and fans ticks to the bench. Symbols not listed default to equity rules.
+crypto:
+  enabled: false
+  exchange: binance        # ccxt exchange id used for the public ticker feed
+  symbols: []              # e.g. ["BTC/USDT", "ETH/USDT"]
+  poll_interval_seconds: 5
+
 # Per-asset mode overrides (e.g., force approval for live equities).
 asset_modes:
   # AAPL: approval
