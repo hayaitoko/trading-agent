@@ -12,6 +12,12 @@ Realism knobs (all default to off, so behaviour is unchanged unless enabled):
 * **commission_bps** — per-trade commission deducted from cash.
 * **is_market_open** — optional ``Callable[[str], bool]``; when it returns
   False, market orders are rejected and limit orders stay queued.
+* **allow_short** — when False (default) the book is long-only: a SELL is only
+  fillable up to the quantity you already hold. When True, a SELL may drive the
+  position negative (open/extend a short) subject to a margin check: the total
+  short market value across the book, multiplied by ``short_margin_ratio``, must
+  not exceed account equity, and may be hard-capped by ``max_short_notional``.
+  Covering (a BUY against a short) reduces it and books realized P&L.
 
 Limit orders now match against the prevailing quote: a buy limit fills when the
 market trades at or below the limit, a sell limit when at or above it. Matching
@@ -65,6 +71,9 @@ class PaperBroker(BrokerAdapter):
         slippage_bps: float = 0.0,
         commission_bps: float = 0.0,
         is_market_open: Callable[[str], bool] | None = None,
+        allow_short: bool = False,
+        short_margin_ratio: float = 1.5,
+        max_short_notional: float | None = None,
     ):
         self._initial_balance: float = initial_balance
         self._balance: float = initial_balance
@@ -83,6 +92,10 @@ class PaperBroker(BrokerAdapter):
         self.slippage_bps = slippage_bps
         self.commission_bps = commission_bps
         self.is_market_open = is_market_open
+        # Short-selling config (see class docstring). Off by default → long-only.
+        self.allow_short = allow_short
+        self.short_margin_ratio = short_margin_ratio
+        self.max_short_notional = max_short_notional
         self._connected: bool = False
 
     def connect(self) -> bool:
@@ -354,13 +367,58 @@ class PaperBroker(BrokerAdapter):
                 self._try_fill_limit_order(order)
 
     def _can_fill(self, order: PaperOrder, fill_price: float) -> bool:
-        """Affordability / position check shared by market and limit fills."""
+        """Affordability / position / margin check shared by market and limit fills.
+
+        BUY: must be affordable from cash (covering a short is affordable because
+        the short's proceeds already sit in cash). SELL: fillable up to the
+        existing long for free; any quantity beyond that opens/extends a short,
+        which is rejected unless ``allow_short`` and the resulting short passes
+        the margin / exposure check.
+        """
         if order.side == OrderSide.BUY:
             cost = order.quantity * fill_price
             commission = cost * self.commission_bps / 10_000.0
             return cost + commission <= self._balance
         position = self._positions.get(order.symbol)
-        return position is not None and position.quantity >= order.quantity
+        long_qty = position.quantity if position is not None and position.quantity > 0 else 0.0
+        if order.quantity <= long_qty:
+            return True  # fully covered by an existing long — no short, no margin
+        if not self.allow_short:
+            return False  # long-only book: can't sell more than you hold
+        old_qty = position.quantity if position is not None else 0.0
+        resulting_qty = old_qty - order.quantity  # < 0 → net short
+        return self._short_within_limits(order.symbol, resulting_qty, fill_price)
+
+    def _short_within_limits(self, symbol: str, resulting_qty: float, fill_price: float) -> bool:
+        """True if going to ``resulting_qty`` keeps short exposure within margin/cap."""
+        exposure = self._short_exposure_after(symbol, resulting_qty, fill_price)
+        if self.max_short_notional is not None and exposure > self.max_short_notional:
+            return False
+        return self.short_margin_ratio * exposure <= self._equity()
+
+    def _equity(self) -> float:
+        """Account equity: cash + mark-to-market of every position (shorts net negative)."""
+        total = self._balance
+        for sym, pos in self._positions.items():
+            mark = self.market_prices.get(sym, pos.avg_price)
+            total += pos.quantity * mark
+        return total
+
+    def _short_exposure_after(self, symbol: str, resulting_qty: float, fill_price: float) -> float:
+        """Total |short| market value across the book if ``symbol`` ends at ``resulting_qty``."""
+        total = 0.0
+        seen = False
+        for sym, pos in self._positions.items():
+            if sym == symbol:
+                seen = True
+                qty, mark = resulting_qty, fill_price
+            else:
+                qty, mark = pos.quantity, self.market_prices.get(sym, pos.avg_price)
+            if qty < 0:
+                total += -qty * mark
+        if not seen and resulting_qty < 0:
+            total += -resulting_qty * fill_price
+        return total
 
     def _execute_trade(self, order: PaperOrder, fill_price: float) -> None:
         order.status = OrderStatus.FILLED

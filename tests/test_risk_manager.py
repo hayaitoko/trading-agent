@@ -80,6 +80,40 @@ def test_position_size_uses_absolute_value(rm: RiskManager) -> None:
     assert rm.check_position_size("strat-a", -5.0) is False
 
 
+# --- check_short_exposure -----------------------------------------------------
+
+def test_short_exposure_disabled_by_default() -> None:
+    # Default RiskLimits leave max_short_exposure at 0 → never blocks on exposure.
+    rm = RiskManager()
+    assert rm.check_short_exposure("strat-a", 1_000_000.0) is False
+
+
+def test_short_exposure_below_limit_passes() -> None:
+    rm = RiskManager(limits=RiskLimits(max_short_exposure=10_000.0))
+    assert rm.check_short_exposure("strat-a", 9_999.0) is False
+
+
+def test_short_exposure_at_exact_limit_passes() -> None:
+    rm = RiskManager(limits=RiskLimits(max_short_exposure=10_000.0))
+    assert rm.check_short_exposure("strat-a", 10_000.0) is False
+
+
+def test_short_exposure_above_limit_blocks() -> None:
+    rm = RiskManager(limits=RiskLimits(max_short_exposure=10_000.0))
+    assert rm.check_short_exposure("strat-a", 10_000.01) is True
+
+
+def test_short_exposure_uses_absolute_value() -> None:
+    rm = RiskManager(limits=RiskLimits(max_short_exposure=10_000.0))
+    assert rm.check_short_exposure("strat-a", -10_000.01) is True
+
+
+def test_short_exposure_kill_switch_blocks() -> None:
+    rm = RiskManager(limits=RiskLimits(max_short_exposure=10_000.0))
+    rm.activate_kill_switch()
+    assert rm.check_short_exposure("strat-a", 1.0) is True
+
+
 # --- increment_hourly_trades --------------------------------------------------
 
 def test_hourly_trades_below_limit_passes(rm: RiskManager) -> None:

@@ -26,12 +26,18 @@ DEFAULT_KILL_SWITCH_FILE = Path("data/.kill_switch")
 
 @dataclass(frozen=True)
 class RiskLimits:
-    """Per-strategy risk thresholds. All limits inclusive."""
+    """Per-strategy risk thresholds. All limits inclusive.
+
+    ``max_short_exposure`` caps total short market value (dollars). ``0`` (the
+    default) means "not enforced" so long-only strategies are unaffected; set a
+    positive value to bound how much short exposure a scope may carry.
+    """
 
     max_daily_loss: float = 1000.0
     max_position_size: float = 100.0
     max_trades_per_hour: int = 10
     max_open_positions: int = 5
+    max_short_exposure: float = 0.0
 
 
 class RiskManager:
@@ -122,6 +128,21 @@ class RiskManager:
         if self.kill_switch_active:
             return True
         return abs(size) > self.limits.max_position_size
+
+    def check_short_exposure(self, scope_id: str, short_notional: float) -> bool:
+        """True if the proposed short market value exceeds the limit. Kill switch → True.
+
+        ``short_notional`` is the absolute dollar value of the short exposure being
+        evaluated (e.g. resulting ``|qty| * price``). A non-positive
+        ``max_short_exposure`` disables the check, so it only ever blocks when an
+        explicit cap is configured.
+        """
+        if self.kill_switch_active:
+            return True
+        limit = self.limits.max_short_exposure
+        if limit <= 0:
+            return False
+        return abs(short_notional) > limit
 
     def increment_hourly_trades(self, scope_id: str) -> bool:
         """Increment counter, return True if limit exceeded. Kill switch → True."""
