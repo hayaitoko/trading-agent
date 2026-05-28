@@ -36,6 +36,7 @@ from .routers import calibration as calibration_router
 from .routers import config as config_router
 from .routers import manager as manager_router
 from .routers import market as market_router
+from .routers import news as news_router
 from .routers import notes as notes_router
 from .routers import notifications as notifications_router
 from .routers import quotes as quotes_router
@@ -66,6 +67,7 @@ _COCKPIT_ROUTERS = (
     calibration_router.router,
     symbols_router.router,
     quotes_router.router,
+    news_router.router,
 )
 
 
