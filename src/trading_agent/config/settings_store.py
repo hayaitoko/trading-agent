@@ -37,6 +37,18 @@ DEFAULTS: dict[str, Any] = {
     # P1 stale-decision guard defaults.
     "stale_ttl_seconds": 30,          # max decision age before discard
     "stale_drift_pct": 1.0,           # price-drift % before discard
+    # P3 situation layer (all off by default so existing bench is unchanged).
+    "situation_enabled": False,       # inject regime + social block into trader context
+    "regime_vol_calm": 0.15,          # annualized vol below which regime is calm
+    "regime_vol_elevated": 0.25,      # vol below which regime is elevated
+    "regime_vol_risk_off": 0.40,      # vol at/above which regime is risk-off
+    "regime_event_horizon_days": 3,   # calendar look-ahead window (days)
+    # P4 pattern KB.
+    "pattern_kb_enabled": False,      # inject pattern KB recall into trader context
+    "pattern_k": 3,                   # similar patterns to recall per decision
+    "pattern_prune_hit_rate": 0.52,   # archive labels that decay toward coin-flip
+    # P6 calibration.
+    "calibration_horizon_days": 5,    # forward price window for outcome scoring
 }
 
 

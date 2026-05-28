@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .base import HttpSource, RawItem, Source, SourceError
+from .bluesky import BlueskySource
 from .browser import BrowserSource, BrowserUnavailable
 from .reddit import RedditSource
 from .rss import RssSource
@@ -22,10 +23,12 @@ ADAPTERS: dict[str, Callable[..., Source]] = {
     RedditSource.kind: RedditSource,
     StockTwitsSource.kind: StockTwitsSource,
     BrowserSource.kind: BrowserSource,
+    BlueskySource.kind: BlueskySource,
 }
 
 __all__ = [
     "ADAPTERS",
+    "BlueskySource",
     "BrowserSource",
     "BrowserUnavailable",
     "HttpSource",
