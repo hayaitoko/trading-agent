@@ -8,15 +8,30 @@ system-prompt prefix that precedes it.
 
 Rendered format (all fields present; optional fields default to "n/a"):
 
-    Identity:         <name>, <model>, mandate=<mandate>
-    Account:          cash=$<x>, positions=<n>, last_decision=<short>
-    Wake reason:      <why this turn fired>
-    Turn type:        <SoD | regular | event | reminder | EoD | callback>
-    Time:             <UTC>, <ET>, [<user-tz>]
-    Cadence:          every <N> min during RTH
-    Attention:        <a> active watchpoints / <s> soft-limit, <r> active reminders / <s> soft-limit
-    Cost this turn:   $<x.xx> (rollup: model+nested LLM calls)
-    Previous attempt: <tool_a, tool_b>   ← only on crash-recovery turns
+    Identity:            <name>, <model>, mandate=<mandate>
+    Account:             cash=$<x>, positions=<n>, last_decision=<short>
+    Wake reason:         <why this turn fired>
+    Turn type:           <SoD | regular | event | reminder | EoD | callback>
+    Time:                <UTC>, <ET>, [<user-tz>]
+    Cadence:             every <N> min during RTH
+    Attention:           <a> active watchpoints / <s> soft-limit, <r> active reminders / <s> soft-limit
+    Cost this turn:      $<x.xx> (rollup: model+nested LLM calls)
+    Directed notes:      <note_1> / <note_2> / …   ← only when directed_notes is non-empty (A1)
+    Recent reflections:  <reflection_1> / …         ← only when recent_reflections is non-empty (A1)
+    Previous attempt:    <tool_a, tool_b>            ← only on crash-recovery turns
+
+Slot details (A1 wires these via the LOOK toolkit):
+
+- ``directed_notes``: lines populated by the ``advisor_notes`` tool on turns where
+  there are unread directed notes for this trader.  Appears ONCE then lives
+  behind the tool — the tool marks them read after surfacing.
+
+- ``recent_reflections``: top-3 of this trader's own reflections tagged with
+  today's symbols/themes, populated by ``memory_search`` reflection-ranking.
+  Anything beyond top-3 stays behind the ``memory_search`` tool.
+
+Both slots are positioned between "Cost this turn" and "Previous attempt" so
+the model sees them every turn without cluttering the crash-recovery annotation.
 
 **MONEY IS REAL invariant:** this module never discloses paper/sim/demo status.
 The account state (cash, positions) is surfaced identically regardless of
@@ -80,6 +95,22 @@ class TurnContext:
     # Cost accumulator — updated by CostTracker across the turn loop
     cost_so_far_usd: float = 0.0
 
+    # A1 LOOK toolkit slots — populated by advisor_notes and memory_search tools
+    # before the turn's first model call.  Both default to empty so A0 turns
+    # continue to render without change.
+    #
+    # directed_notes: operator-authored notes addressed to this trader for this
+    #   turn.  The advisor_notes tool populates this list when unread directed
+    #   notes exist; they are marked read after surfacing once so this slot
+    #   auto-clears on the next turn.
+    directed_notes: list[str] = field(default_factory=list)
+    #
+    # recent_reflections: top-3 of this trader's own reflections tagged with
+    #   today's symbols/themes.  The memory_search tool populates this as part
+    #   of its reflection-ranking step.  The rest of the matches stay behind the
+    #   tool to keep the first-look block concise.
+    recent_reflections: list[str] = field(default_factory=list)
+
     # Crash-recovery: tool names from the interrupted prior attempt (no results)
     previous_attempt_tools: list[str] = field(default_factory=list)
 
@@ -119,6 +150,12 @@ def build_first_look(ctx: TurnContext) -> str:
         ),
         f"Cost this turn:   ${ctx.cost_so_far_usd:.4f} (rollup: model+nested LLM calls)",
     ]
+
+    # A1 slots: appear between cost and previous-attempt when non-empty.
+    if ctx.directed_notes:
+        lines.append(f"Directed notes:   {' / '.join(ctx.directed_notes)}")
+    if ctx.recent_reflections:
+        lines.append(f"Recent reflections: {' / '.join(ctx.recent_reflections)}")
 
     if ctx.previous_attempt_tools:
         lines.append(f"Previous attempt: {', '.join(ctx.previous_attempt_tools)}")
