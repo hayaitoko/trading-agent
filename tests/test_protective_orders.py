@@ -1,11 +1,9 @@
 """P0: Protective order mechanics — stop_loss, take_profit, trailing_stop, hard floor."""
 
-import pytest
 
 from trading_agent.bench import Bench
-from trading_agent.enums import OrderType
-from trading_agent.llm.trader import DecisionResult, TradeDecision
-from trading_agent.paper_broker import PaperBroker, OrderStatus
+from trading_agent.llm.trader import DecisionResult
+from trading_agent.paper_broker import PaperBroker
 from trading_agent.risk_manager import RiskLimits, RiskManager
 
 # ---------------------------------------------------------------------------
