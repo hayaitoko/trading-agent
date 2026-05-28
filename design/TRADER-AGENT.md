@@ -234,6 +234,17 @@ holidays, DST all handled).  Server local TZ is never used.
 
 Dormant outside `sod_utc → eod_utc`.  Research agent continues independently.
 
+**Pre-SoD research hydration (deferred).**  Plan §A4 calls for the research
+agent's overnight batch to be hydrated into the `research_brief()` cache *before*
+SoD fires.  An explicit scheduler-triggered hydration handshake is **not**
+implemented: the lifecycle engine holds no research-service reference, and
+triggering a (cost-gated) research pass from the scheduler is out of A4's scope.
+Functionally the trader still gets overnight research on the SoD turn — the
+research agent runs on its own background schedule, and the SoD special-prompt
+guidance directs the trader to call `research_brief()` / `news` / `situation` to
+absorb it.  The guaranteed-fresh pre-SoD trigger is deferred to the Situation+
+Forecast Track C integration (which wires providers/research as scheduled passes).
+
 ### Turn types
 
 | Turn type | When | Prompt note |

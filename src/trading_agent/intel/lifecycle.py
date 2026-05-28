@@ -23,12 +23,25 @@ Dormant window:
 
 Special turn types fired by the lifecycle engine:
   - SoD (Start-of-Day): at T-60min before open.  Trader absorbs overnight
-    intel, seeds watchpoints.
+    intel (reads whatever briefs exist via the research_brief() tool — the SoD
+    guidance directs it to) and seeds watchpoints.
   - EoD (End-of-Day): at T+30min after close.  Trader reflects, locks
     overnight protections.  No new positions by default (configurable).
   - regular: per-trader cadence during RTH.
   - event: watchpoint trip, reminder fire, protective-order fill, etc.
   - callback: approval-state change (approve/deny/expire).
+
+Pre-SoD research hydration (DEFERRED — plan §A4 contract item):
+  The plan calls for the research agent's overnight batch to be hydrated into
+  the research_brief() cache *before* SoD fires.  An explicit scheduler-triggered
+  hydration handshake is NOT implemented here: the lifecycle engine holds no
+  research-service reference, and triggering a (cost-gated, WS-C CostGate'd)
+  research pass from the scheduler is out of A4's scope.  Functionally the trader
+  still gets overnight research on the SoD turn — the research agent runs on its
+  own background schedule and the trader pulls available briefs via the
+  research_brief() LOOK tool (A1), which the SoD special-prompt guidance tells it
+  to do.  The guaranteed-fresh pre-SoD trigger is deferred to the Situation+
+  Forecast Track C integration, which wires providers/research as scheduled passes.
 
 After-hours protective-order fills:
   When a stop/TP fires during dormancy, the event is queued and delivered
