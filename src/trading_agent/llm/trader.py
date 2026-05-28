@@ -577,6 +577,20 @@ class AgentTrader:
         self._turn_tool_names: list[str] = []
         # Per-turn UUID — scopes idempotency keys so crash-replay is safe.
         self._current_turn_id: str = ""
+        # A4 crash-recovery scaffolding:
+        # When the scheduler injects a previous-attempt annotation (carry-over A4-a),
+        # it sets _recovery_previous_attempt to the tool names from the orphaned turn.
+        # decide() reads this once and clears it so it only fires on one turn.
+        self._recovery_previous_attempt: list[str] = []
+        # A4 scheduler hooks: turn type and wake reason injected by MarketScheduler
+        # before _run_one() is called.  Cleared to defaults after each turn.
+        self._current_turn_type: str = "regular"
+        self._current_wake_reason: str = "scheduled"
+        # A4 EoD no-new-positions flag (injected by scheduler for EoD turns).
+        self._eod_no_new_positions: bool = False
+        # A4 done_for_day flag: set to True when done_for_day() terminal fires;
+        # the scheduler reads this to update lifecycle state.
+        self._done_for_day_this_turn: bool = False
 
     # --- Trader Protocol interface -------------------------------------------
 
@@ -588,11 +602,37 @@ class AgentTrader:
 
     def decide(self, account: dict[str, Any]) -> DecisionResult:
         """Run one full agent turn and return the terminal action as a DecisionResult."""
-        # Fresh UUID per turn — scopes A3 idempotency keys so crash-replay is safe.
-        self._current_turn_id = str(uuid.uuid4())
+        # A4 crash-recovery: if the scheduler has injected a previous-attempt (orphan
+        # turn), reuse its turn_id and populate previous_attempt_tools.  Clear both
+        # fields so they only fire for this one turn.
+        recovery_tools = list(self._recovery_previous_attempt)
+        self._recovery_previous_attempt = []
+        if not recovery_tools:
+            # Normal path: fresh UUID per turn.
+            self._current_turn_id = str(uuid.uuid4())
+        # else: scheduler already set self._current_turn_id = orphan.turn_id
+
         # Reset per-turn tool name accumulator (used by reflect provenance).
         self._turn_tool_names = []
-        ctx = self._build_turn_context(account)
+        # Reset done_for_day flag.
+        self._done_for_day_this_turn = False
+
+        # Determine turn type and wake reason (set by scheduler or defaults).
+        turn_type_raw = self._current_turn_type
+        wake_reason_raw = self._current_wake_reason
+        # Normalise turn_type to the TurnType literal set.
+        _valid_tt = {"SoD", "regular", "event", "reminder", "EoD", "callback", "tutorial"}
+        turn_type: TurnType = turn_type_raw if turn_type_raw in _valid_tt else "regular"  # type: ignore[assignment]
+        # Reset after reading so next turn reverts to defaults.
+        self._current_turn_type = "regular"
+        self._current_wake_reason = "scheduled"
+
+        ctx = self._build_turn_context(
+            account,
+            wake_reason=wake_reason_raw,
+            turn_type=turn_type,
+            previous_attempt_tools=recovery_tools if recovery_tools else None,
+        )
         cost_tracker = CostTracker()
 
         # Build initial message list: stable system + variable first-look.
@@ -672,6 +712,9 @@ class AgentTrader:
                         terminal_action = tc.name
                         terminal_args = tc.arguments
                         hit_terminal = True
+                        # A4: flag done_for_day for the scheduler to read.
+                        if tc.name == "done_for_day":
+                            self._done_for_day_this_turn = True
                         # Append a stub tool result so the message list is valid.
                         messages.append(
                             {

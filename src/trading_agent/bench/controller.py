@@ -4,6 +4,20 @@ The web layer drives this — add/remove models, set the cadence (the UI dropdow
 start/stop the autonomous decision loop, and fetch the model menu from OpenRouter.
 The loop runs on its own thread, calling :meth:`Bench.run_decisions` every
 ``cadence_seconds``.
+
+A4 additions:
+  - :class:`~trading_agent.bench.scheduler.MarketScheduler` integration:
+    the controller creates a scheduler at construction time and calls
+    ``scheduler.tick()`` + ``scheduler.fire_turns()`` on every cadence loop
+    iteration.  This gates trader turns behind the ET-anchored live window and
+    classifies them as SoD / regular / EoD / event / callback.
+  - Per-trader cadence and extended_hours config via ``add_model()``.
+  - ``scheduler.recover_orphans()`` is called once at ``start()`` to handle
+    crash recovery (carry-over A4-a).
+  - ``_scan_attention()`` remains in this class (A4-c reconciliation): it was
+    wired here in A2 and is the correct home — the controller owns the full
+    bench state needed for watchpoint evaluation.  The scheduler references it
+    indirectly through the tick loop.
 """
 
 from __future__ import annotations
@@ -21,6 +35,7 @@ if TYPE_CHECKING:
     from ..llm.openrouter import OpenRouterClient
     from ..web.market_watch import MarketMove, MarketMoveWatcher
     from .bench import Bench
+    from .scheduler import MarketScheduler
 
 # Known-good slugs surfaced first in the model menu (verified against OpenRouter).
 FEATURED_MODELS = [
@@ -72,6 +87,9 @@ class BenchController:
         owner_user_id: str | None = None,
         db: Database | None = None,
         market_watcher: MarketMoveWatcher | None = None,
+        # A4: market-hours scheduler (optional; None → lifecycle gating disabled,
+        # bench runs unconditionally as before A4)
+        scheduler: MarketScheduler | None = None,
     ) -> None:
         self.bench = bench
         self.client = client
@@ -101,6 +119,8 @@ class BenchController:
         # Guards against storms: moves that arrive within _WAKE_DEDUP_SECONDS of
         # the last wake for that symbol are silently dropped.
         self._last_wake: dict[str, datetime] = {}
+        # A4: market-hours scheduler (None → no lifecycle gating, backward-compat).
+        self.scheduler: MarketScheduler | None = scheduler
 
     @property
     def owner_id(self) -> str | None:
@@ -143,6 +163,11 @@ class BenchController:
         calendar_events: list[dict[str, Any]] | None = None,
         # P4: optional pattern KB.
         pattern_store: Any = None,
+        # A4: per-trader lifecycle config.
+        # cadence_minutes overrides the default 30-min cadence for AgentTrader.
+        # extended_hours enables 04:00-09:30 + 16:00-20:00 ET wakes.
+        cadence_minutes: int = 30,
+        extended_hours: bool = False,
     ) -> str:
         owner = self.owner_id
         research, research_k, memory_k = self.research, _RESEARCH_K, _MEMORY_RECALL_K
@@ -191,10 +216,19 @@ class BenchController:
         self.bench.add_competitor(
             trader.name, trader, initial_balance=cash, style=style
         )
+        # A4: register with lifecycle scheduler if wired.
+        if self.scheduler is not None:
+            self.scheduler.register_trader(
+                trader.name,
+                cadence_minutes=cadence_minutes,
+                extended_hours=extended_hours,
+            )
         return trader.name
 
     def remove(self, name: str) -> None:
         self.bench.remove_competitor(name)
+        if self.scheduler is not None:
+            self.scheduler.remove_trader(name)
 
     # --- Cadence + loop -----------------------------------------------------
 
@@ -214,6 +248,12 @@ class BenchController:
             self.bench.started_at = self.bench.started_at or _now()
             self._thread = threading.Thread(target=self._loop, name="bench-cadence", daemon=True)
             self._thread.start()
+        # A4: crash recovery — detect and re-fire orphaned turns from previous session.
+        if self.scheduler is not None:
+            try:
+                self.scheduler.recover_orphans()
+            except Exception:
+                pass  # never block startup on recovery failure
 
     def stop(self) -> None:
         with self._lock:
@@ -226,7 +266,13 @@ class BenchController:
             if self._stop.wait(self.cadence_seconds):
                 break
             try:
-                self.bench.run_decisions()
+                # A4: if scheduler is wired, let it gate and classify turns.
+                # Otherwise fall back to unconditional run_decisions() (pre-A4 compat).
+                if self.scheduler is not None:
+                    turns = self.scheduler.tick()
+                    self.scheduler.fire_turns(turns)
+                else:
+                    self.bench.run_decisions()
             except Exception:  # never let one bad tick kill the loop
                 continue
             self._maybe_reflect()   # gated, self-contained — never raises
@@ -234,7 +280,12 @@ class BenchController:
 
     def tick_now(self) -> None:
         """Run one decision round immediately (manual trigger from the UI)."""
-        self.bench.run_decisions()
+        # A4: scheduler tick if wired, else unconditional.
+        if self.scheduler is not None:
+            turns = self.scheduler.tick()
+            self.scheduler.fire_turns(turns)
+        else:
+            self.bench.run_decisions()
         self._maybe_reflect()
         self._scan_attention()
 

@@ -1,6 +1,6 @@
 # Trader Agent — Design Reference
 
-**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3 ✅ · A4–A6 in progress  
+**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3 ✅ · A4 ✅ · A5–A6 in progress  
 **Branch:** `feat/engine-realism`  
 **Legend:** ✅ exists · 🟡 partial · 🔵 planned
 
@@ -199,19 +199,128 @@ paper status.  _(A1 deliverable — not yet in the test suite.)_
 
 ---
 
-## 5. Lifecycle (🔵 A4)
+## 5. Lifecycle (✅ A4)
 
-_Stub — populated in A4._
+The lifecycle engine ET-anchors every trader's decision loop to the Alpaca
+market calendar.  Internal scheduling is UTC; market window boundaries are
+converted to UTC from America/New_York via the Alpaca calendar API (half-days,
+holidays, DST all handled).  Server local TZ is never used.
 
-- Live window: T−60min before RTH open → T+30min after RTH close (ET-anchored,
-  Alpaca calendar aware of half-days + holidays).
-- Turn types: SoD (T−60min), regular (every N min during RTH), event-driven
-  (watchpoint / protective-order fill / reminder / approval callback), EoD
-  (T+30min).
-- Kill-switch soft halt: LOOK/NOTE tools still work; ACT tools return
+### State diagram
+
+```
+                  T-60min before NYSE open
+  DORMANT ─────────────────────────────────→ LIVE (SoD turn fires)
+                                               │
+                            regular cadence    │
+                         every N min during RTH│
+                       event/reminder/callback │
+                                               ▼
+  DORMANT ←─────────────────────────────────── LIVE
+                  T+30min after NYSE close
+                         (EoD turn fires)
+
+  DORMANT → DORMANT (research agent still runs; AH fills queued for SoD)
+  LIVE → DORMANT (done_for_day() skips remaining regular turns)
+```
+
+### Live window
+
+```
+  sod_utc  = open_utc  − 60 min   (configurable: SOD_LEAD_MINUTES env var)
+  eod_utc  = close_utc + 30 min   (configurable: EOD_TRAIL_MINUTES env var)
+  open/close from Alpaca calendar (half-days + holidays respected)
+```
+
+Dormant outside `sod_utc → eod_utc`.  Research agent continues independently.
+
+### Turn types
+
+| Turn type | When | Prompt note |
+|---|---|---|
+| `SoD` | At T-60min before open | Absorb overnight intel; seed watchpoints; reset done_for_day |
+| `regular` | Every `cadence_minutes` during live window | Standard decision loop |
+| `event` | Watchpoint trip / AH fill / reminder / market move | Carries event description in wake_reason |
+| `callback` | Approval-state change (approve / deny / expire) | Carries pending_trade_id + status in wake_reason |
+| `EoD` | At T+30min after close | Reflect; lock overnight protections; no new positions (default) |
+| `reminder` | `remind_me()` elapsed (via attention queue) | Forwarded as event |
+| `tutorial` | First N turns for new traders (A6) | Tutorial prompt injected |
+
+### Per-trader lifecycle config
+
+| Field | Default | Source |
+|---|---|---|
+| `cadence_minutes` | 30 | `BenchController.add_model(cadence_minutes=…)` |
+| `extended_hours` | `False` | `BenchController.add_model(extended_hours=…)` |
+
+`extended_hours=True` adds wake windows: 04:00–09:30 ET (pre-market) and
+16:00–20:00 ET (after-hours).  The `trade()` tool must pass
+`extended_hours=True` to the broker for fills during these windows.
+
+### Kill-switch soft halt
+
+When `risk_manager.kill_switch_active` is `True`:
+- **ACT tools** (`trade`, `trade_batch`, `update_protective_order`, etc.) return
   `{ok: false, error: {kind: "unavailable", message: "bench halted by operator"}}`.
-- Crash recovery: orphaned turns are restarted with `previous_attempt_tools`
-  annotated in the first-look block.
+- **LOOK and NOTE tools** are unaffected — the trader can still gather
+  information and call `hold()` or `pass()` cleanly.
+- The scheduler suppresses new SoD/EoD/regular turns while the kill switch is
+  active.  Event-driven callback turns (informational only) are still delivered.
+
+Verified by A3 (ACT tool layer) and tested in `tests/test_lifecycle.py`.
+
+### Crash recovery (carry-over A4-a)
+
+**Turn-id reuse invariant:** when a turn is orphaned (started but did not reach
+a terminal action), the crash-recovery turn fires with the **original turn_id**,
+not a fresh UUID.
+
+Why this matters:
+- `idempotency_key = sha256(trader_id, turn_id, symbol, side, qty)` is
+  identical in both the original and recovery turn.
+- `PendingTradeQueue.propose` enforces `UNIQUE(idempotency_key)` at the DB
+  level, catching approval-path double-fires.
+- For direct-execution trades (no PendingTradeQueue), turn_id reuse relies on
+  the risk manager's in-memory idempotency set.  A crash between "broker filled"
+  and "turn completed" could theoretically double-fire a direct trade — accepted
+  limitation; DB-UNIQUE dedup for direct trades is deferred as future hardening.
+
+**Mechanism:**
+1. At turn start, `AgentTrader.decide()` registers the turn in `OrphanTurnStore`
+   (disk-backed JSON at `data/orphan_turns.json`).
+2. At turn end (terminal reached), the turn is completed (removed from store).
+3. On restart, `MarketScheduler.recover_orphans()` reads all orphan records.
+4. For each orphan, the scheduler injects:
+   - `trader._current_turn_id = orphan.turn_id` (REUSE the original UUID)
+   - `trader._recovery_previous_attempt = orphan.tool_names_called`
+5. A recovery turn fires with `turn_type="event"` and `wake_reason` describing
+   the crash.  The first-look block shows:
+   ```
+   Previous attempt: history, account_state, news
+   ```
+   (Tool names only — no stale results.)
+6. The orphan record is cleared after the recovery turn fires.
+
+### After-hours protective-order fills
+
+When a stop/TP/trail fires during dormancy:
+1. The fill event is NOT merged into SoD.
+2. `MarketScheduler.queue_ah_fill()` queues the event in `TraderLifecycle.pending_ah_fills`.
+3. At the next SoD, the queued events fire as dedicated `"event"` turns
+   **before** SoD fires, so the trader gets context-aware callbacks:
+   ```
+   Wake reason: Your stop on AAPL hit at 03:42 ET while you were dormant.
+   ```
+
+### Key files (A4)
+
+| File | Role |
+|---|---|
+| `intel/lifecycle.py` | `AlpacaCalendar`, `LiveWindow`, `LifecycleEngine`, `OrphanTurnStore` |
+| `bench/scheduler.py` | `MarketScheduler` — tick, fire_turns, callback wiring, crash recovery |
+| `bench/controller.py` | `BenchController` — scheduler integration, per-trader cadence/extended_hours |
+| `llm/trader.py` | `AgentTrader` — A4 scaffolding: turn type/wake reason injection, crash-recovery turn_id reuse, done_for_day flag |
+| `tests/test_lifecycle.py` | 24 tests — 6 required smoke tests + 18 unit tests |
 
 ---
 
@@ -694,3 +803,6 @@ deliverable; A2 reuses the existing market-wake mechanism for immediacy.
 | `bench/controller.py` | `BenchController` + `_scan_attention` scheduler hook — **A2** |
 | `tests/test_agent_trader.py` | 31 tests covering A0 (smoke + unit) |
 | `tests/test_note_tools.py` | 57 tests covering A2 NOTE toolkit + attention queue |
+| `intel/lifecycle.py` | `AlpacaCalendar`, `LiveWindow`, `LifecycleEngine`, `OrphanTurnStore` — **A4** |
+| `bench/scheduler.py` | `MarketScheduler` — tick, fire_turns, callback wiring, orphan recovery — **A4** |
+| `tests/test_lifecycle.py` | 24 tests covering A4 lifecycle + scheduler (6 smoke + 18 unit) |
