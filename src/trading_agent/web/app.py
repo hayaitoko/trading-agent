@@ -40,6 +40,7 @@ from .routers import movers as movers_router
 from .routers import news as news_router
 from .routers import notes as notes_router
 from .routers import notifications as notifications_router
+from .routers import quote_stream as quote_stream_router
 from .routers import quotes as quotes_router
 from .routers import requests as requests_router
 from .routers import research as research_router
@@ -70,6 +71,7 @@ _COCKPIT_ROUTERS = (
     quotes_router.router,
     news_router.router,
     movers_router.router,
+    quote_stream_router.router,
 )
 
 
