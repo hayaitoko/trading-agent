@@ -38,6 +38,7 @@ from .routers import manager as manager_router
 from .routers import market as market_router
 from .routers import notes as notes_router
 from .routers import notifications as notifications_router
+from .routers import quotes as quotes_router
 from .routers import requests as requests_router
 from .routers import research as research_router
 from .routers import risk as risk_router
@@ -64,6 +65,7 @@ _COCKPIT_ROUTERS = (
     notes_router.router,
     calibration_router.router,
     symbols_router.router,
+    quotes_router.router,
 )
 
 
