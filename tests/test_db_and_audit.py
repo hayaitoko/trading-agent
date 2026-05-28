@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, datetime
 
 import pytest
 
@@ -65,7 +65,7 @@ def test_audit_log_writes_jsonl_and_sqlite(audit_setup):
     # JSONL: one file for today, one line, valid JSON.
     files = list(data_dir.glob("audit.*.jsonl"))
     assert len(files) == 1
-    assert files[0].name == f"audit.{date.today().isoformat()}.jsonl"
+    assert files[0].name == f"audit.{datetime.now(UTC).date().isoformat()}.jsonl"
     lines = files[0].read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     parsed = json.loads(lines[0])
