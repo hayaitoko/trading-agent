@@ -9,6 +9,7 @@ The loop runs on its own thread, calling :meth:`Bench.run_decisions` every
 from __future__ import annotations
 
 import threading
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..llm.trader import _MEMORY_RECALL_K, _RESEARCH_K, LLMTrader
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from ..config.settings_store import SettingsStore
     from ..data.history import HistoryService
     from ..llm.openrouter import OpenRouterClient
+    from ..web.market_watch import MarketMove, MarketMoveWatcher
     from .bench import Bench
 
 # Known-good slugs surfaced first in the model menu (verified against OpenRouter).
@@ -43,6 +45,11 @@ CADENCE_OPTIONS = [
 
 MIN_CADENCE = 5
 
+# P2: event-driven wake-hook defaults.
+# De-dup window: if a threshold cross for a given symbol fires, suppress further
+# wakes for this many seconds so a sustained move doesn't storm the model.
+_WAKE_DEDUP_SECONDS: float = 60.0
+
 # WS-A reflection defaults (overridable per-user in settings).
 DEFAULT_REFLECTION_CADENCE = 4  # reflect every N rounds …
 DEFAULT_REFLECTION_USD = 0.01  # … conservative per-trader distill cost estimate
@@ -64,6 +71,7 @@ class BenchController:
         reflector: Any = None,
         owner_user_id: str | None = None,
         db: Database | None = None,
+        market_watcher: MarketMoveWatcher | None = None,
     ) -> None:
         self.bench = bench
         self.client = client
@@ -87,6 +95,12 @@ class BenchController:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._models_cache: dict[str, Any] | None = None
+        # P2: event-driven wake hooks.
+        self.market_watcher: MarketMoveWatcher | None = market_watcher
+        # Per-symbol timestamp of the last model wake triggered by a market move.
+        # Guards against storms: moves that arrive within _WAKE_DEDUP_SECONDS of
+        # the last wake for that symbol are silently dropped.
+        self._last_wake: dict[str, datetime] = {}
 
     @property
     def owner_id(self) -> str | None:
@@ -289,6 +303,41 @@ class BenchController:
                 line += f" — {d['reason']}"
             lines.append(line.rstrip())
         return "\n".join(lines)
+
+    # --- P2: Event-driven wake hooks ----------------------------------------
+
+    def on_market_move(self, move: MarketMove) -> None:
+        """Called when MarketMoveWatcher detects a threshold cross.
+
+        This is the **soft-stop** path: the model is woken to decide whether
+        the move is a genuine breakout or a spike to fade.  Hard stops (broker-
+        level P0 stop orders and the hard floor) fire separately and
+        deterministically — they don't come through here.
+
+        A de-dup window (_WAKE_DEDUP_SECONDS) prevents a sustained multi-tick
+        move from hammering the model on every tick.
+        """
+        if not self._running:
+            return
+        symbol = move.symbol
+        now = datetime.now(UTC)
+        with self._lock:
+            last = self._last_wake.get(symbol)
+            if last is not None and (now - last).total_seconds() < _WAKE_DEDUP_SECONDS:
+                return  # de-dup: suppress this wake
+            self._last_wake[symbol] = now
+        # Scoped off-cadence decision: only books with a position in the symbol.
+        # The P1 snapshot captures state just before the LLM call, so concurrent
+        # hard-floor flattens are caught and the SELL won't fire wrong-way.
+        self._tick_for_symbol(symbol)
+
+    def _tick_for_symbol(self, symbol: str) -> None:
+        """Run an off-cadence decision round for competitors holding ``symbol``."""
+        try:
+            self.bench.run_decisions_for_symbol(symbol)
+        except Exception:
+            return  # never let a wake-hook failure break anything
+        self._maybe_reflect()
 
     # --- Model menu ---------------------------------------------------------
 
