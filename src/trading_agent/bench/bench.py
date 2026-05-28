@@ -147,6 +147,7 @@ class Bench:
                     comp.broker.update_market_prices({str(symbol): float(close)})
             for comp in self._competitors.values():
                 comp.trader.observe(bar)
+            self._check_hard_floors()
 
     def observe_quote(self, quote: dict[str, Any]) -> None:
         symbol = quote.get("symbol")
@@ -164,6 +165,7 @@ class Bench:
                     ask=float(ask) if ask is not None else None,
                     last=float(last) if last is not None else None,
                 )
+            self._check_hard_floors()
 
     # --- Decision cadence ---------------------------------------------------
 
@@ -276,7 +278,44 @@ class Bench:
             "recent_decisions": self.recent_decisions(),
         }
 
+    def run_decisions_for_symbol(self, symbol: str) -> None:
+        """Off-cadence tick for competitors that hold a position in ``symbol``.
+
+        Called by the event-driven wake hook (P2) when a significant price move
+        is detected. Only competitors with a non-zero position in the affected
+        symbol are woken, keeping the blast radius narrow.
+        """
+        with self._lock:
+            affected = [
+                comp for comp in self._competitors.values()
+                if comp.broker.get_position(symbol) is not None
+            ]
+        for comp in affected:
+            self._run_one(comp)
+
     # --- internals ----------------------------------------------------------
+
+    def _check_hard_floors(self) -> None:
+        """Flatten any book whose equity has breached its catastrophic loss floor.
+
+        Must be called while holding ``_lock`` (observe_bar / observe_quote do so).
+        Default-off: fires only when ``comp.risk.limits.hard_floor_pct`` is set.
+        """
+        prices = dict(self._last_prices)
+        for comp in self._competitors.values():
+            if not comp.risk.check_hard_floor(
+                comp.broker.get_account_value(prices),
+                comp.initial_balance,
+            ):
+                continue
+            comp.broker.flatten_all()
+            comp.decisions.appendleft(
+                DecisionLogEntry(
+                    _utcnow_iso(), comp.name, "*", "FLATTEN", 0.0, "filled",
+                    reason="hard floor breached",
+                )
+            )
+            self._audit("hard_floor", comp.name, {})
 
     def _audit(self, event: str, competitor: str, details: dict[str, Any]) -> None:
         if self.audit is None:

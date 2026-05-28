@@ -32,6 +32,11 @@ DEFAULTS: dict[str, Any] = {
     "reflection_cadence_rounds": 4,  # reflect every N rounds (0 = never on cadence)
     "reflection_model": None,  # None → cheap DEFAULT_REFLECTION_MODEL
     "reflection_estimated_usd": 0.01,  # per-book distill pre-check estimate
+    # P0 risk mechanics (all None = disabled so existing behaviour is unchanged).
+    "hard_floor_pct": None,          # catastrophic max-loss % before auto-flatten
+    # P1 stale-decision guard defaults.
+    "stale_ttl_seconds": 30,          # max decision age before discard
+    "stale_drift_pct": 1.0,           # price-drift % before discard
 }
 
 

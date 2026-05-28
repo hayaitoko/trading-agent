@@ -52,6 +52,11 @@ class PaperOrder:
     status: OrderStatus = OrderStatus.PENDING
     filled_quantity: float = 0.0
     filled_price: float | None = None
+    # Protective-order fields (P0). stop_price is the current trigger for STOP
+    # and TRAILING_STOP orders; trail_offset is the dollar gap maintained between
+    # the running high/low and the trigger for trailing stops.
+    stop_price: float | None = None
+    trail_offset: float | None = None
 
 
 @dataclass
@@ -97,6 +102,13 @@ class PaperBroker(BrokerAdapter):
         self.short_margin_ratio = short_margin_ratio
         self.max_short_notional = max_short_notional
         self._connected: bool = False
+        # Protective-order state (P0). Keyed by order_id.
+        # trail_peak tracks the running high (long) or low (short) for each
+        # trailing-stop order so we can ratchet the trigger on every price update.
+        self._trail_peak: dict[str, float] = {}
+        # hard_floor_pct: if not None and equity / initial_balance - 1 < -pct,
+        # flatten_all() is auto-called with no model in the loop.
+        self.hard_floor_pct: float | None = None
 
     def connect(self) -> bool:
         self._connected = True
@@ -207,6 +219,33 @@ class PaperBroker(BrokerAdapter):
         order_id = str(uuid.uuid4())
         order_price = None if order_type == OrderType.MARKET else price
 
+        # --- Protective-order fields (P0) ------------------------------------
+        stop_price: float | None = None
+        trail_offset: float | None = None
+        if order_type in (OrderType.STOP, OrderType.TRAILING_STOP, OrderType.TAKE_PROFIT):
+            raw_sp = order_details.get("stop_price")
+            raw_ta = order_details.get("trail_amount")
+            if raw_sp is not None:
+                stop_price = float(raw_sp)
+            elif order_type == OrderType.TAKE_PROFIT:
+                # take_profit uses 'price' as the trigger
+                stop_price = float(price) if price is not None else None
+            if raw_ta is not None:
+                trail_offset = float(raw_ta)
+                # Compute initial stop_price from trail_amount if not explicitly set.
+                if stop_price is None:
+                    mkt = self.market_prices.get(symbol)
+                    if mkt is not None:
+                        if side == OrderSide.SELL:
+                            stop_price = mkt - trail_offset
+                        else:
+                            stop_price = mkt + trail_offset
+            elif order_type == OrderType.TRAILING_STOP and stop_price is not None:
+                # Infer trail_offset from current market vs supplied stop_price.
+                mkt = self.market_prices.get(symbol)
+                if mkt is not None:
+                    trail_offset = abs(mkt - stop_price)
+
         order = PaperOrder(
             id=order_id,
             symbol=symbol,
@@ -214,11 +253,22 @@ class PaperBroker(BrokerAdapter):
             order_type=order_type,
             quantity=quantity,
             price=order_price,
+            stop_price=stop_price,
+            trail_offset=trail_offset,
         )
         self._orders[order_id] = order
 
         if order_type == OrderType.MARKET:
             self._fill_market_order(order)
+        elif order_type in (OrderType.STOP, OrderType.TRAILING_STOP, OrderType.TAKE_PROFIT):
+            # Protective orders rest until a price update fires them; initialize
+            # the trailing peak to the current market price so the first update
+            # can ratchet immediately if the price has already moved.
+            mkt = self.market_prices.get(symbol)
+            if mkt is not None and order_type == OrderType.TRAILING_STOP:
+                self._trail_peak[order_id] = mkt
+            # Evaluate immediately in case the market is already past the trigger.
+            self._evaluate_protective_order(order)
         else:
             # Limit (and other resting types): try to fill immediately if the
             # current quote already crosses; otherwise leave it PENDING.
@@ -245,12 +295,14 @@ class PaperBroker(BrokerAdapter):
     # --- Market data --------------------------------------------------------
 
     def update_market_prices(self, prices: dict[str, float]) -> None:
-        """Set the last price for one or more symbols, then match resting limits."""
+        """Set the last price for one or more symbols, then match resting orders."""
         self.market_prices.update(prices)
         for symbol, px in prices.items():
             q = self._quotes.setdefault(symbol, {"bid": None, "ask": None, "last": None})
             q["last"] = px
         self._match_pending_limit_orders(list(prices.keys()))
+        self._evaluate_protective_orders(list(prices.keys()))
+        self._check_hard_floor()
 
     def update_quote(
         self,
@@ -280,6 +332,8 @@ class PaperBroker(BrokerAdapter):
             self.market_prices[symbol] = reference
 
         self._match_pending_limit_orders([symbol])
+        self._evaluate_protective_orders([symbol])
+        self._check_hard_floor()
 
     def update_quotes(self, quotes: dict[str, dict[str, float | None]]) -> None:
         """Bulk variant of :meth:`update_quote`."""
@@ -358,13 +412,119 @@ class PaperBroker(BrokerAdapter):
 
     def _match_pending_limit_orders(self, symbols: list[str]) -> None:
         affected = set(symbols)
+        _protective = {OrderType.STOP, OrderType.TRAILING_STOP, OrderType.TAKE_PROFIT}
         for order in list(self._orders.values()):
             if (
                 order.status == OrderStatus.PENDING
-                and order.order_type != OrderType.MARKET
+                and order.order_type not in (OrderType.MARKET, *_protective)
                 and order.symbol in affected
             ):
                 self._try_fill_limit_order(order)
+
+    # --- Protective-order engine (P0) ---------------------------------------
+
+    def _evaluate_protective_orders(self, symbols: list[str]) -> None:
+        """Evaluate all resting protective orders for the updated symbols."""
+        affected = set(symbols)
+        for order in list(self._orders.values()):
+            if order.status == OrderStatus.PENDING and order.symbol in affected:
+                if order.order_type in (OrderType.STOP, OrderType.TRAILING_STOP, OrderType.TAKE_PROFIT):
+                    self._evaluate_protective_order(order)
+
+    def _evaluate_protective_order(self, order: PaperOrder) -> None:
+        """Fire a single protective order if its trigger is met."""
+        if order.status != OrderStatus.PENDING or order.stop_price is None:
+            return
+        px = self.market_prices.get(order.symbol)
+        if px is None:
+            return
+
+        if order.order_type == OrderType.TRAILING_STOP:
+            self._ratchet_trailing_stop(order, px)
+            if order.stop_price is None:
+                return
+
+        triggered = False
+        if order.order_type == OrderType.TAKE_PROFIT:
+            # For a SELL take-profit: fire when price rises to or above the target.
+            # For a BUY take-profit (covering a short): fire when price falls to or below.
+            triggered = (
+                (order.side == OrderSide.SELL and px >= order.stop_price)
+                or (order.side == OrderSide.BUY and px <= order.stop_price)
+            )
+        else:
+            # STOP and TRAILING_STOP: sell when price falls to/below trigger,
+            # buy (stop-to-cover) when price rises to/above trigger.
+            triggered = (
+                (order.side == OrderSide.SELL and px <= order.stop_price)
+                or (order.side == OrderSide.BUY and px >= order.stop_price)
+            )
+
+        if triggered:
+            # Execute as a market fill at the current price (override open-market
+            # check — protective orders must fire even in after-hours).
+            fill_price = self._market_fill_price(order.symbol, order.side)
+            if fill_price is None:
+                fill_price = px
+            if self._can_fill(order, fill_price):
+                self._execute_trade(order, fill_price)
+            else:
+                order.status = OrderStatus.REJECTED
+            self._trail_peak.pop(order.id, None)
+
+    def _ratchet_trailing_stop(self, order: PaperOrder, px: float) -> None:
+        """Update the trailing-stop trigger if the price has moved in our favour."""
+        if order.trail_offset is None or order.stop_price is None:
+            return
+        peak = self._trail_peak.get(order.id, px)
+        if order.side == OrderSide.SELL:
+            # Long protection: ratchet up with the new high.
+            if px > peak:
+                self._trail_peak[order.id] = px
+                order.stop_price = px - order.trail_offset
+        else:
+            # Short protection (buy to cover): ratchet down with the new low.
+            if px < peak:
+                self._trail_peak[order.id] = px
+                order.stop_price = px + order.trail_offset
+
+    def _check_hard_floor(self) -> None:
+        """Auto-flatten if account equity has fallen below the hard-floor threshold.
+
+        No model in the loop — fires deterministically on every price update if
+        ``hard_floor_pct`` is set and the loss threshold is breached.
+        """
+        if self.hard_floor_pct is None:
+            return
+        equity = self._equity()
+        if equity < self._initial_balance * (1.0 - self.hard_floor_pct / 100.0):
+            self.flatten_all()
+
+    def flatten_all(self) -> None:
+        """Close every open position at the current market price.
+
+        Used by the hard-floor auto-flatten (P0) and externally by the bench's
+        risk checks. Bypasses the open-market check — this is an emergency exit.
+        """
+        for symbol, pos in list(self._positions.items()):
+            if pos.quantity == 0:
+                continue
+            side = OrderSide.SELL if pos.quantity > 0 else OrderSide.BUY
+            qty = abs(pos.quantity)
+            order_id = str(uuid.uuid4())
+            order = PaperOrder(
+                id=order_id,
+                symbol=symbol,
+                side=side,
+                order_type=OrderType.MARKET,
+                quantity=qty,
+            )
+            self._orders[order_id] = order
+            fill_px = self._market_fill_price(symbol, side) or self.market_prices.get(symbol, pos.avg_price)
+            if self._can_fill(order, fill_px):
+                self._execute_trade(order, fill_px)
+            else:
+                order.status = OrderStatus.REJECTED
 
     def _can_fill(self, order: PaperOrder, fill_price: float) -> bool:
         """Affordability / position / margin check shared by market and limit fills.
@@ -561,4 +721,5 @@ class PaperBroker(BrokerAdapter):
         self._closed_pnls.clear()
         self.market_prices.clear()
         self._quotes.clear()
+        self._trail_peak.clear()
         self._connected = False

@@ -38,6 +38,10 @@ class RiskLimits:
     max_trades_per_hour: int = 10
     max_open_positions: int = 5
     max_short_exposure: float = 0.0
+    # Catastrophic hard floor (P0): if equity drops more than this percentage
+    # below initial_equity, auto-flatten fires with no model in the loop.
+    # None (default) means disabled — so the existing behaviour is unchanged.
+    hard_floor_pct: float | None = None
 
 
 class RiskManager:
@@ -211,6 +215,19 @@ class RiskManager:
         if account_value <= 0 or risk_percent <= 0 or stop_loss <= 0:
             return 0.0
         return (account_value * risk_percent) / stop_loss
+
+    def check_hard_floor(self, current_equity: float, initial_equity: float) -> bool:
+        """True if account equity has fallen past the catastrophic loss threshold.
+
+        Returns False when ``hard_floor_pct`` is None (default) so existing
+        callers are unaffected. ``initial_equity`` should be the starting account
+        value for the book (e.g. Competitor.initial_balance).
+        """
+        floor = self.limits.hard_floor_pct
+        if floor is None or floor <= 0 or initial_equity <= 0:
+            return False
+        loss_pct = (initial_equity - current_equity) / initial_equity * 100.0
+        return loss_pct >= floor
 
     # --- Helpers ------------------------------------------------------------
 
