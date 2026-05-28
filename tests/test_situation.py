@@ -359,3 +359,31 @@ def test_source_credibility_known():
 
 def test_source_credibility_unknown_default():
     assert 0.0 <= source_credibility("unknown-platform") <= 1.0
+
+
+def test_source_credibility_b1_bluesky_kinds():
+    """B1: bluesky_list and bluesky_author have the same credibility as bluesky."""
+    assert source_credibility("bluesky_list") == source_credibility("bluesky")
+    assert source_credibility("bluesky_author") == source_credibility("bluesky")
+
+
+def test_social_items_from_raw_bluesky_list_credibility():
+    """B1: compact-metrics path assigns bluesky_list credibility correctly."""
+    from trading_agent.situation.social import social_items_from_raw
+
+    items = [RawItem(source_id="bl1", text="$SPY vol spike", url="", ts="2026-05-28T12:00:00Z", ticker="SPY")]
+    si = social_items_from_raw(items, source="bluesky_list", ticker="SPY")
+    assert len(si) == 1
+    assert si[0].credibility == pytest.approx(source_credibility("bluesky_list"))
+    assert si[0].source == "bluesky_list"
+
+
+def test_social_items_from_raw_bluesky_author_credibility():
+    """B1: compact-metrics path assigns bluesky_author credibility correctly."""
+    from trading_agent.situation.social import social_items_from_raw
+
+    items = [RawItem(source_id="ba1", text="$AAPL earnings setup", url="", ts="2026-05-28T12:00:00Z", ticker="AAPL")]
+    si = social_items_from_raw(items, source="bluesky_author")
+    assert len(si) == 1
+    assert si[0].credibility == pytest.approx(source_credibility("bluesky_author"))
+    assert si[0].source == "bluesky_author"

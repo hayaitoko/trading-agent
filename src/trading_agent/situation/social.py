@@ -79,6 +79,8 @@ _SOURCE_CREDIBILITY: dict[str, float] = {
     "reddit": 0.45,
     "stocktwits": 0.40,
     "bluesky": 0.35,
+    "bluesky_list": 0.35,   # B1: curated list feeds (same credibility tier as bluesky)
+    "bluesky_author": 0.35, # B1: individual author feeds (same credibility tier as bluesky)
     "browser": 0.5,
 }
 

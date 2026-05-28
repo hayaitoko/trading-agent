@@ -215,44 +215,50 @@ class ListToolsTool(LookToolBase):
             {
                 "name": "world_events",
                 "description": (
-                    "GDELT-based global event feed filtered by theme and timespan. "
-                    "Provider lands in WS-Situation Track A."
+                    "GDELT-based global macro and geopolitical event feed filtered by "
+                    "theme. Returns mention-volume timeline and recent headlines. "
+                    "Returns disabled error when SITUATION_GDELT flag is off."
                 ),
                 "args": {
-                    "theme": "str|None (default None)",
-                    "timespan": "str (default '24h')",
+                    "theme": "str|None (default None — queries WAR + ELECTION + EPU_POLICY)",
+                    "timespan": "str (default '24h'; e.g. '48h', '7d')",
                 },
                 "latency": "medium",
                 "cost_class": "free",
-                "enabled": False,
-                "disabled_reason": "provider lands in WS-Situation+Forecast",
+                "enabled": True,
+                "disabled_reason": None,
             },
             {
                 "name": "prediction_market_odds",
                 "description": (
-                    "Polymarket / Kalshi implied probabilities for a category/query. "
-                    "Provider lands in WS-Situation Track A."
+                    "Polymarket + Kalshi implied probabilities for macro events by "
+                    "category. Returns disabled error when "
+                    "SITUATION_PREDICTION_MARKETS flag is off."
                 ),
                 "args": {
-                    "category": "str",
-                    "query": "str|None (default None)",
+                    "category": "str (e.g. 'economics', 'politics', 'fed_rate', 'crypto')",
+                    "query": "str|None (default None — optional title substring filter)",
+                    "min_liquidity": "float (default 1000.0 — minimum USD liquidity)",
                 },
                 "latency": "medium",
                 "cost_class": "free",
-                "enabled": False,
-                "disabled_reason": "provider lands in WS-Situation+Forecast",
+                "enabled": True,
+                "disabled_reason": None,
             },
             {
                 "name": "options_iv",
                 "description": (
-                    "Implied volatility and Greeks for a symbol's near-money options. "
-                    "Provider lands in WS-Situation Track A."
+                    "Implied volatility and Greeks for near-the-money options on a "
+                    "symbol. Returns disabled error when SITUATION_OPTIONS_IV flag is off."
                 ),
-                "args": {"symbol": "str"},
+                "args": {
+                    "symbol": "str (equity ticker, e.g. 'AAPL', 'SPY')",
+                    "expiry": "str|None (default None — nearest expiry; ISO 'YYYY-MM-DD')",
+                },
                 "latency": "fast",
                 "cost_class": "free",
-                "enabled": False,
-                "disabled_reason": "provider lands in WS-Situation+Forecast",
+                "enabled": True,
+                "disabled_reason": None,
             },
             {
                 "name": "forecast",

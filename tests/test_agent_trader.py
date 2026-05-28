@@ -546,3 +546,109 @@ def test_regular_turn_has_no_turn_type_guidance() -> None:
     first_look, _ = _first_look_and_system(client)
     assert "Start-of-day guidance:" not in first_look
     assert "End-of-day guidance:" not in first_look
+
+
+# ---------------------------------------------------------------------------
+# C0 — Situation Track A tool dispatch smoke
+# ---------------------------------------------------------------------------
+
+
+def test_c0_tool_definitions_include_situation_tools() -> None:
+    """C0: _tool_definitions() includes world_events, prediction_market_odds, options_iv."""
+    trader = _make_trader()
+    defs = trader._tool_definitions()
+    names = {d["function"]["name"] for d in defs}
+    assert "world_events" in names
+    assert "prediction_market_odds" in names
+    assert "options_iv" in names
+
+
+def test_c0_world_events_flag_off_returns_disabled() -> None:
+    """C0: world_events with settings_store=None → disabled error (not not_found)."""
+    client = FakeToolClient([
+        _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="world_events", arguments={"theme": "WAR"})]),
+        _FakeToolResponse(tool_calls=[ToolCall(id="t2", name="hold", arguments={"reason": "done"})]),
+    ])
+    trader = AgentTrader("m", client, symbols=["AAPL"], name="C0Trader", tutorial_remaining=0)
+    result = trader.decide({"cash": 10_000.0, "positions": []})
+    assert result.error is None
+
+    # The world_events tool result message should carry a disabled error.
+    all_msgs = client.calls[-1]["messages"]
+    tool_msgs = [m for m in all_msgs if m.get("role") == "tool"]
+    # First tool result is from world_events call.
+    we_result = json.loads(tool_msgs[0]["content"])
+    assert we_result["ok"] is False
+    assert we_result["error"]["kind"] == "disabled"
+
+
+def test_c0_prediction_market_odds_flag_off_returns_disabled() -> None:
+    """C0: prediction_market_odds with no provider → disabled error."""
+    from trading_agent.intel.cost_tracker import CostTracker
+    from trading_agent.llm.openrouter import ToolCall
+
+    trader = _make_trader()
+    tc = ToolCall(id="x", name="prediction_market_odds", arguments={"category": "economics"})
+    result = trader._execute_tool(tc, CostTracker())
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.kind == "disabled"
+
+
+def test_c0_options_iv_flag_off_returns_disabled() -> None:
+    """C0: options_iv with no provider → disabled error."""
+    from trading_agent.intel.cost_tracker import CostTracker
+    from trading_agent.llm.openrouter import ToolCall
+
+    trader = _make_trader()
+    tc = ToolCall(id="x", name="options_iv", arguments={"symbol": "AAPL"})
+    result = trader._execute_tool(tc, CostTracker())
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.kind == "disabled"
+
+
+def test_c0_world_events_flag_on_mock_provider() -> None:
+    """C0: world_events with mock provider and flag on → ok=True with bins+articles."""
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from trading_agent.intel.cost_tracker import CostTracker
+    from trading_agent.llm.openrouter import ToolCall
+
+    settings = MagicMock()
+    settings.get = lambda uid, key, default=None: (True if key == "SITUATION_GDELT" else False)
+
+    bins = [SimpleNamespace(bucket_start=datetime(2026, 5, 28, 12, 0, tzinfo=UTC), value=50.0, unit="mentions")]
+    articles = [SimpleNamespace(
+        title="Conflict news", url="https://reuters.com/x", published=datetime(2026, 5, 28, 10, 0, tzinfo=UTC),
+        source_domain="reuters.com", tone=-3.0,
+    )]
+    gdelt = MagicMock()
+    gdelt.timeline_volume.return_value = bins
+    gdelt.top_articles.return_value = articles
+
+    trader = _make_trader(settings_store=settings, gdelt_provider=gdelt)
+    tc = ToolCall(id="x", name="world_events", arguments={"theme": "WAR", "timespan": "24h"})
+    result = trader._execute_tool(tc, CostTracker())
+
+    assert result.ok is True
+    assert result.data["theme"] == "WAR"
+    assert len(result.data["bins"]) == 1
+    assert len(result.data["articles"]) == 1
+
+
+def test_c0_list_tools_includes_situation_tools() -> None:
+    """C0: _tool_list_tools() (via ListToolsTool) now shows world_events etc. as enabled=True."""
+    from trading_agent.intel.cost_tracker import CostTracker
+    from trading_agent.llm.openrouter import ToolCall
+
+    trader = _make_trader()
+    tc = ToolCall(id="x", name="list_tools", arguments={})
+    result = trader._execute_tool(tc, CostTracker())
+    assert result.ok is True
+    names_enabled = {t["name"] for t in result.data["tools"] if t["enabled"]}
+    assert "world_events" in names_enabled
+    assert "prediction_market_odds" in names_enabled
+    assert "options_iv" in names_enabled

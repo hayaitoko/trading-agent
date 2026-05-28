@@ -549,6 +549,11 @@ class AgentTrader:
         requires_approval: bool = False,
         # A6 tutorial mode: first N turns use guided prompts; 0 = disabled.
         tutorial_remaining: int = 3,
+        # C0: Situation Track A providers (all optional; absent → tool returns disabled)
+        gdelt_provider: Any = None,
+        pm_provider: Any = None,
+        chain_provider: Any = None,
+        spot_prices: dict[str, float] | None = None,
     ) -> None:
         self.model = model
         self.client = client
@@ -572,6 +577,11 @@ class AgentTrader:
         # A6 tutorial: remaining guided turns (decremented after each tutorial turn;
         # zeroed immediately on first trade* terminal so auto-exit works).
         self.tutorial_remaining: int = max(0, tutorial_remaining)
+        # C0: Situation Track A providers
+        self._gdelt_provider = gdelt_provider
+        self._pm_provider = pm_provider
+        self._chain_provider = chain_provider
+        self._spot_prices: dict[str, float] = dict(spot_prices or {})
         # Store original total so tutorial_extra_lines() can compute "turn N of M".
         self._tutorial_total: int = self.tutorial_remaining
         # Price bar buffer (same shape as LLMTrader for observe() compat)
@@ -954,6 +964,96 @@ class AgentTrader:
             UNWATCH_DEF,
         ]
 
+        # C0: Situation Track A LOOK tools
+        defs += [
+            {
+                "type": "function",
+                "function": {
+                    "name": "world_events",
+                    "description": (
+                        "GDELT-based global macro and geopolitical event feed filtered "
+                        "by theme. Returns mention-volume timeline and recent headlines. "
+                        "Enable via SITUATION_GDELT in settings."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "theme": {
+                                "type": "string",
+                                "description": (
+                                    "GKG theme string (e.g. 'WAR', 'ELECTION', "
+                                    "'EPU_POLICY_*'). Omit to query WAR+ELECTION+EPU defaults."
+                                ),
+                            },
+                            "timespan": {
+                                "type": "string",
+                                "description": "Rolling lookback window (e.g. '24h', '48h', '7d'). Default '24h'.",
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "prediction_market_odds",
+                    "description": (
+                        "Polymarket + Kalshi implied probabilities for macro events by "
+                        "category. Use to check crowd expectations for Fed decisions, "
+                        "elections, or economic prints. Enable via "
+                        "SITUATION_PREDICTION_MARKETS in settings."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "category": {
+                                "type": "string",
+                                "description": (
+                                    "Category/topic filter, e.g. 'economics', "
+                                    "'politics', 'fed_rate', 'crypto'."
+                                ),
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "Optional substring filter on event titles (case-insensitive).",
+                            },
+                            "min_liquidity": {
+                                "type": "number",
+                                "description": "Minimum USD liquidity for Polymarket markets (default 1000.0).",
+                            },
+                        },
+                        "required": ["category"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "options_iv",
+                    "description": (
+                        "Implied volatility and Greeks for near-the-money options on a "
+                        "symbol. Use to gauge forward vol or check gamma exposure. "
+                        "Enable via SITUATION_OPTIONS_IV in settings."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Equity ticker, e.g. 'AAPL', 'SPY'.",
+                            },
+                            "expiry": {
+                                "type": "string",
+                                "description": "ISO 'YYYY-MM-DD' expiry filter. Omit for nearest expiry.",
+                            },
+                        },
+                        "required": ["symbol"],
+                    },
+                },
+            },
+        ]
+
         # A3 ACT catalog — only injected when broker is wired.
         if self.broker is not None:
             from ..intel.tools.act import (
@@ -1076,6 +1176,23 @@ class AgentTrader:
                 return self._tool_watch_symbol(tc.arguments.get("symbol", ""))
             if tc.name == "unwatch_symbol":
                 return self._tool_unwatch_symbol(tc.arguments.get("symbol", ""))
+            # C0: Situation Track A LOOK tools
+            if tc.name == "world_events":
+                return self._tool_world_events(
+                    theme=tc.arguments.get("theme"),
+                    timespan=str(tc.arguments.get("timespan", "24h")),
+                )
+            if tc.name == "prediction_market_odds":
+                return self._tool_prediction_market_odds(
+                    category=str(tc.arguments.get("category", "")),
+                    query=tc.arguments.get("query"),
+                    min_liquidity=float(tc.arguments.get("min_liquidity", 1000.0)),
+                )
+            if tc.name == "options_iv":
+                return self._tool_options_iv(
+                    symbol=str(tc.arguments.get("symbol", "")),
+                    expiry=tc.arguments.get("expiry"),
+                )
             # A3 ACT tools (also terminals — loop exits after these)
             if tc.name == "trade":
                 return self._tool_trade(
@@ -1123,7 +1240,15 @@ class AgentTrader:
             )
 
     def _tool_list_tools(self) -> ToolResult:
-        """Return the full A0 + A2 NOTE + A3 ACT tool catalog."""
+        """Return the full tool catalog, deferring to ListToolsTool as single source of truth.
+
+        ListToolsTool owns the A1 LOOK catalog (including the new Track A tools and
+        the builtins list_tools / memory_search / hold / pass).  NOTE tools, ACT tools,
+        and done_for_day are injected via extra_entries since they are not part of the
+        A1 LOOK set.  Deferring to ListToolsTool (option ii) ensures the catalog
+        stays in sync after any future LOOK-tool additions without editing this method.
+        """
+        from ..intel.tools.look.list_tools import ListToolsTool
         from ..intel.tools.note import (
             REFLECT_CATALOG,
             REMIND_CATALOG,
@@ -1132,26 +1257,7 @@ class AgentTrader:
             WATCHPOINT_CATALOG,
         )
 
-        catalog: list[dict[str, Any]] = [
-            {
-                "name": "list_tools",
-                "description": "List all available tools.",
-                "args": {},
-                "latency": "instant",
-                "cost_class": "free",
-                "enabled": True,
-                "disabled_reason": None,
-            },
-            {
-                "name": "memory_search",
-                "description": "Search your private memory for relevant lessons.",
-                "args": {"query": "str", "k": "int (default 5)"},
-                "latency": "fast",
-                "cost_class": "free",
-                "enabled": True,
-                "disabled_reason": None,
-            },
-            # A2 NOTE catalog entries
+        extra: list[dict[str, Any]] = [
             REFLECT_CATALOG,
             REMIND_CATALOG,
             WATCHPOINT_CATALOG,
@@ -1159,7 +1265,6 @@ class AgentTrader:
             UNWATCH_CATALOG,
         ]
 
-        # A3 ACT catalog — only shown when broker is wired.
         if self.broker is not None:
             from ..intel.tools.act import (
                 ABANDON_CATALOG,
@@ -1168,8 +1273,7 @@ class AgentTrader:
                 TRADE_CATALOG,
                 UPDATE_PROTECTIVE_CATALOG,
             )
-
-            catalog += [
+            extra += [
                 TRADE_CATALOG,
                 TRADE_BATCH_CATALOG,
                 UPDATE_PROTECTIVE_CATALOG,
@@ -1177,36 +1281,72 @@ class AgentTrader:
                 ABANDON_CATALOG,
             ]
 
-        catalog += [
-            {
-                "name": "done_for_day",
-                "description": "Terminal: skip remaining cadence ticks today.",
-                "args": {"reason": "str"},
-                "latency": "instant",
-                "cost_class": "free",
-                "enabled": True,
-                "disabled_reason": None,
-            },
-            {
-                "name": "hold",
-                "description": "Terminal: end this turn having considered the situation.",
-                "args": {"reason": "str"},
-                "latency": "instant",
-                "cost_class": "free",
-                "enabled": True,
-                "disabled_reason": None,
-            },
-            {
-                "name": "pass",
-                "description": "Terminal: end this turn — nothing interesting.",
-                "args": {},
-                "latency": "instant",
-                "cost_class": "free",
-                "enabled": True,
-                "disabled_reason": None,
-            },
-        ]
-        return ToolResult(ok=True, data={"tools": catalog})
+        # done_for_day is not in ListToolsTool's LOOK catalog; add it here.
+        # hold and pass are already in ListToolsTool's built-in catalog.
+        extra.append({
+            "name": "done_for_day",
+            "description": "Terminal: skip remaining cadence ticks today.",
+            "args": {"reason": "str"},
+            "latency": "instant",
+            "cost_class": "free",
+            "enabled": True,
+            "disabled_reason": None,
+        })
+
+        tool = ListToolsTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            extra_entries=extra,
+        )
+        return tool()
+
+    # --- C0: Situation Track A LOOK tool dispatchers -------------------------
+
+    def _tool_world_events(
+        self, theme: str | None = None, timespan: str = "24h"
+    ) -> ToolResult:
+        """Dispatch the world_events LOOK tool (GDELT macro event feed)."""
+        from ..intel.tools.look.world_events import WorldEventsTool
+
+        tool = WorldEventsTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            settings_store=self.settings_store,
+            gdelt_provider=self._gdelt_provider,
+        )
+        return tool(theme=theme, timespan=timespan)
+
+    def _tool_prediction_market_odds(
+        self,
+        category: str,
+        query: str | None = None,
+        min_liquidity: float = 1000.0,
+    ) -> ToolResult:
+        """Dispatch the prediction_market_odds LOOK tool (Polymarket + Kalshi)."""
+        from ..intel.tools.look.prediction_market_odds import PredictionMarketOddsTool
+
+        tool = PredictionMarketOddsTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            settings_store=self.settings_store,
+            pm_provider=self._pm_provider,
+        )
+        return tool(category, query=query, min_liquidity=min_liquidity)
+
+    def _tool_options_iv(
+        self, symbol: str, expiry: str | None = None
+    ) -> ToolResult:
+        """Dispatch the options_iv LOOK tool (Alpaca IV passthrough)."""
+        from ..intel.tools.look.options_iv import OptionsIVTool
+
+        tool = OptionsIVTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            settings_store=self.settings_store,
+            chain_provider=self._chain_provider,
+            spot_prices=dict(self._spot_prices),
+        )
+        return tool(symbol, expiry=expiry)
 
     # --- A2 NOTE tool dispatchers -------------------------------------------
 

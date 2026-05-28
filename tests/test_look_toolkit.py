@@ -167,7 +167,9 @@ def test_list_tools_includes_disabled_with_reason() -> None:
     result = ListToolsTool(trader_id="Alpha")()
     tools = result.data["tools"]
     disabled = [t for t in tools if not t["enabled"]]
-    assert len(disabled) >= 4  # world_events, prediction_market_odds, options_iv, forecast
+    # C0: world_events / prediction_market_odds / options_iv are now wired (enabled=True,
+    # return disabled error when flag off).  Only forecast remains a stub (Track C).
+    assert len(disabled) >= 1  # forecast stub
     for t in disabled:
         assert t["disabled_reason"] is not None
         assert len(t["disabled_reason"]) > 0
