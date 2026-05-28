@@ -49,6 +49,11 @@ DEFAULTS: dict[str, Any] = {
     "pattern_prune_hit_rate": 0.52,   # archive labels that decay toward coin-flip
     # P6 calibration.
     "calibration_horizon_days": 5,    # forward price window for outcome scoring
+    # WS-Situation Track A — new data providers (all default off).
+    # Turn on to enable the corresponding LOOK tools for a user.
+    "SITUATION_GDELT": False,               # world_events tool (GDELTProvider)
+    "SITUATION_PREDICTION_MARKETS": False,  # prediction_market_odds tool (Polymarket + Kalshi)
+    "SITUATION_OPTIONS_IV": False,          # options_iv tool (Alpaca IV passthrough)
 }
 
 

@@ -84,12 +84,38 @@ class OptionContract:
 
 @dataclass
 class OptionQuote:
-    """A market quote for one contract. Any field may be ``None``."""
+    """A market quote for one contract.
+
+    Any field may be ``None``.  The two additive fields ``implied_vol`` and
+    ``greeks`` are populated by ``AlpacaOptionChainProvider._snapshot_to_quote``
+    when the Alpaca ``OptionsSnapshot`` carries ``implied_volatility`` and
+    ``greeks`` (delta/gamma/theta/vega/rho).  All existing callers that do not
+    pass these fields are unaffected — both default to ``None``.
+
+    Fields
+    ------
+    contract:
+        The option's identity (underlying, expiry, strike, right).
+    bid, ask, last:
+        Quote and last-trade prices (per share, before the x100 multiplier).
+    implied_vol:
+        Annualised implied volatility as a decimal fraction (e.g. 0.25 = 25%).
+        ``None`` when not available from the data provider.  For Alpaca paper
+        accounts this is populated without an OPRA subscription.
+        Deferred: Newton-Raphson BS-inversion fallback — build only if live
+        testing confirms IV is ``None`` on the indicative feed.
+    greeks:
+        Option greeks dict with keys ``delta``, ``gamma``, ``theta``,
+        ``vega``, ``rho``.  Values are per-share, per-dollar, per-day as
+        returned by Alpaca.  ``None`` when not available.
+    """
 
     contract: OptionContract
     bid: float | None = None
     ask: float | None = None
     last: float | None = None
+    implied_vol: float | None = None  # WS-Situation A2: Alpaca OptionsSnapshot passthrough
+    greeks: dict[str, float] | None = None  # WS-Situation A2: {"delta","gamma","theta","vega","rho"}
 
     @property
     def mark(self) -> float | None:

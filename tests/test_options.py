@@ -1,5 +1,12 @@
 """Single-leg options: contract identity, marks, Black–Scholes pricing, the
-×100 P&L book, expiry/assignment, and the chain provider (fail-loud + offline)."""
+×100 P&L book, expiry/assignment, and the chain provider (fail-loud + offline).
+
+WS-Situation A2 additions (appended at end of file):
+  - OptionQuote has implied_vol and greeks fields (default None)
+  - Existing callers unaffected (no breaking change)
+  - _snapshot_to_quote passes through IV + greeks when present
+  - _snapshot_to_quote handles absent IV/greeks gracefully (None)
+"""
 
 from __future__ import annotations
 
@@ -327,3 +334,106 @@ def test_provider_wraps_client_errors() -> None:
     provider = AlpacaOptionChainProvider(data_client=_Boom())
     with pytest.raises(OptionsProviderError, match="option chain failed"):
         provider.get_chain("AAPL")
+
+
+# --- WS-Situation A2: OptionQuote IV + greeks passthrough -------------------
+
+
+def _snapshot_with_iv(bid, ask, last, *, implied_vol=None, greeks=None):
+    """Build a fake OptionsSnapshot with optional IV + greeks."""
+    greeks_ns = None
+    if greeks is not None:
+        greeks_ns = SimpleNamespace(**greeks)
+    return SimpleNamespace(
+        latest_quote=SimpleNamespace(bid_price=bid, ask_price=ask),
+        latest_trade=SimpleNamespace(price=last),
+        implied_volatility=implied_vol,
+        greeks=greeks_ns,
+    )
+
+
+def test_option_quote_has_implied_vol_field_default_none() -> None:
+    """OptionQuote.implied_vol defaults None — no breaking change."""
+    q = OptionQuote(_call())
+    assert q.implied_vol is None
+
+
+def test_option_quote_has_greeks_field_default_none() -> None:
+    """OptionQuote.greeks defaults None — no breaking change."""
+    q = OptionQuote(_call())
+    assert q.greeks is None
+
+
+def test_option_quote_iv_and_greeks_roundtrip() -> None:
+    """OptionQuote accepts IV and greeks at construction."""
+    q = OptionQuote(
+        _call(),
+        bid=2.0,
+        ask=2.4,
+        implied_vol=0.35,
+        greeks={"delta": 0.5, "gamma": 0.02, "theta": -0.05, "vega": 0.12, "rho": 0.01},
+    )
+    assert q.implied_vol == pytest.approx(0.35)
+    assert q.greeks is not None
+    assert q.greeks["delta"] == pytest.approx(0.5)
+    assert q.greeks["vega"] == pytest.approx(0.12)
+
+
+def test_snapshot_to_quote_passes_through_iv() -> None:
+    """_snapshot_to_quote copies implied_volatility from the Alpaca snapshot."""
+    c = OptionContract("AAPL", date(2026, 6, 19), 150.0, OptionRight.CALL)
+    snap = _snapshot_with_iv(2.0, 2.4, 2.2, implied_vol=0.28)
+    fake = _FakeOptionDataClient({c.occ_symbol: snap})
+    provider = AlpacaOptionChainProvider(data_client=fake)
+    chain = provider.get_chain("AAPL")
+    assert len(chain) == 1
+    assert chain[0].implied_vol == pytest.approx(0.28)
+    assert chain[0].greeks is None  # greeks not provided
+
+
+def test_snapshot_to_quote_passes_through_greeks() -> None:
+    """_snapshot_to_quote copies delta/gamma/theta/vega/rho from the snapshot."""
+    c = OptionContract("AAPL", date(2026, 6, 19), 150.0, OptionRight.CALL)
+    snap = _snapshot_with_iv(
+        2.0, 2.4, 2.2,
+        implied_vol=0.31,
+        greeks={"delta": 0.52, "gamma": 0.03, "theta": -0.08, "vega": 0.15, "rho": 0.02},
+    )
+    fake = _FakeOptionDataClient({c.occ_symbol: snap})
+    provider = AlpacaOptionChainProvider(data_client=fake)
+    chain = provider.get_chain("AAPL")
+    assert len(chain) == 1
+    q = chain[0]
+    assert q.implied_vol == pytest.approx(0.31)
+    assert q.greeks is not None
+    assert q.greeks["delta"] == pytest.approx(0.52)
+    assert q.greeks["gamma"] == pytest.approx(0.03)
+    assert q.greeks["theta"] == pytest.approx(-0.08)
+    assert q.greeks["vega"] == pytest.approx(0.15)
+    assert q.greeks["rho"] == pytest.approx(0.02)
+
+
+def test_snapshot_to_quote_absent_iv_returns_none() -> None:
+    """Snapshots without IV/greeks produce implied_vol=None, greeks=None."""
+    c = OptionContract("AAPL", date(2026, 6, 19), 150.0, OptionRight.CALL)
+    snap = _snapshot(2.0, 2.4, 2.2)  # original helper — no IV attrs
+    fake = _FakeOptionDataClient({c.occ_symbol: snap})
+    provider = AlpacaOptionChainProvider(data_client=fake)
+    chain = provider.get_chain("AAPL")
+    assert chain[0].implied_vol is None
+    assert chain[0].greeks is None
+
+
+def test_snapshot_to_quote_existing_callers_unaffected() -> None:
+    """Existing callers that don't pass IV/greeks still get correct bid/ask/last."""
+    c = OptionContract("AAPL", date(2026, 6, 19), 150.0, OptionRight.CALL)
+    snap = _snapshot_with_iv(1.5, 1.9, None, implied_vol=0.25)
+    fake = _FakeOptionDataClient({c.occ_symbol: snap})
+    provider = AlpacaOptionChainProvider(data_client=fake)
+    quote = provider.get_quote(c)
+    assert quote is not None
+    assert quote.bid == pytest.approx(1.5)
+    assert quote.ask == pytest.approx(1.9)
+    assert quote.last is None
+    assert quote.mark == pytest.approx(1.7)  # mid of 1.5/1.9
+    assert quote.implied_vol == pytest.approx(0.25)

@@ -404,11 +404,19 @@ def test_situation_with_classifier() -> None:
     (ForecastTool, {"symbol": "AAPL", "horizon": 10}),
 ])
 def test_disabled_tools_return_disabled_error(ToolCls: Any, args: dict[str, Any]) -> None:
+    """All four tools return kind="disabled" when no settings/provider is supplied.
+
+    WorldEventsTool, PredictionMarketOddsTool, OptionsIVTool are wired (Track A)
+    but flag-gated — they return disabled when settings_store is None (default).
+    ForecastTool is still a stub (Track C) and returns the stub disabled message.
+    All four must return ok=False, error.kind="disabled".
+    """
     tool = ToolCls(trader_id="Alpha")
     result = tool(**args)
     _assert_tool_result_shape(result, expect_ok=False)
     assert result.error.kind == "disabled"
-    assert "WS-Situation" in result.error.message or "provider" in result.error.message
+    # Message is non-empty; exact wording varies between stub and wired tools
+    assert result.error.message
 
 
 # ---------------------------------------------------------------------------

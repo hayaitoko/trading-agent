@@ -98,17 +98,46 @@ class AlpacaOptionChainProvider:
 
     @staticmethod
     def _snapshot_to_quote(occ: str, snapshot: Any) -> OptionQuote | None:
+        """Parse one ``OptionsSnapshot`` into an ``OptionQuote``.
+
+        Copies ``implied_volatility`` and ``greeks.{delta,gamma,theta,vega,rho}``
+        from the Alpaca snapshot when present (WS-Situation A2 additive passthrough).
+        All new fields default ``None`` — no breaking change to existing callers.
+
+        Alpaca ``OptionsSnapshot`` model fields used::
+
+            latest_quote.bid_price, latest_quote.ask_price
+            latest_trade.price
+            implied_volatility (float | None)
+            greeks.delta, greeks.gamma, greeks.theta, greeks.vega, greeks.rho
+        """
         try:
             contract = OptionContract.from_occ(occ)
         except ValueError:
             return None
         latest_quote = getattr(snapshot, "latest_quote", None)
         latest_trade = getattr(snapshot, "latest_trade", None)
+
+        # WS-Situation A2: pass through Alpaca-computed IV + greeks when present
+        implied_vol = _f(getattr(snapshot, "implied_volatility", None))
+        greeks_obj = getattr(snapshot, "greeks", None)
+        greeks: dict[str, float] | None = None
+        if greeks_obj is not None:
+            candidate: dict[str, float] = {}
+            for greek in ("delta", "gamma", "theta", "vega", "rho"):
+                v = _f(getattr(greeks_obj, greek, None))
+                if v is not None:
+                    candidate[greek] = v
+            if candidate:
+                greeks = candidate
+
         return OptionQuote(
             contract=contract,
             bid=_f(getattr(latest_quote, "bid_price", None)),
             ask=_f(getattr(latest_quote, "ask_price", None)),
             last=_f(getattr(latest_trade, "price", None)),
+            implied_vol=implied_vol,
+            greeks=greeks,
         )
 
 
