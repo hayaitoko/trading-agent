@@ -312,8 +312,8 @@ class ListToolsTool(LookToolBase):
                 "name": "ask_manager",
                 "description": (
                     "Ask the overseer manager a question.  Cost-gated: at most once "
-                    "per turn.  The manager cannot disclose peer-trader state or "
-                    "account simulation status.  Use for strategic guidance only."
+                    "per turn.  The manager cannot disclose peer-trader state.  "
+                    "Use for strategic guidance only."
                 ),
                 "args": {"question": "str"},
                 "latency": "slow",

@@ -1,6 +1,6 @@
 # Trader Agent — Design Reference
 
-**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3–A6 in progress  
+**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3 ✅ · A4–A6 in progress  
 **Branch:** `feat/engine-realism`  
 **Legend:** ✅ exists · 🟡 partial · 🔵 planned
 
@@ -300,43 +300,133 @@ containing any forbidden disclosure word.
 | `watch_symbol(symbol)` | Add symbol to trader's personal watchlist (stored in `user_settings`). Idempotent. Overlays cockpit watchlist tile (A5). | instant | free |
 | `unwatch_symbol(symbol)` | Remove symbol from personal watchlist. Idempotent. | instant | free |
 
-### A3 ACT catalog (🔵)
+### A3 ACT catalog (✅)
 
-`trade`, `trade_batch`, `update_protective_order`, `confirm_trade`, `abandon_trade`
+Lives in `intel/tools/act/`.  Each tool is one module; all use `ActToolBase`.
 
-### END terminals (A0 partial, A3 complete)
+| Tool | What | Terminal? | Latency | Cost class |
+|---|---|---|---|---|
+| `trade(symbol, side, qty, *, stop, take_profit, trail)` | Submit a single trade intent. Approval-required → returns `pending_trade_id`, turn ends. Direct → fill result. | ✅ | fast | free |
+| `trade_batch([{symbol, side, qty, ...}, ...])` | Multiple trade intents in one turn. Per-item results. Kill-switch blocks whole batch before first item. | ✅ | fast | free |
+| `update_protective_order(order_id, *, new_stop, new_tp, new_trail)` | Edit stop-loss / take-profit / trailing stop. Does NOT require re-approval. | ❌ | fast | free |
+| `confirm_trade(pending_trade_id)` | Execute a pre-approved trade. Callback-turn only. TTL-gated. | ✅ | fast | free |
+| `abandon_trade(pending_trade_id)` | Release a pre-approved trade unused. Callback-turn only. | ✅ | instant | free |
+
+**Kill-switch interaction surface:** when `risk_manager.kill_switch_active` is `True`, all ACT
+tools return `{ok: false, error: {kind: "unavailable", message: "bench halted by operator"}}`.
+LOOK and NOTE tools are unaffected — the trader can still `hold()`/`pass()` cleanly.
+
+**Idempotency:** key = `sha256(trader_id ‖ turn_id ‖ symbol ‖ side ‖ qty)`.
+`RiskManager.check_idempotency` / `record_idempotency` detect crash-replay double-fires.
+`PendingTradeQueue.propose` enforces uniqueness at the DB level (`UNIQUE` constraint on
+`idempotency_key`).
+
+### END terminals (✅ A0 + A3)
 
 | Terminal | A0 | A3 |
 |---|---|---|
 | `pass()` | ✅ | ✅ |
 | `hold(reason)` | ✅ | ✅ |
-| `done_for_day(reason)` | — | 🔵 |
-| `trade(...)` | — | 🔵 |
-| `confirm_trade(pending_id)` | — | 🔵 |
-| `abandon_trade(pending_id)` | — | 🔵 |
+| `done_for_day(reason)` | — | ✅ |
+| `trade(...)` | — | ✅ |
+| `trade_batch([...])` | — | ✅ |
+| `confirm_trade(pending_id)` | — | ✅ |
+| `abandon_trade(pending_id)` | — | ✅ |
+
+ACT terminals leave `DecisionResult.decisions = []` — the ACT tools interact with the broker
+directly.  The bench controller must not re-execute.
 
 ---
 
-## 7. Approval-Callback Flow (🔵 A3)
+## 7. Approval-Callback Flow (✅ A3)
 
-_Stub — populated in A3._
+The approval flow is a **five-path gated callback** pattern backed by
+`PendingTradeQueue` (SQLite `pending_trades` table in `data/approvals.db`).
 
-The approval flow is a two-step gated callback:
+### State machine
 
-1. Trader calls `trade(symbol, side, qty)`.
-2. If approval required → enqueue, return `{ok: true, data: {pending_trade_id, status: "awaiting_approval"}}`.  Trader's turn ends.
-3. Human approves/denies via cockpit.  State change fires an event-driven
-   callback turn for the trader.
-4. On approval: `Wake reason: trade_id=X was approved at HH:MM, TTL 5min`.
-5. Trader calls `confirm_trade(X)` to execute, or `abandon_trade(X)`, or any
-   other tools before terminating.
-6. On denial: callback is informational; trader reassesses.
+```
+propose()         set_decision("approved")   confirm()
+  │                       │                      │
+  ▼                       ▼                      ▼
+awaiting_approval ──→ approved ──────────────→ confirmed
+      │                   │
+      │           expire_old() / TTL elapsed
+      │                   ▼
+      │                expired
+      │
+      └──→ denied (via set_decision("denied"))
+      └──→ abandoned (via abandon())
+```
 
-Pre-approval TTL: configurable (`PREAPPROVAL_TTL_MIN=5`).  Expiry fires another
-callback.
+### Five verified paths
 
-Idempotency key: `hash(trader_id, turn_id, symbol, side, qty)` — risk manager
-rejects duplicate trade attempts within the same `turn_id`.
+| # | Path | Trigger | Outcome |
+|---|---|---|---|
+| 1 | **Propose** | `trade(...)` with `requires_approval=True` | Turn ends with `pending_trade_id`, status `awaiting_approval` |
+| 2 | **Approve** | Operator hits `POST /api/pending-trades/{id}/approve` | Status → `approved`, `approval_ttl_expires_at` set, callback fires |
+| 3 | **Confirm** | Trader calls `confirm_trade(id)` in callback turn | Status → `confirmed`, fill returned |
+| 4 | **Abandon** | Trader calls `abandon_trade(id)` in callback turn | Status → `abandoned`, no fill |
+| 5 | **Expire** | `expire_old()` / TTL elapsed | Status → `expired`, expiry callback fires |
+| 6 | **Deny** | Operator hits `POST /api/pending-trades/{id}/deny` | Status → `denied`, callback fires with denial reason |
+
+### Pre-approval TTL
+
+Configurable via `PREAPPROVAL_TTL_MIN` env var (default `5` minutes).
+`confirm_trade(id)` after TTL elapsed returns `{ok: false, error: {kind: "unavailable", message: "... TTL expired"}}`.
+
+### Callback mechanism
+
+`PendingTradeQueue.register_callback(pending_trade_id, fn)` — registers a
+`fn(PendingTrade)` called synchronously on every status transition (approve, deny,
+expire).  Exceptions in callbacks are silently swallowed to protect the decision flow.
+
+A4's scheduler wires these callbacks to fire new `decide()` turns.  A3 delivers the
+mechanism; A4 delivers the lifecycle engine that uses it.
+
+### Web router extensions (`web/routers/approvals.py`)
+
+| Endpoint | Action |
+|---|---|
+| `GET /api/pending-trades` | List all `awaiting_approval`/`approved` trades |
+| `POST /api/pending-trades/{id}/approve` | Approve → callback fires |
+| `POST /api/pending-trades/{id}/deny` | Deny → callback fires |
+
+The legacy `/api/approvals` endpoints are untouched.
+
+### PendingTrade dataclass
+
+```python
+@dataclass(frozen=True)
+class PendingTrade:
+    pending_trade_id: str
+    trader_id: str
+    proposed: TradeIntent       # symbol, side, qty, stop, take_profit, trail
+    proposed_at: datetime
+    idempotency_key: str
+    status: Literal["awaiting_approval", "approved", "denied",
+                    "confirmed", "abandoned", "expired"]
+    approved_at: datetime | None
+    approval_ttl_expires_at: datetime | None
+    confirmed_at: datetime | None
+    fill_result: FillResult | None
+    note: str | None = None
+```
+
+### Key files (A3)
+
+| File | Role |
+|---|---|
+| `intel/tools/act/_base.py` | `ActToolBase` + `_idempotency_key` + `_scrub_fill` |
+| `intel/tools/act/trade.py` | `TradeTool` — primary ACT entry point |
+| `intel/tools/act/trade_batch.py` | `TradeBatchTool` — multi-symbol batch |
+| `intel/tools/act/update_protective_order.py` | `UpdateProtectiveOrderTool` — protective order edits |
+| `intel/tools/act/confirm_trade.py` | `ConfirmTradeTool` — execute pre-approved (callback-turn) |
+| `intel/tools/act/abandon_trade.py` | `AbandonTradeTool` — release unused (callback-turn) |
+| `approval_queue.py` (extended) | `TradeIntent`, `FillResult`, `PendingTrade`, `PendingTradeQueue` |
+| `risk_manager.py` (extended) | `check_idempotency`, `record_idempotency`, `check_batch_blocked` |
+| `web/routers/approvals.py` (extended) | `/api/pending-trades` endpoints |
+| `tests/test_act_tools.py` | 71 tests (smoke + unit, all 5 callback paths) |
 
 ---
 

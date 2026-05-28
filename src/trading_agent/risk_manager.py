@@ -66,6 +66,9 @@ class RiskManager:
         self.hourly_trades: dict[str, dict[str, Any]] = {}
         self.open_positions: dict[str, int] = {}
         self.position_sizes: dict[str, float] = {}
+        # A3: idempotency key registry — persists for the session lifetime so
+        # crash-replay double-fires are caught even across turn boundaries.
+        self._seen_idempotency_keys: set[str] = set()
 
     # Backwards-compat shims for the dataclass thresholds. Older callers and
     # tests referenced these as class attributes.
@@ -228,6 +231,35 @@ class RiskManager:
             return False
         loss_pct = (initial_equity - current_equity) / initial_equity * 100.0
         return loss_pct >= floor
+
+    # --- A3: idempotency key registry (kill-switch interaction surface) ------
+
+    def check_idempotency(self, key: str) -> bool:
+        """True if ``key`` was already seen this session (reject duplicate trade).
+
+        Kill switch active → True regardless, so duplicate checks also honour the
+        hard halt without requiring a separate kill-switch check in the caller.
+        """
+        if self.kill_switch_active:
+            return True
+        return key in self._seen_idempotency_keys
+
+    def record_idempotency(self, key: str) -> None:
+        """Mark ``key`` as used.  Subsequent ``check_idempotency`` calls return True."""
+        self._seen_idempotency_keys.add(key)
+
+    def check_batch_blocked(self, scope_id: str, intents: list[dict[str, Any]]) -> list[bool]:
+        """Apply kill-switch + position-size check to each intent in a batch.
+
+        Returns a per-item list of booleans: ``True`` means the item is blocked.
+        Kill switch active → all items blocked.
+        """
+        if self.kill_switch_active:
+            return [True] * len(intents)
+        return [
+            self.check_position_size(scope_id, float(item.get("qty", 0)))
+            for item in intents
+        ]
 
     # --- Helpers ------------------------------------------------------------
 

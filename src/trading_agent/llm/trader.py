@@ -7,22 +7,29 @@
 * :class:`StrategyTrader` — wraps any deterministic :class:`Strategy` (e.g.
   mean-reversion) so it can compete in the same bench as a baseline.
 
-* :class:`AgentTrader` — new ReAct-style tool-calling agent (WS-Agent A0+A2).
+* :class:`AgentTrader` — ReAct-style tool-calling agent (WS-Agent A0–A3).
   Runs a multi-step decision loop: build first-look context → call model with
   tools → execute tools → repeat until terminal action or runaway guard.
-  Terminal actions in A0: ``hold(reason)`` and ``pass()``.
-  A2 adds the NOTE catalog: ``reflect``, ``remind_me``, ``watchpoint``,
+  A0 terminals: ``hold(reason)``, ``pass()``.
+  A2 NOTE tools: ``reflect``, ``remind_me``, ``watchpoint``,
   ``watch_symbol``, ``unwatch_symbol``.
-  Later waves (A1/A3) add the full LOOK/ACT catalogs.
+  A3 ACT tools: ``trade``, ``trade_batch``, ``update_protective_order``.
+  A3 END terminals added: ``trade``, ``trade_batch``, ``confirm_trade``,
+  ``abandon_trade``, ``done_for_day``.
 
 All three expose ``observe(bar)`` and ``decide(account) -> DecisionResult`` so
 they are drop-in substitutes from the bench/controller's perspective.
+
+Backward compat: :class:`ManagerAgent.chat()` return shape unchanged.
+``DecisionResult.decisions`` stays an empty list for AgentTrader — the ACT tools
+interact with the broker directly, so the bench controller does not re-execute.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -463,8 +470,20 @@ _CTX_WARN_FRAC = 0.70
 _CTX_CHARS = int(os.environ.get("AGENT_CTX_CHARS", 512_000))
 _CTX_WARN_CHARS = int(_CTX_CHARS * _CTX_WARN_FRAC)
 
-# A0 terminal tool names — when the model calls any of these the loop exits.
-_TERMINALS: frozenset[str] = frozenset({"pass", "hold", "done_for_day"})
+# Terminal tool names — when the model calls any of these the loop exits.
+# A0: hold, pass, done_for_day (done_for_day wired in A3 tool defs)
+# A3: trade, trade_batch, confirm_trade, abandon_trade
+_TERMINALS: frozenset[str] = frozenset(
+    {
+        "pass",
+        "hold",
+        "done_for_day",
+        "trade",
+        "trade_batch",
+        "confirm_trade",
+        "abandon_trade",
+    }
+)
 
 
 class AgentTrader:
@@ -523,6 +542,11 @@ class AgentTrader:
         # A2: attention queue + per-user settings (both optional)
         attention_queue: Any = None,
         settings_store: Any = None,
+        # A3: ACT toolkit dependencies (all optional; absent → hold behaviour)
+        broker: Any = None,
+        risk_manager: Any = None,
+        pending_trade_queue: Any = None,
+        requires_approval: bool = False,
     ) -> None:
         self.model = model
         self.client = client
@@ -538,6 +562,11 @@ class AgentTrader:
         # A2: attention queue (AttentionQueue instance, may be None → degrade)
         self.attention_queue = attention_queue
         self.settings_store = settings_store
+        # A3: ACT dependencies
+        self.broker = broker
+        self.risk_manager = risk_manager
+        self.pending_trade_queue = pending_trade_queue
+        self.requires_approval = requires_approval
         # Price bar buffer (same shape as LLMTrader for observe() compat)
         self._bars: dict[str, deque[dict[str, Any]]] = {
             s: deque(maxlen=30) for s in self.symbols
@@ -546,6 +575,8 @@ class AgentTrader:
         self._stable_system_content: str = self._build_system_prompt()
         # Per-turn tool-call name accumulator (used by reflect provenance)
         self._turn_tool_names: list[str] = []
+        # Per-turn UUID — scopes idempotency keys so crash-replay is safe.
+        self._current_turn_id: str = ""
 
     # --- Trader Protocol interface -------------------------------------------
 
@@ -557,6 +588,8 @@ class AgentTrader:
 
     def decide(self, account: dict[str, Any]) -> DecisionResult:
         """Run one full agent turn and return the terminal action as a DecisionResult."""
+        # Fresh UUID per turn — scopes A3 idempotency keys so crash-replay is safe.
+        self._current_turn_id = str(uuid.uuid4())
         # Reset per-turn tool name accumulator (used by reflect provenance).
         self._turn_tool_names = []
         ctx = self._build_turn_context(account)
@@ -683,6 +716,16 @@ class AgentTrader:
     def _build_system_prompt(self) -> str:
         universe_str = ", ".join(self.symbols) if self.symbols else "(to be determined)"
         mandate_str = f"\nYour mandate: {self.style.strip()}." if self.style else ""
+        has_broker = self.broker is not None
+        trade_terminals = (
+            "  • trade(symbol, side, qty, ...) — execute a trade (or queue for approval).\n"
+            "  • trade_batch([...]) — execute multiple trades in one turn.\n"
+            "  • confirm_trade(pending_trade_id) — execute a pre-approved trade (callback turns).\n"
+            "  • abandon_trade(pending_trade_id) — release a pre-approved trade unused (callback turns).\n"
+            "  • done_for_day(reason) — skip remaining cadence ticks today.\n"
+        ) if has_broker else (
+            "  • done_for_day(reason) — skip remaining cadence ticks today.\n"
+        )
         return (
             f"You are {self.name}, an autonomous trading agent managing a "
             f"financial account investing in US equities and other instruments.{mandate_str}\n"
@@ -690,6 +733,7 @@ class AgentTrader:
             f"You are called every {self.cadence_minutes} minutes during regular trading hours.\n\n"
             "Use the tools available to gather information, analyse your positions, "
             "and make trading decisions.  When you are done, call one of the terminal tools:\n"
+            + trade_terminals +
             "  • hold(reason) — you considered the situation and chose not to trade; "
             "reason is logged for later reflection.\n"
             "  • pass() — nothing warranted your attention; no log entry.\n\n"
@@ -740,10 +784,7 @@ class AgentTrader:
     # --- Tool definitions (stable; re-built per turn but content is constant) -
 
     def _tool_definitions(self) -> list[dict[str, Any]]:
-        """OpenAI-compatible tool list for A0 + A2 NOTE catalog.
-
-        A1 will extend this further via the LOOK catalog.
-        """
+        """OpenAI-compatible tool list: A0 built-ins + A2 NOTE + A3 ACT catalogs."""
         from ..intel.tools.note import (
             REFLECT_DEF,
             REMIND_DEF,
@@ -752,7 +793,7 @@ class AgentTrader:
             WATCHPOINT_DEF,
         )
 
-        return [
+        defs: list[dict[str, Any]] = [
             {
                 "type": "function",
                 "function": {
@@ -797,6 +838,49 @@ class AgentTrader:
             WATCHPOINT_DEF,
             WATCH_DEF,
             UNWATCH_DEF,
+        ]
+
+        # A3 ACT catalog — only injected when broker is wired.
+        if self.broker is not None:
+            from ..intel.tools.act import (
+                ABANDON_DEF,
+                CONFIRM_DEF,
+                TRADE_BATCH_DEF,
+                TRADE_DEF,
+                UPDATE_PROTECTIVE_DEF,
+            )
+
+            defs += [
+                TRADE_DEF,
+                TRADE_BATCH_DEF,
+                UPDATE_PROTECTIVE_DEF,
+                CONFIRM_DEF,
+                ABANDON_DEF,
+            ]
+
+        defs += [
+            {
+                "type": "function",
+                "function": {
+                    "name": "done_for_day",
+                    "description": (
+                        "End all regular-cadence turns for today.  Use when you've locked "
+                        "in a good day, circuit-broken a losing streak, or the market regime "
+                        "doesn't suit your strategy.  EoD reflection and protective-order fill "
+                        "wakes are NOT suppressed."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reason": {
+                                "type": "string",
+                                "description": "Why you are done for the day.",
+                            }
+                        },
+                        "required": ["reason"],
+                    },
+                },
+            },
             {
                 "type": "function",
                 "function": {
@@ -830,6 +914,8 @@ class AgentTrader:
                 },
             },
         ]
+
+        return defs
 
     # --- Tool executor -------------------------------------------------------
 
@@ -876,8 +962,37 @@ class AgentTrader:
                 return self._tool_watch_symbol(tc.arguments.get("symbol", ""))
             if tc.name == "unwatch_symbol":
                 return self._tool_unwatch_symbol(tc.arguments.get("symbol", ""))
+            # A3 ACT tools (also terminals — loop exits after these)
+            if tc.name == "trade":
+                return self._tool_trade(
+                    tc.arguments.get("symbol", ""),
+                    tc.arguments.get("side", ""),
+                    tc.arguments.get("qty", 0),
+                    stop=tc.arguments.get("stop"),
+                    take_profit=tc.arguments.get("take_profit"),
+                    trail=tc.arguments.get("trail"),
+                )
+            if tc.name == "trade_batch":
+                return self._tool_trade_batch(
+                    tc.arguments.get("trades", [])
+                )
+            if tc.name == "update_protective_order":
+                return self._tool_update_protective_order(
+                    tc.arguments.get("order_id", ""),
+                    new_stop=tc.arguments.get("new_stop"),
+                    new_tp=tc.arguments.get("new_tp"),
+                    new_trail=tc.arguments.get("new_trail"),
+                )
+            if tc.name == "confirm_trade":
+                return self._tool_confirm_trade(
+                    tc.arguments.get("pending_trade_id", "")
+                )
+            if tc.name == "abandon_trade":
+                return self._tool_abandon_trade(
+                    tc.arguments.get("pending_trade_id", "")
+                )
             if tc.name in _TERMINALS:
-                # Terminal — just acknowledge; loop handles exit.
+                # done_for_day, hold, pass — acknowledge; loop handles exit.
                 return ToolResult(ok=True, data={"action": tc.name})
             return ToolResult(
                 ok=False,
@@ -894,7 +1009,7 @@ class AgentTrader:
             )
 
     def _tool_list_tools(self) -> ToolResult:
-        """Return the A0 + A2 tool catalog; extended by later waves."""
+        """Return the full A0 + A2 NOTE + A3 ACT tool catalog."""
         from ..intel.tools.note import (
             REFLECT_CATALOG,
             REMIND_CATALOG,
@@ -903,7 +1018,7 @@ class AgentTrader:
             WATCHPOINT_CATALOG,
         )
 
-        catalog = [
+        catalog: list[dict[str, Any]] = [
             {
                 "name": "list_tools",
                 "description": "List all available tools.",
@@ -928,6 +1043,36 @@ class AgentTrader:
             WATCHPOINT_CATALOG,
             WATCH_CATALOG,
             UNWATCH_CATALOG,
+        ]
+
+        # A3 ACT catalog — only shown when broker is wired.
+        if self.broker is not None:
+            from ..intel.tools.act import (
+                ABANDON_CATALOG,
+                CONFIRM_CATALOG,
+                TRADE_BATCH_CATALOG,
+                TRADE_CATALOG,
+                UPDATE_PROTECTIVE_CATALOG,
+            )
+
+            catalog += [
+                TRADE_CATALOG,
+                TRADE_BATCH_CATALOG,
+                UPDATE_PROTECTIVE_CATALOG,
+                CONFIRM_CATALOG,
+                ABANDON_CATALOG,
+            ]
+
+        catalog += [
+            {
+                "name": "done_for_day",
+                "description": "Terminal: skip remaining cadence ticks today.",
+                "args": {"reason": "str"},
+                "latency": "instant",
+                "cost_class": "free",
+                "enabled": True,
+                "disabled_reason": None,
+            },
             {
                 "name": "hold",
                 "description": "Terminal: end this turn having considered the situation.",
@@ -1014,6 +1159,69 @@ class AgentTrader:
         )
         return tool.run(symbol)
 
+    # --- A3 ACT tool dispatchers --------------------------------------------
+
+    def _act_base_kwargs(self) -> dict[str, Any]:
+        """Common kwargs for ActToolBase constructors."""
+        return {
+            "broker": self.broker,
+            "risk_manager": self.risk_manager,
+            "pending_trade_queue": self.pending_trade_queue,
+            "trader_id": self.name,
+            "turn_id": self._current_turn_id,
+            "requires_approval": self.requires_approval,
+        }
+
+    def _tool_trade(
+        self,
+        symbol: str,
+        side: str,
+        qty: Any,
+        *,
+        stop: float | None = None,
+        take_profit: float | None = None,
+        trail: float | None = None,
+    ) -> ToolResult:
+        from ..intel.tools.act.trade import TradeTool
+
+        tool = TradeTool(**self._act_base_kwargs())
+        try:
+            qty_f = float(qty)
+        except (TypeError, ValueError):
+            qty_f = 0.0
+        return tool.run(symbol, side, qty_f, stop=stop, take_profit=take_profit, trail=trail)
+
+    def _tool_trade_batch(self, trades: Any) -> ToolResult:
+        from ..intel.tools.act.trade_batch import TradeBatchTool
+
+        tool = TradeBatchTool(**self._act_base_kwargs())
+        return tool.run(list(trades) if isinstance(trades, list) else [])
+
+    def _tool_update_protective_order(
+        self,
+        order_id: str,
+        *,
+        new_stop: float | None = None,
+        new_tp: float | None = None,
+        new_trail: float | None = None,
+    ) -> ToolResult:
+        from ..intel.tools.act.update_protective_order import UpdateProtectiveOrderTool
+
+        tool = UpdateProtectiveOrderTool(**self._act_base_kwargs())
+        return tool.run(order_id, new_stop=new_stop, new_tp=new_tp, new_trail=new_trail)
+
+    def _tool_confirm_trade(self, pending_trade_id: str) -> ToolResult:
+        from ..intel.tools.act.confirm_trade import ConfirmTradeTool
+
+        tool = ConfirmTradeTool(**self._act_base_kwargs())
+        return tool.run(pending_trade_id)
+
+    def _tool_abandon_trade(self, pending_trade_id: str) -> ToolResult:
+        from ..intel.tools.act.abandon_trade import AbandonTradeTool
+
+        tool = AbandonTradeTool(**self._act_base_kwargs())
+        return tool.run(pending_trade_id)
+
     def _tool_memory_search(
         self,
         query: str,
@@ -1080,13 +1288,31 @@ class AgentTrader:
         args: dict[str, Any],
         cost_tracker: CostTracker,
     ) -> DecisionResult:
-        """Map the terminal action to a bench-compatible DecisionResult."""
+        """Map the terminal action to a bench-compatible DecisionResult.
+
+        ACT terminals (trade, confirm_trade, etc.) leave ``decisions=[]`` because
+        the ACT tools already interacted with the broker directly.  The bench
+        controller must not re-execute them.  The ``comment`` carries a summary
+        for the decision log.
+        """
         if action == "pass":
             comment = "pass"
         elif action == "hold":
             comment = str(args.get("reason", "hold"))
         elif action == "done_for_day":
             comment = f"done_for_day: {args.get('reason', '')}"
+        elif action == "trade":
+            sym = args.get("symbol", "?")
+            side = args.get("side", "?")
+            qty = args.get("qty", "?")
+            comment = f"trade: {side} {qty} {sym}"
+        elif action == "trade_batch":
+            n = len(args.get("trades", []))
+            comment = f"trade_batch: {n} item(s)"
+        elif action == "confirm_trade":
+            comment = f"confirm_trade: {args.get('pending_trade_id', '?')}"
+        elif action == "abandon_trade":
+            comment = f"abandon_trade: {args.get('pending_trade_id', '?')}"
         else:
             comment = action
         return DecisionResult(
