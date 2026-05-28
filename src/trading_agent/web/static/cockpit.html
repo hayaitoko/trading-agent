@@ -3090,6 +3090,285 @@ Object.assign(TILES, {
     defaults:{symbols:["AAPL","MSFT","NVDA"],range:"1M"}, render:compareTileHTML, mount:mountCompare },
 });
 // note text lives in the tile's opts → persisted per-user in the layout blob (no /api/notes call)
+
+/* ===================== A5 OBSERVABILITY TILES =====================
+   Operator-facing tiles that surface the agent turn-trace store.
+   DATA SOURCED FROM: GET /api/traces, GET /api/traces/{id}, GET /api/traces/cost,
+   GET /api/traces/attention — all pure SQLite reads, no LLM calls.
+   MONEY IS REAL: book_type and book_badge are shown only here (operator surfaces);
+   the trader's recent_turns() tool path never exposes those fields.
+   MANAGER FRUGALITY: no manager LLM is invoked by any tile render, mount, or
+   refresh handler below. Tiles poll /api/traces endpoints only. */
+
+/* ---- traderTrace: last N turns, expandable per turn ---- */
+TILES.traderTrace={ title:"Trader trace", group:"Observability", icon:"🔍", w:6, h:20, refreshMs:30000,
+  desc:"Last N turns for one trader — expandable per-turn tool-call trace. [PAPER]/[LIVE] badge shown.",
+  optFields:[{key:"trader_id",label:"Trader ID",type:"text",ph:"e.g. Alpha"},{key:"limit",label:"Max turns",type:"select",choices:()=>["5","10","20","50"]}],
+  defaults:{ trader_id:"", limit:"10" },
+  render(o){ return `<div class="fin-title">Trace · ${esc(o.trader_id||"(set trader ID in ⚙)")}<span class="live-pip"></span></div><div class="trace-list"><div class="fin-empty">Loading…</div></div>`; },
+  mount(body,o){ traceLoad(body,o); }, refresh(body,o){ traceLoad(body,o); } };
+
+async function traceLoad(body,o){
+  if(!body) return; const wrap=body.querySelector(".trace-list")||body;
+  const tid=(o.trader_id||"").trim(); const lim=parseInt(o.limit||"10",10)||10;
+  if(!tid){ wrap.innerHTML=`<div class="fin-empty">Set a trader ID in ⚙ to see turns.</div>`; return; }
+  try{
+    const arr=await api(`/api/traces?trader_id=${encodeURIComponent(tid)}&limit=${lim}`);
+    if(!arr||!arr.length){ wrap.innerHTML=`<div class="fin-empty">No turns yet for ${esc(tid)}.</div>`; return; }
+    wrap.innerHTML=arr.map(t=>`<div class="trace-row" data-tid="${esc(t.turn_id)}">
+      <div class="tr-head" onclick="traceToggle(this)">
+        <span class="tr-badge ${t.book_type==='live'?'live':''}">${esc(t.book_badge||'[PAPER]')}</span>
+        <span class="tr-type">${esc(t.turn_type)}</span>
+        <span class="tr-action ${t.final_action==='interrupted'?'warn':''}">${esc(t.final_action)}</span>
+        <span class="tr-cost">$${(t.total_cost_usd||0).toFixed(4)}</span>
+        <span class="tr-tools">${t.tool_call_count||0} calls</span>
+        <span class="tr-ts">${ago(t.started_at)}</span>
+        <span class="tr-expand">▶</span>
+      </div>
+      <div class="tr-why">${esc(t.wake_reason||"")}</div>
+      <div class="tr-body" hidden></div>
+    </div>`).join("");
+  }catch(e){ if(e.status===401&&booted)return signedOut(); wrap.innerHTML=`<div class="fin-empty">Trace unavailable${e.status?` (${e.status})`:""}.</div>`; }
+}
+function traceToggle(head){
+  const row=head.closest(".trace-row"); if(!row) return;
+  const body=row.querySelector(".tr-body"); const open=!body.hidden;
+  row.querySelector(".tr-expand").textContent=open?"▶":"▼"; body.hidden=open;
+  if(!open && !body.dataset.loaded){ body.dataset.loaded="1"; traceExpand(body, row.dataset.tid); }
+}
+async function traceExpand(body, turnId){
+  body.innerHTML=`<div class="fin-empty">Loading full trace…</div>`;
+  try{
+    const t=await api(`/api/traces/${encodeURIComponent(turnId)}`);
+    const calls=(t.tool_calls||[]);
+    body.innerHTML=`<div class="tr-snap"><b>First-look snapshot</b><pre>${esc(JSON.stringify(t.first_look_snapshot,null,2))}</pre></div>`
+      +(calls.length?`<div class="tr-calls"><b>Tool calls (${calls.length})</b>`
+        +calls.map((c,i)=>`<div class="trc"><span class="trc-n">${i+1}. ${esc(c.tool_name)}</span>`
+          +`<span class="trc-ms">${c.latency_ms}ms</span>`
+          +(c.cost_usd?`<span class="trc-cost">$${c.cost_usd.toFixed(4)}</span>`:"")
+          +`<div class="trc-args">${esc(JSON.stringify(c.args))}</div>`
+          +`<div class="trc-res ${c.result&&c.result.ok===false?'err':''}">${esc(JSON.stringify(c.result))}</div></div>`).join("")
+        +`</div>`:"<div class='tr-empty'>No tool calls recorded.</div>")
+      +`<div class="tr-final"><b>Final action:</b> ${esc(t.final_action)} ${t.final_action_args&&Object.keys(t.final_action_args).length?esc(JSON.stringify(t.final_action_args)):""}</div>`;
+  }catch(e){ body.innerHTML=`<div class="fin-empty">Full trace unavailable${e.status?` (${e.status})`:""}.</div>`; }
+}
+
+/* ---- turnReplay: modal — pick a turn_id, see full prompt + tool calls ---- */
+TILES.turnReplay={ title:"Turn replay", group:"Observability", icon:"▶", w:7, h:14,
+  desc:"Replay a specific turn: enter a turn_id to see its full first-look, tool calls, and final action.",
+  defaults:{ turn_id:"" },
+  optFields:[{key:"turn_id",label:"Turn ID",type:"text",ph:"paste a turn_id"}],
+  render(o){ return `<div class="fin-title">Turn replay</div>
+    <div class="replay-input"><input id="replayIn" placeholder="Paste a turn_id here…" value="${esc(o.turn_id||"")}" oninput="replayInputChange(this)">
+    <button class="btn go" onclick="replayFetch(this)">Load</button></div>
+    <div class="replay-body"><div class="fin-empty">Enter a turn_id above and click Load.</div></div>`; } };
+function replayInputChange(inp){ const item=inp.closest(".grid-stack-item"); if(!item)return;
+  const o=JSON.parse(item.dataset.opts||"{}"); o.turn_id=inp.value.trim(); item.dataset.opts=JSON.stringify(o); }
+async function replayFetch(btn){ const wrap=btn.closest(".tile-body"); if(!wrap)return;
+  const inp=wrap.querySelector("#replayIn"); const tid=(inp?inp.value:"").trim();
+  const body=wrap.querySelector(".replay-body"); if(!body)return;
+  if(!tid){ body.innerHTML=`<div class="fin-empty">Enter a turn_id first.</div>`; return; }
+  body.innerHTML=`<div class="fin-empty">Loading…</div>`;
+  try{
+    const t=await api(`/api/traces/${encodeURIComponent(tid)}`);
+    const calls=(t.tool_calls||[]);
+    body.innerHTML=`<div class="replay-meta">
+      <span class="tr-badge ${t.book_type==='live'?'live':''}">${esc(t.book_badge||'[PAPER]')}</span>
+      <b>${esc(t.trader_id)}</b> · <i>${esc(t.turn_type)}</i> · ${ago(t.started_at)}<br>
+      Wake: <em>${esc(t.wake_reason)}</em><br>Cost: $${(t.total_cost_usd||0).toFixed(4)} · ${calls.length} tool calls</div>
+      <details open><summary><b>First-look snapshot</b></summary><pre class="replay-pre">${esc(JSON.stringify(t.first_look_snapshot,null,2))}</pre></details>`
+      +(calls.length?`<details open><summary><b>Tool calls</b></summary>`
+        +calls.map((c,i)=>`<div class="trc"><span class="trc-n">${i+1}. ${esc(c.tool_name)}</span>`
+          +`<span class="trc-ms">${c.latency_ms}ms</span>`
+          +(c.cost_usd?`<span class="trc-cost">$${c.cost_usd.toFixed(4)}</span>`:"")
+          +`<div class="trc-args">${esc(JSON.stringify(c.args))}</div>`
+          +`<div class="trc-res ${c.result&&c.result.ok===false?'err':''}">${esc(JSON.stringify(c.result))}</div></div>`).join("")
+        +`</details>`:"")
+      +`<div class="tr-final"><b>Final action:</b> ${esc(t.final_action)} ${t.final_action_args&&Object.keys(t.final_action_args).length?esc(JSON.stringify(t.final_action_args)):""}</div>`;
+  }catch(e){ body.innerHTML=`<div class="fin-empty">Turn not found${e.status?` (${e.status})`:""}. Check the turn_id.</div>`; }
+}
+
+/* ---- costPerTrader: rolling spend today / week / lifetime ---- */
+TILES.costPerTrader={ title:"Cost per trader", group:"Observability", icon:"💰", w:4, h:12, refreshMs:60000,
+  desc:"Rolling spend today / week / lifetime for one trader (USD). Operator view — sourced from turn traces.",
+  optFields:[{key:"trader_id",label:"Trader ID",type:"text",ph:"e.g. Alpha"}],
+  defaults:{ trader_id:"" },
+  render(o){ return `<div class="fin-title">Cost · ${esc(o.trader_id||"(set trader ID)")}<span class="live-pip"></span></div><div class="cost-body"><div class="fin-empty">Loading…</div></div>`; },
+  mount(body,o){ costLoad(body,o); }, refresh(body,o){ costLoad(body,o); } };
+async function costLoad(body,o){
+  if(!body) return; const wrap=body.querySelector(".cost-body")||body;
+  const tid=(o.trader_id||"").trim();
+  if(!tid){ wrap.innerHTML=`<div class="fin-empty">Set a trader ID in ⚙.</div>`; return; }
+  try{
+    const d=await api(`/api/traces/cost?trader_id=${encodeURIComponent(tid)}`);
+    wrap.innerHTML=`<div class="cost-grid">
+      <div class="cost-row"><span class="cost-k">Today</span><span class="cost-v">$${(d.today||0).toFixed(4)}</span></div>
+      <div class="cost-row"><span class="cost-k">This week</span><span class="cost-v">$${(d.week||0).toFixed(4)}</span></div>
+      <div class="cost-row"><span class="cost-k">Lifetime</span><span class="cost-v">$${(d.lifetime||0).toFixed(4)}</span></div>
+    </div>`;
+  }catch(e){ if(e.status===401&&booted)return signedOut(); wrap.innerHTML=`<div class="fin-empty">Cost unavailable${e.status?` (${e.status})`:""}.</div>`; }
+}
+
+/* ---- attentionPending: active watchpoints + reminders with prune action ---- */
+TILES.attentionPending={ title:"Pending attention", group:"Observability", icon:"⏰", w:5, h:18, refreshMs:30000,
+  desc:"Active watchpoints and reminders for one trader. Includes a prune/expire action.",
+  optFields:[{key:"trader_id",label:"Trader ID",type:"text",ph:"e.g. Alpha"}],
+  defaults:{ trader_id:"" },
+  render(o){ return `<div class="fin-title">Attention · ${esc(o.trader_id||"(set trader ID)")}<span class="live-pip"></span></div><div class="attn-body"><div class="fin-empty">Loading…</div></div>`; },
+  mount(body,o){ attnLoad(body,o); }, refresh(body,o){ attnLoad(body,o); } };
+async function attnLoad(body,o){
+  if(!body) return; const wrap=body.querySelector(".attn-body")||body;
+  const tid=(o.trader_id||"").trim();
+  if(!tid){ wrap.innerHTML=`<div class="fin-empty">Set a trader ID in ⚙.</div>`; return; }
+  try{
+    const d=await api(`/api/traces/attention?trader_id=${encodeURIComponent(tid)}`);
+    const wps=d.watchpoints||[], rems=d.reminders||[];
+    if(!wps.length && !rems.length){ wrap.innerHTML=`<div class="fin-empty">No active watchpoints or reminders for ${esc(tid)}.</div>`; return; }
+    const ts=v=>v?new Date(v*1000).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
+    wrap.innerHTML=(wps.length?`<div class="attn-sec">Watchpoints (${wps.length})</div>`
+      +wps.map(w=>`<div class="attn-row"><span class="attn-sym">${esc(w.symbol||"—")}</span>
+        <span class="attn-why">${esc(w.why||"")}</span>
+        ${w.condition?`<span class="attn-cond">${esc(w.condition)}</span>`:""}
+        <span class="attn-exp">exp ${ts(w.expires_at)}</span></div>`).join(""):"")
+      +(rems.length?`<div class="attn-sec">Reminders (${rems.length})</div>`
+        +rems.map(r=>`<div class="attn-row"><span class="attn-sym">⏰</span>
+          <span class="attn-why">${esc(r.about||"")}</span>
+          <span class="attn-exp">fires ${ts(r.when_unix)} · exp ${ts(r.expires_at)}</span></div>`).join(""):"")
+      +`<div class="attn-total">Total: ${d.total} active items</div>`;
+  }catch(e){ if(e.status===401&&booted)return signedOut(); wrap.innerHTML=`<div class="fin-empty">Attention unavailable${e.status?` (${e.status})`:""}.</div>`; }
+}
+
+/* ---- Watchlist tile extension: per-trader overlay + sync button ---- */
+/* The existing TILES.watchlist is extended: after wlLoad resolves, this overlay
+   fetches trader watchlists from /api/traces/attention (watchpoints have symbols)
+   and annotates each row with which traders also watch the symbol.
+   The "Sync" button folds trader-watched symbols into the tile's opts.symbols list.
+   MANAGER FRUGALITY: no LLM call — the overlay reads /api/traces/attention only. */
+const _origWlMount = TILES.watchlist.mount;
+const _origWlRefresh = TILES.watchlist.refresh;
+TILES.watchlist.mount = async function(body,o){ await wlLoad(body,o); await wlTraderOverlay(body,o); };
+TILES.watchlist.refresh = async function(body,o){ await wlLoad(body,o); await wlTraderOverlay(body,o); };
+async function wlTraderOverlay(body,o){
+  if(!body) return;
+  // Gather trader IDs from app state (ACCOUNTS or COMPETITORS if available).
+  const traders=(typeof ACCOUNTS!=="undefined"?ACCOUNTS.map(a=>a.name):[])
+    .concat(typeof COMPETITORS!=="undefined"?COMPETITORS:[]).filter((v,i,a)=>a.indexOf(v)===i);
+  if(!traders.length) return;
+  // Collect all trader watchpoint symbols: {symbol -> [trader_id,...]}
+  const symOwners={};
+  for(const tid of traders.slice(0,6)){ // cap to avoid too many calls
+    try{ const d=await api(`/api/traces/attention?trader_id=${encodeURIComponent(tid)}`);
+      (d.watchpoints||[]).forEach(w=>{ if(w.symbol){ (symOwners[w.symbol]=symOwners[w.symbol]||[]).push(tid); } });
+    }catch(e){ /* degrade silently */ } }
+  // Annotate each watchlist row.
+  const rows=[...body.querySelectorAll(".wl-row")];
+  rows.forEach(row=>{ const symEl=row.querySelector(".wl-sym"); if(!symEl) return;
+    const sym=symEl.textContent; if(!sym) return;
+    const owners=symOwners[sym]; if(owners&&owners.length){ let tag=row.querySelector(".wl-traders");
+      if(!tag){ tag=document.createElement("span"); tag.className="wl-traders"; row.querySelector(".wl-nm").after(tag); }
+      tag.textContent="+ "+owners.join(", "); tag.title=owners.join(", ")+" also watches "+sym; } });
+  // Add sync button if there are new trader-watched symbols not in opts.symbols.
+  const userSyms=new Set(o.symbols||[]);
+  const newSyms=Object.keys(symOwners).filter(s=>!userSyms.has(s));
+  if(newSyms.length){
+    let syncBar=body.querySelector(".wl-syncbar");
+    if(!syncBar){ syncBar=document.createElement("div"); syncBar.className="wl-syncbar"; body.appendChild(syncBar); }
+    syncBar.innerHTML=`<span>${newSyms.length} trader symbol${newSyms.length>1?"s":""} not on your watchlist.</span>
+      <button class="btn ghost" onclick="wlSync(this,'${newSyms.map(s=>esc(s)).join(",")}')">Sync</button>`;
+  }
+}
+function wlSync(btn,symsStr){ const item=btn.closest(".grid-stack-item"); if(!item)return;
+  const o=JSON.parse(item.dataset.opts||"{}"); const add=symsStr.split(",").filter(Boolean);
+  o.symbols=[...(o.symbols||[]),...add.filter(s=>!o.symbols||!o.symbols.includes(s))];
+  item.dataset.opts=JSON.stringify(o);
+  const body=item.querySelector(".tile-body"); if(body) wlLoad(body,o); persistCurrentLayout(currentTab);
+  toast("Watchlist synced",add.join(", ")+" added","good"); }
+
+/* ---- Pending approvals tile extension: pending_trade_id lineage ---- */
+/* Extends the existing approvalsHTML() to surface pending_trade_id + TTL lineage
+   from /api/pending-trades. MANAGER FRUGALITY: no LLM call — pure endpoint read.
+   NOTE: does NOT replace approvalsHTML; augments it with a second section. */
+async function loadPendingTradeLineage(body){
+  if(!body) return;
+  let ptsBox=body.querySelector(".pts-lineage"); if(!ptsBox){ ptsBox=document.createElement("div"); ptsBox.className="pts-lineage"; body.appendChild(ptsBox); }
+  try{
+    const pts=await api("/api/pending-trades");
+    if(!pts||!pts.length){ ptsBox.innerHTML=""; return; }
+    const approved=pts.filter(p=>p.status==="approved");
+    if(!approved.length){ ptsBox.innerHTML=""; return; }
+    ptsBox.innerHTML=`<div class="attn-sec">Approved — awaiting confirm_trade()</div>`
+      +approved.map(p=>`<div class="attn-row pts-row">
+        <span class="attn-sym">${esc(p.symbol||"?")}</span>
+        <span class="attn-why">${esc(p.t||"")} · trader: ${esc(p.m||"")}</span>
+        <span class="attn-cond">id: ${esc(p.id||"")}</span>
+        <span class="attn-exp">TTL: ${p.meta||"awaiting"}</span></div>`).join("");
+  }catch(e){ /* degrade silently */ }
+}
+// Patch the approvals tile to also load pending-trade lineage on mount.
+const _origApprTile = TILES.approvals;
+TILES.approvals = Object.assign({}, _origApprTile, {
+  mount(body){ loadPendingTradeLineage(body); },
+  refresh(body){ loadPendingTradeLineage(body); },
+  refreshMs: 15000,
+});
+
+/* A5 CSS injected inline (no static mount). */
+(function(){
+  const s=document.createElement("style"); s.id="a5-obs-styles";
+  s.textContent=`
+/* -- trace rows -- */
+.trace-row{border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:4px}
+.tr-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;cursor:pointer;padding:4px 2px;border-radius:4px;transition:background .15s}
+.tr-head:hover{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.tr-badge{font-family:var(--mono);font-size:10px;padding:2px 5px;border-radius:3px;background:color-mix(in srgb,var(--muted) 18%,transparent);color:var(--muted)}
+.tr-badge.live{background:color-mix(in srgb,var(--pos) 15%,transparent);color:var(--pos)}
+.tr-type{font-family:var(--mono);font-size:11px;color:var(--accent)}
+.tr-action{font-family:var(--mono);font-size:11px;font-weight:700}
+.tr-action.warn{color:var(--neg)}
+.tr-cost,.tr-tools{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.tr-ts{font-size:11px;color:var(--muted);margin-left:auto}
+.tr-expand{color:var(--muted);font-size:10px;margin-left:4px}
+.tr-why{font-size:11px;color:var(--muted);padding:0 4px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr-body{background:color-mix(in srgb,var(--bg2) 60%,transparent);border-radius:5px;padding:8px;margin:4px 0;overflow:auto;max-height:300px}
+.tr-snap pre,.replay-pre{font-family:var(--mono);font-size:10px;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto;background:color-mix(in srgb,var(--bg) 80%,transparent);border-radius:4px;padding:6px;margin:4px 0}
+.tr-calls,.replay-pre{margin-top:6px}
+.trc{border-left:2px solid var(--border);padding:4px 4px 4px 8px;margin:4px 0;font-family:var(--mono);font-size:10px}
+.trc-n{font-weight:700;color:var(--fg);margin-right:6px}
+.trc-ms{color:var(--muted);margin-right:6px}
+.trc-cost{color:var(--accent);margin-right:6px}
+.trc-args{color:var(--muted);word-break:break-all}
+.trc-res{color:var(--fg);word-break:break-all;margin-top:2px}
+.trc-res.err{color:var(--neg)}
+.tr-final{font-family:var(--mono);font-size:11px;margin-top:8px;color:var(--accent);font-weight:700}
+.tr-empty{color:var(--muted);font-size:12px;padding:6px}
+/* -- replay tile -- */
+.replay-input{display:flex;gap:8px;padding:8px 0}
+.replay-input input{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:6px 10px;color:var(--fg);font-family:var(--mono);font-size:12px}
+.replay-body{overflow:auto;max-height:calc(100% - 60px)}
+.replay-meta{font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6}
+.replay-meta b{color:var(--fg)}
+/* -- cost tile -- */
+.cost-grid{padding:8px 0}
+.cost-row{display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border)}
+.cost-k{font-size:13px;color:var(--muted)}
+.cost-v{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--fg)}
+/* -- attention tile -- */
+.attn-sec{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding:10px 4px 4px;border-top:1px solid var(--border);margin-top:8px}
+.attn-row{display:grid;grid-template-columns:auto 1fr auto;gap:4px 8px;padding:5px 2px;border-bottom:1px solid color-mix(in srgb,var(--border) 50%,transparent);font-size:12px;align-items:start}
+.attn-sym{font-family:var(--mono);font-weight:700;color:var(--accent);white-space:nowrap}
+.attn-why{color:var(--fg);word-break:break-word}
+.attn-cond{font-family:var(--mono);font-size:10px;color:var(--muted);grid-column:2;word-break:break-all}
+.attn-exp{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;text-align:right;grid-column:3;grid-row:1}
+.attn-total{font-size:11px;color:var(--muted);padding:6px 4px;text-align:right}
+/* -- watchlist overlay -- */
+.wl-traders{font-size:10px;color:var(--accent);font-family:var(--mono);display:block;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px}
+.wl-syncbar{display:flex;align-items:center;gap:10px;padding:6px 4px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);flex-wrap:wrap}
+/* -- pending trade lineage -- */
+.pts-lineage{margin-top:10px;border-top:1px solid var(--border);padding-top:6px}
+.pts-row{grid-template-columns:auto 1fr 1fr auto}
+`;
+  document.head.appendChild(s);
+})();
 function noteCardInput(el){ const item=el.closest(".grid-stack-item"); if(!item) return;
   const o=JSON.parse(item.dataset.opts||"{}"); o.text=el.value; item.dataset.opts=JSON.stringify(o);
   clearTimeout(el._t); el._t=setTimeout(()=>persistCurrentLayout(currentTab), 600); }

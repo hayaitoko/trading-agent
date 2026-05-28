@@ -46,6 +46,7 @@ from .routers import requests as requests_router
 from .routers import research as research_router
 from .routers import risk as risk_router
 from .routers import symbols as symbols_router
+from .routers import traces as traces_router
 
 if TYPE_CHECKING:
     from ..approval_queue import ApprovalQueue
@@ -72,6 +73,7 @@ _COCKPIT_ROUTERS = (
     news_router.router,
     movers_router.router,
     quote_stream_router.router,
+    traces_router.router,
 )
 
 

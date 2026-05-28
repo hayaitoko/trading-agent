@@ -442,16 +442,144 @@ first `trade*` terminal.
 
 ---
 
-## 9. Observability (🔵 A5)
+## 9. Observability (✅ A5)
 
-_Stub — populated in A5._
+Full turn-trace store + cockpit tiles.  Shipped in A5.
 
-- `intel/turn_store.py` — persistent SQLite store of every turn's full trace:
-  wake reason, first-look snapshot, ordered tool calls (name, args, result,
-  latency, cost), final action, total cost.
-- `web/routers/traces.py` — `GET /api/traces?trader_id=&limit=N` and
-  `GET /api/traces/{turn_id}`.
-- Cockpit tiles: `traderTrace`, `turnReplay`, `costPerTrader`, `attentionPending`.
+### Trace store schema (`intel/turn_store.py`)
+
+SQLite table `turn_records` (bootstrapped idempotently at `TurnStore.__init__`):
+
+```
+turn_records
+  turn_id                   TEXT PRIMARY KEY
+  trader_id                 TEXT NOT NULL
+  started_at                REAL (Unix UTC)
+  ended_at                  REAL (NULL until turn completes — orphan detection)
+  wake_reason               TEXT
+  turn_type                 TEXT  -- SoD | regular | event | reminder | callback | EoD | tutorial
+  book_type                 TEXT  -- 'paper' | 'live'  ← OPERATOR ONLY
+  first_look_json           TEXT  -- full structured context block
+  tool_calls_json           TEXT  -- ordered list of ToolCallRecord dicts
+  final_action              TEXT
+  final_action_args_json    TEXT
+  total_cost_usd            REAL
+  tokens_input              INTEGER
+  tokens_output             INTEGER
+  tokens_cached             INTEGER
+  previous_attempt_turn_id  TEXT  -- set on crash-recovery turns
+```
+
+Index: `idx_turns_trader ON turn_records(trader_id, started_at DESC)` — fast
+descending lookup per trader.
+
+**`TurnRecord` dataclass** (`intel/turn_store.py`):
+
+| Method | Path | Includes `book_type`? |
+|---|---|---|
+| `to_trader_dict()` | Trader-facing (A1 `recent_turns()` tool) | **No** — MONEY IS REAL |
+| `to_operator_dict()` | Cockpit GET /api/traces/{id} | Yes + `book_badge` |
+| `to_summary_dict()` | Cockpit GET /api/traces list | Yes + `book_badge` |
+
+**`ToolCallRecord` dataclass:**
+
+```python
+@dataclass(frozen=True)
+class ToolCallRecord:
+    tool_name: str
+    args: dict
+    result: dict      # ToolResult.to_dict() — what the agent received
+    latency_ms: int
+    cost_usd: float   # non-zero for model_call / queued tools only
+```
+
+**`TurnStore` methods:**
+
+| Method | Used by |
+|---|---|
+| `record(rec)` | AgentTrader loop (silently swallows failures) |
+| `open_turn(...)` | AgentTrader at turn start — writes interrupted row for crash recovery |
+| `close_turn(turn_id, ...)` | AgentTrader at turn end — finalises the row |
+| `recent(trader_id, n)` | A1 `RecentTurnsTool` — returns `list[TurnRecord]` newest-first |
+| `summaries(trader_id, limit)` | `GET /api/traces` router — operator summary list |
+| `get(turn_id)` | `GET /api/traces/{id}` router — full record |
+| `cost_rollup(trader_id)` | `GET /api/traces/cost` router — today/week/lifetime USD |
+| `orphaned_turns()` | A4 crash-recovery scanner — `ended_at IS NULL` rows >5min old |
+
+### Replay flow
+
+1. Operator opens the `traderTrace` tile → polls `GET /api/traces?trader_id=<id>&limit=N`.
+2. Each row shows: wake_reason, turn_type, final_action, total_cost_usd, tool_call_count, book_badge.
+3. Operator clicks a row → JS calls `GET /api/traces/{turn_id}`.
+4. Full record renders: first_look_snapshot (the exact context the trader saw), ordered
+   tool calls (name → args → result → latency → cost), final action.
+5. Operator can also open the `turnReplay` tile: paste any `turn_id`, load full trace in one view.
+
+### Cost rollup
+
+`GET /api/traces/cost?trader_id=<id>` returns `{today, week, lifetime}` in USD.
+Aggregated by SQL `SUM(total_cost_usd)` over time windows (last 24h / 7d / all time).
+The `costPerTrader` tile polls this endpoint on a 60-second refresh interval.
+
+**No LLM is invoked by the cost endpoint — pure SQLite aggregation.**
+
+### Per-trader watchlist overlay UX
+
+The existing `TILES.watchlist` is extended (monkey-patched mount/refresh) by A5:
+
+1. After `wlLoad()` resolves, `wlTraderOverlay()` fetches
+   `GET /api/traces/attention?trader_id=<id>` for each trader in `ACCOUNTS`.
+2. Symbols found in trader watchpoints are annotated on each watchlist row:
+   `"AAPL — + Trader Eta, Trader Alpha"`.
+3. A **Sync button** appears if any trader-watched symbols are not in the operator's
+   watchlist: clicking adds them to `opts.symbols` and persists the layout.
+
+**No LLM call from the overlay — reads `/api/traces/attention` only.**
+
+### Pending-approvals tile extension
+
+`TILES.approvals` is extended with `loadPendingTradeLineage()`, which reads
+`GET /api/pending-trades` and surfaces approved-but-unconfirmed trades separately:
+
+```
+Approved — awaiting confirm_trade()
+  AAPL · Buy 5 shares · trader: Eta · id: pt-abc · TTL: 2026-05-28 10:47:00 UTC
+```
+
+This shows the operator exactly which trades are in the `approved` state waiting
+for the trader's callback turn to call `confirm_trade()`.
+
+### Cockpit tiles (A5 — group: Observability)
+
+| Tile | Description | Refresh |
+|---|---|---|
+| `traderTrace` | Last N turns for one trader, expandable per turn | 30s |
+| `turnReplay` | Modal: paste turn_id → full first-look + tool calls + final action | on-demand |
+| `costPerTrader` | Rolling spend (today / week / lifetime) for one trader | 60s |
+| `attentionPending` | Active watchpoints + reminders for one trader, with prune hint | 30s |
+
+All tiles are in the **Observability** group in the add-tile drawer.
+No LLM is invoked by any tile render, mount, or refresh handler.
+
+### MONEY IS REAL — observability enforcement
+
+- `TurnRecord.to_trader_dict()` is the only serialiser used by the trader-facing path.
+  It contains no `book_type`, `book_badge`, `paper`, `sim`, or `demo` strings.
+- `TurnRecord.to_operator_dict()` and `to_summary_dict()` include `book_type` /
+  `book_badge` — they are used **only** by the `/api/traces` router (operator path).
+- `tests/test_turn_store.py::test_recent_turns_tool_money_is_real_grepped` and
+  `test_turn_record_trader_dict_no_book_type` red-team this invariant by serialising to
+  JSON and grepping for forbidden strings.
+
+### Key files (A5)
+
+| File | Role |
+|---|---|
+| `intel/turn_store.py` | `TurnStore` + `TurnRecord` + `ToolCallRecord` — store + dataclasses |
+| `web/routers/traces.py` | `GET /api/traces`, `/api/traces/{id}`, `/api/traces/cost`, `/api/traces/attention` |
+| `web/app.py` | `traces_router` wired into `_COCKPIT_ROUTERS` |
+| `web/static/cockpit.html` | `TILES.traderTrace`, `.turnReplay`, `.costPerTrader`, `.attentionPending` + watchlist/approvals extensions |
+| `tests/test_turn_store.py` | 33 tests — store, router, recent_turns integration, MONEY IS REAL red-team |
 
 ---
 
