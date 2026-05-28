@@ -27,7 +27,16 @@ from .embed import (
     make_embedder,
 )
 from .hygiene import BM25, Hygiene, HygieneReport
-from .reflect import CostGate, CostGateError, ReflectionResult, Reflector, Skipped
+from .reflect import (
+    CostGate,
+    CostGateError,
+    DualReflectionOutput,
+    LearningLoop,
+    OutcomeRecord,
+    ReflectionResult,
+    Reflector,
+    Skipped,
+)
 from .store import KIND, STATUS_ACTIVE, STATUS_ARCHIVED, Lesson, MemoryStore, collection_for
 from .vector import (
     Hit,
@@ -46,15 +55,18 @@ __all__ = [
     "STATUS_ARCHIVED",
     "CostGate",
     "CostGateError",
+    "DualReflectionOutput",
     "EmbedError",
     "Embedder",
     "FakeEmbedder",
     "Hit",
     "Hygiene",
     "HygieneReport",
+    "LearningLoop",
     "Lesson",
     "LocalEmbedder",
     "MemoryStore",
+    "OutcomeRecord",
     "ReflectionResult",
     "Reflector",
     "Skipped",
