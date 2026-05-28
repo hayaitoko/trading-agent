@@ -1,6 +1,6 @@
 # Situation Enrichment + Forecast Surface
 
-**Status:** WS-Situation A0 ✅ · A1 ✅ · A2 ✅ · B0 🔵 · B1 🔵 · C0 🔵 · C1 🔵  
+**Status:** WS-Situation A0 ✅ · A1 ✅ · A2 ✅ · B0 ✅ · B1 ✅ · C0 🔵 · C1 🔵  
 **Branch:** `feat/engine-realism`  
 **Legend:** ✅ exists · 🟡 partial · 🔵 planned  
 **Plan reference:** `~/.claude/plans/helm-situation-forecast.md`
@@ -42,8 +42,8 @@ flag-off-during-failure path logged but never crashes the situation block.
 | **prediction_market_odds LOOK tool** | `src/trading_agent/intel/tools/look/prediction_market_odds.py` | ✅ A1+wiring |
 | **options_iv LOOK tool** | `src/trading_agent/intel/tools/look/options_iv.py` | ✅ A2+wiring |
 | **forecast LOOK tool** | `src/trading_agent/intel/tools/look/forecast.py` | 🔵 Track C |
-| Substack RSS (config seed) | `config/ingest_sources.*` | 🔵 Track B |
-| Bluesky list/author fetcher | `src/trading_agent/ingest/fetchers/bluesky.py` | 🔵 Track B |
+| Substack + SA RSS seeds | `src/trading_agent/ingest/seed_sources.py` | ✅ B0 |
+| Bluesky list/author fetcher | `src/trading_agent/ingest/fetchers/bluesky.py` | ✅ B1 |
 | Situation layer integration | `src/trading_agent/intel/situation.py` | 🔵 Track C |
 | Forecast cone compute | `src/trading_agent/intel/forecast.py` | 🔵 Track C |
 | Forecast API router | `src/trading_agent/web/routers/forecast.py` | 🔵 Track C |
@@ -218,6 +218,161 @@ the free paper-trading tier without OPRA subscription.
 
 ---
 
+### 3d. Substack Finance Newsletters (B0)
+
+**Status:** ✅ B0  
+**File:** `src/trading_agent/ingest/seed_sources.py`
+
+**Purpose:** Seed 10 hand-picked finance Substacks into the ingest pipeline as
+standard RSS sources.  No new fetcher code — these rows are consumed by the
+existing `RssSource` adapter unchanged.
+
+**Endpoint pattern:** `https://{slug}.substack.com/feed` (RSS 2.0)  
+**Auth:** None.  
+**Rate:** No published limit.  At the default 60-second ingest cadence, well
+within polite use.  
+**Coverage:** Post title + excerpt for free posts; paywalled posts appear as
+title + teaser only (sufficient for brief generation).
+
+**Deployment note:** Substack uses Cloudflare IUAM protection that blocks
+datacenter IP ranges (this is a well-known constraint, not a bug in our
+configuration).  Feeds work correctly from residential and homelab networks.
+On datacenter deployments, configure an egress proxy or reduce
+`INGEST_CADENCE_SECONDS` for Substack sources.
+
+**Seeds (10 publications):**
+
+| Source name | Slug | Primary signal |
+|---|---|---|
+| Net Interest (Rubinstein) | `netinterest` | Banking, fintech, financial history |
+| The Macro Tourist (Muir) | `themacrotourist` | Rates, FX, commodities, vol |
+| Doomberg | `doomberg` | Energy + commodity macro, industrial policy |
+| Marc Rubinstein (alt) | `rubinstein` | Banking + financial analysis alt feed |
+| Kevin Muir (alt) | `kevinmuir` | Macro commentary, daily observations |
+| Garrett Baldwin | `garrettbaldwin` | Options flow, vol strategy, derivatives |
+| Junk Bond Investor | `junkbondinvestor` | HY credit, leveraged finance, distress |
+| Pragmatic Capitalist (Roche) | `pragcapitalist` | Monetary realism, portfolio construction |
+| Kyla's Newsletter (Scanlon) | `kylascan` | Economic narratives, consumer sentiment |
+| Epsilon Theory (Hunt) | `epsilontheory` | Game theory, narrative analysis, long-cycle |
+
+**Adding new publications:** one `/api/sources` POST or `seed_finance_sources()`
+call — no code change required.
+
+**Failure mode:** `SourceError` on HTTP 4xx/5xx or XML parse error.  The
+worker isolates per-source failures; a blocked Substack never stalls SA or
+Bluesky sources.
+
+---
+
+### 3e. Seeking Alpha Public RSS (B0)
+
+**Status:** ✅ B0  
+**File:** `src/trading_agent/ingest/seed_sources.py`
+
+**Purpose:** Seed three SA global RSS feeds plus per-ticker combined feeds for
+the default watchlist symbols.  Like Substack, these are consumed by the
+existing `RssSource` adapter — zero new code.
+
+**Auth:** None — documented public feeds at https://about.seekingalpha.com/feeds.
+
+**Live smoke (2026-05-28):**
+- `market_currents.xml` → 200 OK, 7 items (example: "First Solar soars to multiyear high…")
+- `api/sa/combined/SPY.xml` → 200 OK, 30 items
+- `feed.xml` → 200 OK, 30 items
+- `sector/transcripts.xml` → 200 OK, 20 items
+
+**Global seeds (3 feeds):**
+
+| Source name | URL | Primary signal |
+|---|---|---|
+| SA Market Currents | `seekingalpha.com/market_currents.xml` | Real-time market-moving news |
+| SA Latest Analysis | `seekingalpha.com/feed.xml` | Analyst opinions, earnings previews |
+| SA Transcripts | `seekingalpha.com/sector/transcripts.xml` | Earnings call awareness |
+
+**Per-ticker combined feed:**  
+URL: `https://seekingalpha.com/api/sa/combined/{TICKER}.xml`  
+Default tickers seeded: SPY, AAPL, MSFT, NVDA, TSLA.
+
+To register a new ticker:
+```python
+from trading_agent.ingest.seed_sources import seed_sa_ticker
+seed_sa_ticker(db, user_id, "AMZN")
+```
+
+**Gap — no auto-registration on watch_symbol (B0):** When a trader calls
+`watch_symbol`, the new symbol is not automatically added to the SA per-ticker
+feed list.  The correct fix is a `universe_listener` in the ingest worker that
+calls `seed_sa_ticker` whenever a symbol joins a trader's universe.  Tracked as
+a Track C / WS-Agent integration follow-up.
+
+---
+
+### 3f. Bluesky List + Author Feeds (B1)
+
+**Status:** ✅ B1  
+**File:** `src/trading_agent/ingest/fetchers/bluesky.py`
+
+**Purpose:** Extend the existing Bluesky fetcher with two new source kinds that
+pull curated finance voices from Bluesky starter-pack lists and individual
+author feeds.  All new kinds feed through the same compact-metrics aggregation
+path as the existing cashtag kind — raw post text is never forwarded to the model.
+
+**Endpoint base:** `https://public.api.bsky.app/xrpc/`  
+**Auth:** None — public AppView, fully unauthenticated.
+
+**New source kinds:**
+
+| Kind | Config keys | XRPC call |
+|---|---|---|
+| `bluesky_list` | `{"list_uri": "at://..."}` | `app.bsky.feed.getListFeed` |
+| `bluesky_author` | `{"handle": "user.bsky.social"}` | `app.bsky.feed.getAuthorFeed` |
+
+**Starter-pack resolution:** Call `app.bsky.graph.getStarterPack` once per
+pack URL to obtain the backing list AT-URI.  Persist the resolved URI in the
+`config_json` row so no re-resolution occurs on subsequent fetch ticks.
+`resolve_starter_pack(client, pack_url) → str` is a module-level helper in
+`bluesky.py`.
+
+**Seeds — starter-pack lists (5):**
+
+| Source name | Starter-pack URL |
+|---|---|
+| Bluesky: Fintwit Starter Pack | `bsky.app/starter-pack/alexbhturnbull.bsky.social/3lbgeejdteh2u` |
+| Bluesky: FinTwit (Kelly) | `bsky.app/starter-pack/stevenkelly49.bsky.social/3laptmzbdhg2e` |
+| Bluesky: Finance News + Analysis (Woodley) | `bsky.app/starter-pack/kylewoodley.bsky.social/3lbcvvhwm2v2q` |
+| Bluesky: Finance Investing Econ (Roche) | `bsky.app/starter-pack/cullenroche.bsky.social/3lbgrvn57r424` |
+| Bluesky: Investment + Financial Media (Lowe) | `bsky.app/starter-pack/thelowegroup.bsky.social/3lbv3ofuavt2f` |
+
+**Seeds — author handles (10):**
+
+| Handle | Signal |
+|---|---|
+| `carlquintanilla.bsky.social` | CNBC anchor, breaking market news |
+| `joeweisenthal.bsky.social` | Bloomberg markets, macro narrative |
+| `arsorkin.bsky.social` | NYT DealBook, M&A, tech finance |
+| `bencasselman.bsky.social` | NYT economics, jobs data, macro |
+| `heatherlong.bsky.social` | WaPo economics editor |
+| `cullenroche.bsky.social` | Pragmatic Capitalist, monetary realism |
+| `yahoofinance.bsky.social` | Yahoo Finance official feed |
+| `conorsen.bsky.social` | BofA research, macro strategy |
+| `jasonfurman.bsky.social` | Harvard economist, fiscal policy |
+| `steveliesman.bsky.social` | CNBC Fed reporter, monetary policy |
+
+**Aggregation:** All three `bluesky*` kinds (cashtag, list, author) produce
+compact `bluesky_metrics` dicts: mention count, sentiment distribution, top
+cashtags found in fetched posts.  Raw post text never leaves the ingest layer.
+
+**Failure mode:** `SourceError` on network/4xx.  Starter-pack resolution
+failure on first fetch is logged and raises `SourceError` (the source is skipped
+that cycle; resolved URIs already persisted in config survive restarts).
+429 on the public AppView → logged, source skipped that cycle.
+
+**MONEY IS REAL compliance:** Aggregated metrics flowing through these sources
+contain no account-status strings.  The ingest layer is upstream of any model
+call; the compact-metrics format carries only counts and float scores.
+
+---
+
 ## 4. Feature Flags (operator reference)
 
 | Flag key | Type | Default | Effect when ON | Dependencies |
@@ -225,6 +380,7 @@ the free paper-trading tier without OPRA subscription.
 | `SITUATION_GDELT` | bool | `False` | Enables `world_events` LOOK tool; `GDELTProvider` constructed once per turn | None |
 | `SITUATION_PREDICTION_MARKETS` | bool | `False` | Enables `prediction_market_odds` LOOK tool | None |
 | `SITUATION_OPTIONS_IV` | bool | `False` | Enables `options_iv` LOOK tool; requires `ALPACA_API_KEY` | Options chain provider |
+| `INGEST_SEEDS_ENABLED` | env str | `"1"` (on) | When `"0"`, `seed_finance_sources` and `seed_sa_ticker` are no-ops | None; set to `"0"` in test environments |
 
 All flags live in `user_settings` (see `src/trading_agent/config/settings_store.py`).
 

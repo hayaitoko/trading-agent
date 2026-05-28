@@ -1,0 +1,280 @@
+"""Default ingest-source seed definitions (B0 — Substack + Seeking Alpha RSS).
+
+Provides :func:`seed_finance_sources` which inserts a curated set of public RSS
+feeds for finance newsletters and Seeking Alpha market coverage into the
+``sources`` table for a given user.  Idempotent: existing rows (matched by name)
+are never duplicated.  All feeds are free, public, no-key required.
+
+**Sources seeded:**
+
+Substack finance newsletters — each ``{publication}.substack.com/feed`` is an
+RSS 2.0 feed that the existing :class:`~trading_agent.ingest.fetchers.rss.RssSource`
+adapter consumes without modification.
+
+Seeking Alpha public RSS — three global feeds (market currents, analysis,
+transcripts) plus per-ticker combined feeds for the default watchlist symbols.
+SA's per-ticker ``api/sa/combined/{TICKER}.xml`` carries a combined stream of
+news + analysis tagged to that symbol.
+
+**Gap documented:** there is currently no hook that auto-registers a new per-ticker
+SA source when a trader adds a symbol via ``watch_symbol``.  The five default
+symbols (SPY, AAPL, MSFT, NVDA, TSLA) are seeded here as a pragmatic workaround;
+operators can call :func:`seed_sa_ticker` directly for additional symbols.  The
+right long-term fix is a ``universe_listener`` in the ingest worker that calls
+:func:`seed_sa_ticker` whenever a symbol enters a trader's universe.
+
+**Feature flag:** ``INGEST_SEEDS_ENABLED`` (default on).  Set to ``"0"`` to skip
+seeding entirely (e.g. in integration tests that want a clean DB).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import uuid
+
+from ..config.db import Database
+
+# Guard against test environments that want a blank DB.
+_SEEDS_ENABLED = os.environ.get("INGEST_SEEDS_ENABLED", "1") not in ("0", "false", "False")
+
+# ---------------------------------------------------------------------------
+# Substack publications
+# ---------------------------------------------------------------------------
+# Each entry: (source_name, substack_slug, description).
+# URL = https://{slug}.substack.com/feed
+# Feed content: post title + excerpt (free posts only; paywalled posts appear
+# as title + teaser only — sufficient for the research agent's brief generation).
+
+_SUBSTACK_SEEDS: list[tuple[str, str, str]] = [
+    (
+        "Substack: Net Interest (Rubinstein)",
+        "netinterest",
+        # Marc Rubinstein — deep banking/fintech analysis; ex-Credit Suisse HF analyst.
+        # Signal: bank earnings, rate environment, credit cycles, fintech competitive dynamics.
+        "Marc Rubinstein's weekly deep-dive into banking, fintech, and financial history.",
+    ),
+    (
+        "Substack: The Macro Tourist (Muir)",
+        "themacrotourist",
+        # Kevin Muir — macro trader perspective; derivatives/vol emphasis; sharp commentary.
+        # Signal: risk-on/off regime shifts, commodity super-cycles, curve positioning.
+        "Kevin Muir's macro trader commentary — rates, FX, commodities, vol.",
+    ),
+    (
+        "Substack: Doomberg",
+        "doomberg",
+        # Anonymous energy-focused macro writers; commodities + energy markets + policy.
+        # Signal: energy supply/demand, green transition, commodity shocks, industrial policy.
+        "Energy and commodity macro analysis from the Doomberg team.",
+    ),
+    (
+        "Substack: Marc Rubinstein (alt feed)",
+        "rubinstein",
+        # Secondary/alt slug for Marc Rubinstein's occasional standalone pieces.
+        # Signal: same as Net Interest — banking, fintech, financial history.
+        "Alt feed for Marc Rubinstein's financial analysis and history pieces.",
+    ),
+    (
+        "Substack: The Daily Shot (Muir alt)",
+        "kevinmuir",
+        # Kevin Muir's broader daily-shot-style commentary feed.
+        # Signal: real-time macro regime sentiment, positioning reads.
+        "Kevin Muir's broader macro commentary and daily market observations.",
+    ),
+    (
+        "Substack: Garrett Baldwin",
+        "garrettbaldwin",
+        # Garrett Baldwin — options flow, volatility, derivatives strategy.
+        # Signal: options market structure, unusual flow, vol skew interpretation.
+        "Garrett Baldwin on options flow, volatility strategy, and derivatives.",
+    ),
+    (
+        "Substack: Junk Bond Investor",
+        "junkbondinvestor",
+        # Anonymous HY/leveraged-finance practitioner; credit cycles, distressed.
+        # Signal: high-yield spreads, leveraged buyout dynamics, default cycles.
+        "Anonymous high-yield and leveraged-finance practitioner perspective.",
+    ),
+    (
+        "Substack: Pragmatic Capitalist (Roche)",
+        "pragcapitalist",
+        # Cullen Roche — monetary realism; macro liquidity, portfolio construction.
+        # Signal: broad liquidity cycles, MMT-adjacent monetary commentary, asset allocation.
+        "Cullen Roche's monetary realism and portfolio construction analysis.",
+    ),
+    (
+        "Substack: Kyla's Newsletter (Scanlon)",
+        "kylascan",
+        # Kyla Scanlon — 'vibecession' coiner; accessible macro + economic narratives.
+        # Signal: consumer sentiment, economic narratives, Fed communication framing.
+        "Kyla Scanlon on economic narratives, consumer sentiment, and macro vibes.",
+    ),
+    (
+        "Substack: Epsilon Theory (Hunt)",
+        "epsilontheory",
+        # Ben Hunt — game-theory + narrative analysis of markets; deeply contrarian.
+        # Signal: market narrative regimes, central bank game theory, long-cycle thinking.
+        "Ben Hunt's game-theory and narrative analysis of financial markets.",
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Seeking Alpha public RSS
+# ---------------------------------------------------------------------------
+# All URLs are documented at https://about.seekingalpha.com/feeds — no auth.
+
+_SA_GLOBAL_SEEDS: list[tuple[str, str, str]] = [
+    (
+        "Seeking Alpha: Market Currents",
+        "https://seekingalpha.com/market_currents.xml",
+        # Real-time market-moving news items; broad coverage; updates frequently.
+        # Signal: breaking market news, macro events, policy announcements.
+        "SA real-time market-moving news (market_currents.xml).",
+    ),
+    (
+        "Seeking Alpha: Latest Analysis",
+        "https://seekingalpha.com/feed.xml",
+        # Latest published analysis articles — analyst opinions + stock ideas.
+        # Signal: analyst sentiment shifts, earnings previews, sector themes.
+        "SA latest analysis articles (feed.xml) — analyst opinions and stock ideas.",
+    ),
+    (
+        "Seeking Alpha: Transcripts",
+        "https://seekingalpha.com/sector/transcripts.xml",
+        # Earnings call and investor day transcript summaries; paywalled full text
+        # but RSS supplies title + company + date for awareness.
+        # Signal: earnings season timing, management guidance signals, analyst Q&A themes.
+        "SA earnings call transcript summaries (transcripts.xml).",
+    ),
+]
+
+# Default per-ticker symbols seeded when no watchlist hook is available.
+# Per-ticker SA feed: https://seekingalpha.com/api/sa/combined/{TICKER}.xml
+# Combined = news + analysis tagged to that symbol; updated continuously.
+# GAP: ideally this list is auto-extended via a universe_listener when a trader
+# calls watch_symbol; until that hook exists, only these five are seeded.
+_SA_DEFAULT_TICKERS = ["SPY", "AAPL", "MSFT", "NVDA", "TSLA"]
+
+
+def _sa_ticker_url(ticker: str) -> str:
+    return f"https://seekingalpha.com/api/sa/combined/{ticker.upper()}.xml"
+
+
+def _sa_ticker_name(ticker: str) -> str:
+    return f"Seeking Alpha: {ticker.upper()} combined"
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def seed_finance_sources(db: Database, user_id: str) -> int:
+    """Insert default Substack + Seeking Alpha RSS sources for ``user_id``.
+
+    Idempotent: sources with an identical ``name`` column are never duplicated.
+    Returns the count of newly inserted rows.
+
+    All inserted rows start with ``enabled = 1``.  Callers may disable individual
+    sources via the ``/api/sources`` CRUD surface.
+
+    The ``INGEST_SEEDS_ENABLED`` environment variable (default ``"1"``) gates the
+    whole function; set it to ``"0"`` in test environments that want a clean DB.
+    """
+    if not _SEEDS_ENABLED:
+        return 0
+
+    existing_names: set[str] = {
+        row["name"]
+        for row in db.query(
+            "SELECT name FROM sources WHERE user_id = ?", (user_id,)
+        )
+    }
+
+    inserted = 0
+
+    # Substack sources
+    for name, slug, _desc in _SUBSTACK_SEEDS:
+        if name in existing_names:
+            continue
+        url = f"https://{slug}.substack.com/feed"
+        config = json.dumps({"url": url})
+        db.execute(
+            "INSERT INTO sources (id, user_id, kind, name, config_json, enabled)"
+            " VALUES (?, ?, 'rss', ?, ?, 1)",
+            (uuid.uuid4().hex, user_id, name, config),
+        )
+        existing_names.add(name)
+        inserted += 1
+
+    # Seeking Alpha global feeds
+    for name, url, _desc in _SA_GLOBAL_SEEDS:
+        if name in existing_names:
+            continue
+        config = json.dumps({"url": url})
+        db.execute(
+            "INSERT INTO sources (id, user_id, kind, name, config_json, enabled)"
+            " VALUES (?, ?, 'rss', ?, ?, 1)",
+            (uuid.uuid4().hex, user_id, name, config),
+        )
+        existing_names.add(name)
+        inserted += 1
+
+    # Per-ticker SA sources (default tickers)
+    for ticker in _SA_DEFAULT_TICKERS:
+        name = _sa_ticker_name(ticker)
+        if name in existing_names:
+            continue
+        url = _sa_ticker_url(ticker)
+        config = json.dumps({"url": url, "ticker": ticker})
+        db.execute(
+            "INSERT INTO sources (id, user_id, kind, name, config_json, enabled)"
+            " VALUES (?, ?, 'rss', ?, ?, 1)",
+            (uuid.uuid4().hex, user_id, name, config),
+        )
+        existing_names.add(name)
+        inserted += 1
+
+    return inserted
+
+
+def seed_sa_ticker(db: Database, user_id: str, ticker: str) -> bool:
+    """Register a per-ticker Seeking Alpha combined RSS source for ``user_id``.
+
+    Idempotent: returns ``True`` if a new row was inserted, ``False`` if it
+    already existed.  Intended to be called from a ``universe_listener`` when a
+    trader adds a new symbol:
+
+    .. code-block:: python
+
+        def on_symbol_allowed(user_id, trader_id, symbol):
+            seed_sa_ticker(db, user_id, symbol)
+
+    Until a universe_listener is wired into the ingest worker, operators call
+    this directly or rely on the default-ticker seed in :func:`seed_finance_sources`.
+
+    **Gap note (B0):** the ingest worker currently has no ``universe_listener``
+    hook; the right long-term fix is to pass ``universe_listener=seed_sa_ticker``
+    into :class:`~trading_agent.requests.RequestService` when the worker starts.
+    This is tracked as a follow-up for Track C / WS-Agent integration.
+    """
+    if not _SEEDS_ENABLED:
+        return False
+
+    ticker = ticker.strip().upper()
+    name = _sa_ticker_name(ticker)
+    existing = db.query_one(
+        "SELECT id FROM sources WHERE user_id = ? AND name = ?", (user_id, name)
+    )
+    if existing is not None:
+        return False
+
+    url = _sa_ticker_url(ticker)
+    config = json.dumps({"url": url, "ticker": ticker})
+    db.execute(
+        "INSERT INTO sources (id, user_id, kind, name, config_json, enabled)"
+        " VALUES (?, ?, 'rss', ?, ?, 1)",
+        (uuid.uuid4().hex, user_id, name, config),
+    )
+    return True
