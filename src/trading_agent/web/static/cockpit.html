@@ -19,7 +19,7 @@
    customized tab looks like hand-built sections. */
 .grid-stack{ background:transparent; }
 .grid-stack-item-content{
-  --tpad:0px; inset:0; overflow:visible; border-radius:var(--radius); padding:var(--tpad);
+  --tpad:0px; inset:0; overflow:visible !important; border-radius:var(--radius); padding:var(--tpad);
 }
 /* finance/custom tiles always sit on a real panel (built-in sections bring their own) */
 .grid-stack-item-content.tile-panel{
@@ -32,7 +32,7 @@
 /* ---- edit mode chrome ---- */
 body.editing .view{ padding-bottom:120px; }
 body.editing .grid-stack-item-content{
-  --tpad:11px; overflow:hidden; background:color-mix(in srgb,var(--panel) 55%, transparent);
+  --tpad:11px; overflow:hidden !important; background:color-mix(in srgb,var(--panel) 55%, transparent);
   border:1px dashed color-mix(in srgb,var(--accent) 45%, var(--border));
 }
 body.editing .grid-stack-item-content.tile-panel{
@@ -54,9 +54,53 @@ body.editing .tile-bar:active{ cursor:grabbing; }
 .tile-bar .tp{ filter:grayscale(1) opacity(.6); font-size:11px; }
 .tile-bar .tp.on{ filter:none; opacity:1; }
 .tile-bar .tp:hover{ filter:none; }
+.tile-bar .td{ font-size:12px; } .tile-bar .td:hover{ color:var(--accent); background:color-mix(in srgb,var(--accent) 14%,transparent); }
+/* right-click context menu (edit mode) */
+.ctxmenu{ position:fixed; z-index:100; background:var(--panel); border:1px solid var(--border); border-radius:11px;
+  box-shadow:var(--shadow); padding:6px; min-width:200px; animation:popIn .14s cubic-bezier(.2,.8,.2,1); transform-origin:top left; }
+.cm-it{ padding:9px 12px; cursor:pointer; border-radius:7px; font-size:13px; transition:.12s; display:flex; align-items:center; gap:9px; color:var(--text); }
+.cm-it:hover{ background:var(--panel-hi); color:var(--accent); }
+.cm-it .cm-i{ width:14px; color:var(--muted); text-align:center; }
+.cm-sep{ height:1px; background:var(--border); margin:5px 4px; }
+/* container-aware responsive tile content (charts, lists, columns adapt to tile width) */
+.tile-body{ container-type:inline-size; }
+@container (max-width: 420px){
+  .tile-body .rgrid{ grid-template-columns:1fr; }
+  .tile-body .deep-cols{ grid-template-columns:1fr; }
+  .tile-body .mv{ flex-direction:column; gap:10px; }
+  .tile-body .grid{ grid-template-columns:1fr; }
+  .tile-body .benchgrid{ grid-template-columns:1fr; }
+  .tile-body .stats{ grid-template-columns:repeat(2,1fr); }
+  .tile-body .fin-stats{ grid-template-columns:repeat(2,1fr); }
+}
+@container (max-width: 280px){
+  .tile-body .wl-row{ grid-template-columns:1fr auto; }
+  .tile-body .wl-px{ display:none; }
+  .tile-body .fin-h{ font-size:11px; flex-direction:column; align-items:flex-start; gap:2px; }
+  .tile-body .fin-px{ margin-left:0; font-size:18px; }
+  .tile-body .stats{ grid-template-columns:1fr 1fr; gap:4px; }
+}
 .grid-stack-item.pinned > .grid-stack-item-content{ box-shadow:var(--shadow), inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent); }
+/* multi-select highlight + floating action bar */
+.grid-stack-item.selected{ z-index:30; }
+.grid-stack-item.selected > .grid-stack-item-content{
+  border-color:var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent), 0 14px 32px -10px color-mix(in srgb,var(--accent) 55%, transparent);
+}
+.sel-bar{ position:fixed; left:24px; bottom:24px; z-index:62; display:flex; gap:9px; align-items:center;
+  padding:9px 12px 9px 14px; background:var(--panel-hi); border:1px solid var(--border); border-radius:999px;
+  box-shadow:var(--shadow); animation:popIn .18s cubic-bezier(.34,1.56,.64,1); }
+.sel-bar .sb-n{ background:var(--accent); color:var(--on-accent); font-family:var(--mono); font-weight:700; font-size:11px;
+  padding:3px 8px; border-radius:999px; }
+.sel-bar .sb-t{ font-size:12.5px; margin-right:4px; color:var(--muted); }
+.sel-bar .sb-btn{ cursor:pointer; border:1px solid var(--border); background:transparent; color:var(--text);
+  border-radius:999px; padding:6px 12px; font-size:12px; transition:.14s; }
+.sel-bar .sb-btn:hover{ border-color:var(--accent); color:var(--accent); }
+.sel-bar .sb-btn.danger:hover{ border-color:var(--neg); color:var(--neg); }
+.sel-bar .sb-btn.ghost{ border-color:transparent; color:var(--muted); } .sel-bar .sb-btn.ghost:hover{ color:var(--text); }
 /* dim non-edit interactivity of tile bodies while arranging */
-body.editing .grid-stack-item-content .tile-body{ pointer-events:none; }
+/* in edit mode keep clicks inside tiles routable so multi-select works; openAcct/etc. is suppressed in the click handler */
+body.editing .grid-stack-item-content .tile-body{ pointer-events:auto; }
 body.editing .grid-stack-item-content .tile-bar{ pointer-events:auto; }
 
 /* GridStack resize handle tinted to the accent */
@@ -65,12 +109,24 @@ body.editing .grid-stack-item:hover > .ui-resizable-se{ opacity:1; }
 
 /* ---- palette popover: "Customize tabs" action ---- */
 .pop-sep{ height:1px; background:var(--border); margin:10px 4px; }
-.pop-action{ display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--radius-sm);
+.pop-action{ display:flex; align-items:flex-start; gap:12px; padding:10px 11px; border-radius:var(--radius-sm);
   cursor:pointer; color:var(--text); transition:.14s; }
 .pop-action:hover{ background:var(--panel-hi); }
-.pop-action .pa-ic{ font-size:15px; color:var(--accent); }
-.pop-action .pa-hint{ margin-left:auto; font-family:var(--mono); font-size:9.5px; letter-spacing:.1em;
-  text-transform:uppercase; color:var(--muted); }
+.pop-action .pa-ic{ font-size:16px; color:var(--accent); width:18px; line-height:1.4; flex:none; text-align:center; }
+.pop-action .pa-text{ min-width:0; flex:1; }
+.pop-action .pa-title{ font-size:13.5px; line-height:1.25; }
+.pop-action .pa-sub{ font-size:11px; color:var(--muted); margin-top:2px; line-height:1.3; }
+/* Settings FAQ */
+.faq{ margin-top:6px; }
+.faq-q{ border-top:1px solid var(--border); }
+.faq-q:first-child{ border-top:none; }
+.faq-q summary{ list-style:none; cursor:pointer; padding:11px 4px; font-size:13.5px; display:flex; align-items:center; gap:9px; }
+.faq-q summary::-webkit-details-marker{ display:none; }
+.faq-q summary::before{ content:"›"; color:var(--muted); transition:transform .16s; font-size:16px; line-height:1; }
+.faq-q[open] summary::before{ transform:rotate(90deg); }
+.faq-q summary:hover{ color:var(--accent); }
+.faq-a{ padding:0 4px 14px 22px; color:var(--muted); font-size:13px; line-height:1.55; }
+.faq-a b{ color:var(--text); font-weight:500; }
 
 /* ---- editable tab bar ---- */
 .tab .tgrip{ cursor:grab; opacity:.5; margin-right:7px; font-size:11px; }
@@ -297,7 +353,8 @@ select.to-i{ appearance:none; cursor:pointer; color:var(--text); background:var(
 .bigstop:active{ transform:translateY(8px); box-shadow:0 6px 0 -2px #5e1109, 0 10px 18px -8px rgba(200,30,20,.6), inset 0 3px 8px rgba(255,255,255,.3); }
 .bigstop .bs-face{ position:absolute; inset:14px; border-radius:50%; display:grid; place-items:center;
   background:radial-gradient(circle at 50% 35%, #ff6a5c, #d12a1d 70%); box-shadow:inset 0 -6px 14px rgba(0,0,0,.35); }
-.bigstop .bs-label{ font-family:var(--mono); font-weight:700; letter-spacing:.12em; color:#fff; font-size:18px; text-shadow:0 1px 2px rgba(0,0,0,.4); }
+.bigstop .bs-label{ font-family:var(--mono); font-weight:700; letter-spacing:.08em; color:#fff; font-size:15px; line-height:1.2;
+  text-align:center; max-width:108px; text-shadow:0 1px 2px rgba(0,0,0,.4); }
 .bigstop.on{ transform:translateY(8px);
   box-shadow:0 5px 0 -2px #5e1109, 0 8px 16px -8px rgba(200,30,20,.6), inset 0 3px 10px rgba(0,0,0,.5); }
 .bigstop.on .bs-face{ background:radial-gradient(circle at 50% 40%, #b3271b, #7c1610); }
@@ -548,7 +605,26 @@ select:focus,.input:focus{ border-color:var(--accent);
 .tab.active .pip{ background:var(--accent); color:var(--on-accent); }
 .top-right{ margin-left:auto; display:flex; align-items:center; gap:14px; flex:none; }
 .live{ display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12px; color:var(--muted); }
-.live .dot{ width:8px; height:8px; border-radius:50%; background:var(--pos); animation:pulse 2.4s ease-out infinite; }
+.live .dot{ width:8px; height:8px; border-radius:50%; background:var(--pos); animation:pulse 2.4s ease-out infinite; cursor:help; }
+.live .who{ display:inline-flex; align-items:center; gap:5px; border:none; background:transparent; color:var(--text);
+  cursor:pointer; padding:4px 9px; border-radius:8px; font-family:var(--mono); font-size:12px; transition:.14s; }
+.live .who:hover{ background:var(--panel-hi); color:var(--accent); }
+.live .who-ic{ opacity:.7; font-size:11px; }
+.live .who-car{ font-size:9px; opacity:.55; margin-left:2px; }
+.live .sep{ color:var(--muted); opacity:.6; }
+/* user menu (anchored to the username chip) */
+.user-menu{ position:fixed; z-index:200; min-width:230px; background:var(--panel); border:1px solid var(--border);
+  border-radius:12px; box-shadow:var(--shadow); padding:10px; animation:popIn .14s cubic-bezier(.2,.8,.2,1); transform-origin:top right; }
+.um-head{ display:flex; align-items:center; gap:11px; padding:7px 8px 9px; }
+.um-av{ width:34px; height:34px; border-radius:50%; background:var(--panel-hi); display:grid; place-items:center; font-size:16px; border:1px solid var(--border); flex:none; }
+.um-nm{ font-family:var(--mono); font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+.um-sub{ font-size:10.5px; color:var(--muted); margin-top:1px; font-family:var(--mono); letter-spacing:.06em; text-transform:uppercase; }
+.um-sep{ height:1px; background:var(--border); margin:4px 4px 6px; }
+.um-act{ width:100%; display:flex; align-items:center; gap:10px; padding:9px 11px; cursor:pointer; border:none; background:transparent;
+  color:var(--text); border-radius:8px; font-size:13px; transition:.14s; text-align:left; }
+.um-act:hover{ background:color-mix(in srgb,var(--neg) 13%,transparent); color:var(--neg); }
+.um-act .um-ic{ width:18px; text-align:center; color:var(--muted); }
+.um-act:hover .um-ic{ color:var(--neg); }
 @keyframes pulse{ 0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--pos) 55%,transparent);} 70%{box-shadow:0 0 0 7px transparent;} 100%{box-shadow:0 0 0 0 transparent;} }
 .icon-btn{ background:var(--panel-hi); border:var(--hair); color:var(--text); width:36px; height:36px;
   border-radius:10px; cursor:pointer; font-size:15px; display:grid; place-items:center; transition:.16s; }
@@ -754,10 +830,14 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 .fab-theme:hover{ border-color:var(--accent); color:var(--accent); transform:translateY(-2px); }
 .fab-theme.on{ border-color:var(--accent); color:var(--accent); }
 .pop{ position:fixed; bottom:78px; right:22px; background:var(--panel); border:var(--hair); border-radius:14px;
-  box-shadow:var(--shadow); padding:9px; width:252px; z-index:95; display:none; transform-origin:bottom right; }
+  box-shadow:var(--shadow); padding:10px; width:282px; z-index:95; display:none; transform-origin:bottom right; }
 .pop.open{ display:block; animation:popIn .16s cubic-bezier(.2,.8,.2,1); }
 @keyframes popIn{ from{opacity:0; transform:scale(.96) translateY(6px);} to{opacity:1; transform:none;} }
-.pop h4{ margin:7px 9px 6px; font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.14em; color:var(--muted); }
+.pop h4{ margin:0; font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.14em; color:var(--muted); }
+.pop-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 9px 8px; }
+.theme-mode-toggle{ display:inline-flex; gap:2px; background:var(--panel-hi); border:1px solid var(--border); border-radius:999px; padding:2px; }
+.theme-mode-toggle .tm{ border:none; background:transparent; cursor:pointer; padding:4px 9px; border-radius:999px; font-family:var(--mono); font-size:9.5px; letter-spacing:.04em; color:var(--muted); transition:.14s; }
+.theme-mode-toggle .tm.on{ background:var(--accent); color:var(--on-accent); }
 .theme{ display:flex; align-items:center; gap:11px; padding:9px; border-radius:10px; cursor:pointer; transition:.14s; }
 .theme:hover{ background:var(--panel-hi); } .theme.active{ background:var(--panel-hi); outline:1px solid var(--accent); }
 .sw{ display:flex; border-radius:7px; overflow:hidden; flex:none; box-shadow:0 0 0 1px rgba(0,0,0,.2); }
@@ -778,13 +858,67 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 @keyframes winIn{ from{opacity:0; transform:translate(-50%,-46%) scale(.97);} }
 /* ---- floating multi-window layer (open & compare several at once) ---- */
 #fwins{ position:fixed; inset:0; z-index:150; pointer-events:none; }
-.fwin{ position:absolute; width:480px; max-width:94vw; max-height:86vh; pointer-events:auto;
+.fwin{ position:absolute; width:480px; max-width:94vw; height:auto; max-height:90vh; min-width:300px; min-height:170px; pointer-events:auto;
   display:flex; flex-direction:column; background:var(--panel); border:var(--hair); border-radius:var(--radius);
   box-shadow:0 30px 80px -20px rgba(0,0,0,.7), 0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent);
-  overflow:hidden; animation:fwIn .26s cubic-bezier(.34,1.56,.64,1); }
+  overflow:hidden; resize:both; animation:fwIn .26s cubic-bezier(.34,1.56,.64,1); }
 @keyframes fwIn{ from{opacity:0; transform:translateY(14px) scale(.97);} }
-.fwin .fw-body{ overflow-y:auto; padding:18px 18px 22px; }
+.fwin .fw-body{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:18px 18px 22px; }
 .fwin .fw-bar{ touch-action:none; }
+/* visible resize grip in the corner */
+.fwin::after{ content:""; position:absolute; right:3px; bottom:3px; width:14px; height:14px; pointer-events:none;
+  background:linear-gradient(135deg, transparent 0 50%, color-mix(in srgb,var(--accent) 55%,var(--border)) 50% 60%, transparent 60% 72%, color-mix(in srgb,var(--accent) 55%,var(--border)) 72% 82%, transparent 82%); opacity:.8; }
+/* minimize button + macOS-style dock */
+/* window control buttons (minimize · fullscreen · close) grouped at the right */
+.fw-bar .fw-btns{ margin-left:auto; display:flex; align-items:center; gap:1px; flex:none; }
+.fw-btns button{ width:38px; height:40px; border:none; background:transparent; cursor:pointer; border-radius:9px;
+  line-height:1; color:var(--muted); display:flex; align-items:center; justify-content:center; transition:.14s; margin:0; }
+.fw-btns .mn{ font-size:24px; padding-bottom:7px; } .fw-btns .mn:hover{ color:var(--warn); background:color-mix(in srgb,var(--warn) 16%,transparent); }
+.fw-btns .fs{ font-size:16px; } .fw-btns .fs:hover{ color:var(--accent); background:color-mix(in srgb,var(--accent) 16%,transparent); }
+.fw-btns .x{ font-size:22px; } .fw-btns .x:hover{ color:var(--neg); background:color-mix(in srgb,var(--neg) 16%,transparent); }
+/* fullscreen window → in-depth stock page */
+.fwin.fwin-full{ left:24px; top:18px; right:24px; bottom:18px; width:auto; height:auto; max-width:none; max-height:none; resize:none; }
+.fwin.fwin-full::after{ display:none; }
+.deep-head{ display:flex; align-items:flex-start; gap:16px; margin-bottom:8px; }
+.deep-head .deep-px{ margin-left:auto; text-align:right; } .deep-head .deep-px .px{ font-family:var(--mono); font-size:30px; }
+.deep-chart{ height:min(46vh,440px); }
+.deep-cols{ display:grid; grid-template-columns:1fr 1fr; gap:22px; margin-top:18px; }
+@media(max-width:780px){ .deep-cols{ grid-template-columns:1fr; } }
+/* macOS-style minimize dock — mini-windows that grow on hover */
+#fdock{ position:fixed; left:50%; bottom:16px; transform:translateX(-50%); z-index:155; display:flex; gap:12px; align-items:flex-end; padding-top:120px; pointer-events:none; }
+#fdock:empty{ display:none; }
+.fdock-pill{ position:relative; cursor:pointer; pointer-events:auto; transform-origin:bottom center;
+  transition:transform .2s cubic-bezier(.34,1.56,.64,1); animation:fwIn .24s cubic-bezier(.34,1.56,.64,1); }
+.fdock-pill.preview:hover{ transform:scale(1.22) translateY(-8px); }
+.fdock-pill:not(.preview):hover{ transform:translateY(-5px); }
+/* mini-window look (mac-style document) */
+.fdock-pill.mini .fp-mini{ width:128px; height:78px; background:var(--panel); border:1px solid var(--border); border-radius:11px;
+  box-shadow:var(--shadow); overflow:hidden; transition:border-color .16s, transform .16s; display:flex; flex-direction:column; }
+.fdock-pill.mini:hover .fp-mini{ border-color:var(--accent); }
+.fdock-pill.mini .fp-mbar{ height:20px; display:flex; align-items:center; gap:6px; padding:0 8px;
+  background:linear-gradient(var(--panel-hi),var(--panel)); border-bottom:1px solid var(--border); flex:none; }
+.fp-lights{ display:inline-flex; gap:3px; } .fp-lights i{ width:6px; height:6px; border-radius:50%; background:color-mix(in srgb,var(--muted) 35%,transparent); }
+.fp-lights i:first-child{ background:#f1604f; } .fp-lights i:nth-child(2){ background:#e0a23a; } .fp-lights i:last-child{ background:#4fce74; }
+.fp-mi{ font-size:12px; line-height:1; }
+.fdock-pill.mini .fp-mbar .fp-mi{ margin-left:auto; }
+.fdock-pill.mini .fp-mbody{ flex:1; display:flex; align-items:center; justify-content:center; padding:0 10px;
+  font-family:var(--mono); font-size:11.5px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:center; }
+/* label look */
+.fdock-pill.label{ display:flex; align-items:center; gap:8px; background:color-mix(in srgb,var(--panel-hi) 90%,transparent);
+  border:1px solid var(--border); border-radius:999px; padding:9px 15px 9px 12px; box-shadow:var(--shadow); backdrop-filter:blur(10px); }
+.fdock-pill.label:hover{ border-color:var(--accent); }
+.fdock-pill.label .fp-mi{ font-size:14px; }
+.fdock-pill.label .fp-t{ font-family:var(--mono); font-size:11.5px; white-space:nowrap; max-width:160px; overflow:hidden; text-overflow:ellipsis; }
+/* full title tooltip bubble (shows on hover, above) */
+.fp-full{ position:absolute; bottom:100%; left:50%; transform:translateX(-50%); margin-bottom:8px; white-space:nowrap;
+  background:var(--panel-hi); border:1px solid var(--border); border-radius:8px; padding:5px 11px; font-family:var(--mono);
+  font-size:11px; opacity:0; pointer-events:none; transition:opacity .14s; box-shadow:var(--shadow); }
+.fdock-pill:hover .fp-full{ opacity:1; }
+/* hover-reveal close badge */
+.fdock-pill .fp-x{ position:absolute; top:-7px; right:-7px; width:19px; height:19px; border-radius:50%; border:1px solid var(--border);
+  background:var(--panel); color:var(--muted); cursor:pointer; font-size:12px; line-height:1; opacity:0; transition:.14s;
+  display:flex; align-items:center; justify-content:center; }
+.fdock-pill:hover .fp-x{ opacity:1; } .fdock-pill .fp-x:hover{ color:var(--neg); border-color:var(--neg); }
 .win-bar{ display:flex; align-items:center; gap:10px; padding:13px 16px; border-bottom:var(--hair); cursor:grab;
   background:linear-gradient(var(--panel-hi),var(--panel)); }
 .win-bar:active{ cursor:grabbing; }
@@ -1018,8 +1152,8 @@ td b{ font-weight:700; letter-spacing:-.01em; }
         <div class="hlist" id="chatList"></div>
       </div>
       <div class="chat-input">
-        <textarea class="input" id="chatBox" placeholder="Ask the manager about the book…"></textarea>
-        <button class="send" onclick="sendMsg()">Send</button>
+        <textarea class="input" id="chatBox" placeholder="Ask the manager about the book…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}"></textarea>
+        <button class="send" onclick="sendMsg()" title="Send  ·  Enter (Shift+Enter for a new line)">Send</button>
       </div>
     </div>
   </aside>
@@ -1039,7 +1173,7 @@ td b{ font-weight:700; letter-spacing:-.01em; }
         <button class="tab" data-tab="settings">Settings</button>
       </div>
       <div class="top-right">
-        <span class="live"><span class="dot"></span>live · <span id="clock"></span></span>
+        <span class="live"><span class="dot" id="connDot" title="Connected to your server"></span><button class="who" id="userBtn" title="Account menu" onclick="toggleUserMenu(event)"><span class="who-ic">👤</span><span id="userName">—</span><span class="who-car">▾</span></button><span class="sep">·</span><span id="clock"></span></span>
         <button class="icon-btn bell" id="bellBtn" title="Notifications" onclick="toggleNotif(event)">🔔<span class="badge" id="bellBadge">3</span></button>
       </div>
     </div>
@@ -1080,14 +1214,13 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 <div id="railScrim" onclick="railToggle()"></div>
 
 <!-- ===================== COLOR SCHEME (bottom-right) ===================== -->
-<button class="fab-theme" id="paletteBtn" title="Color scheme">◑</button>
-<div class="pop" id="pop"><h4>Color scheme</h4><div id="themeList"></div>
+<button class="fab-theme" id="paletteBtn" title="Theme · customize tabs · log out">◑</button>
+<div class="pop" id="pop"><div class="pop-head"><h4>Color scheme</h4><span class="theme-mode-toggle"><button class="tm" data-mode="dark" onclick="setThemeMode('dark')" title="Dark">☾ Dark</button><button class="tm" data-mode="light" onclick="setThemeMode('light')" title="Light">☀ Light</button></span></div><div id="themeList"></div>
   <div class="pop-sep"></div>
-  <div class="pop-action" id="customizeBtn" onclick="enterEdit()"><span class="pa-ic">⊞</span><span>Customize tabs…</span><span class="pa-hint">arrange tiles</span></div>
-  <div class="pop-action" onclick="startTour(true)"><span class="pa-ic">🧭</span><span>Walkthrough</span><span class="pa-hint">tour</span></div>
-  <div class="pop-action" onclick="resetAllTabs()"><span class="pa-ic">↺</span><span>Reset all tabs</span></div>
-  <div class="pop-sep"></div>
-  <div class="pop-action" onclick="logout()"><span class="pa-ic">⎋</span><span>Log out</span></div>
+  <div class="pop-action" id="customizeBtn" onclick="enterEdit()"><span class="pa-ic">⊞</span>
+    <div class="pa-text"><div class="pa-title">Customize tabs</div><div class="pa-sub">arrange &amp; rebuild your dashboard</div></div></div>
+  <div class="pop-action" onclick="openWinOpts()"><span class="pa-ic">🗗</span>
+    <div class="pa-text"><div class="pa-title">Window &amp; dock</div><div class="pa-sub">how minimized windows look</div></div></div>
 </div>
 
 <!-- ===================== COMMAND PALETTE ===================== -->
@@ -1270,47 +1403,50 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 ]</script>
 <script>
 /* ===================== THEMES ===================== */
+/* Each theme has BOTH a dark and a light variant. The Light/Dark toggle above
+   the theme list switches the mode globally — pick any colour and any mode. */
 const THEMES = {
-  teal:  { name:"Teal Coral", light:false, vars:{ "--bg":"#091d26","--panel":"#0f2733","--panel-hi":"#143845",
-           "--border":"#1d4a52","--text":"#eaf2ef","--muted":"#7fa39c","--accent":"#f9744b","--accent-2":"#b1d9cf",
-           "--on-accent":"#0a0a0a","--pos":"#4fce74","--neg":"#f1604f","--warn":"#e0a23a",
-           "--shadow":"0 1px 0 rgba(0,0,0,.35), 0 14px 40px -18px rgba(0,0,0,.7)" },
-           swatch:["#091d26","#124d54","#f9744b","#b1d9cf","#ece6df"] },
-  blue:  { name:"Deep Blue", light:false, vars:{ "--bg":"#0c0c0c","--panel":"#14181d","--panel-hi":"#1b2129",
-           "--border":"#27303a","--text":"#e7e9e2","--muted":"#8b8f88","--accent":"#0b7b9e","--accent-2":"#7fc7da",
-           "--on-accent":"#eafaff","--pos":"#4fce74","--neg":"#f1604f","--warn":"#e0a23a",
-           "--shadow":"0 1px 0 rgba(0,0,0,.4), 0 14px 40px -18px rgba(0,0,0,.8)" },
-           swatch:["#212121","#00447c","#0b7b9e","#dddace","#f6f8fb"] },
-  slate: { name:"Slate", light:false, vars:{ "--bg":"#11161C","--panel":"#1a212a","--panel-hi":"#2F3B49",
-           "--border":"#313c49","--text":"#F6F8FB","--muted":"#7E8FA0","--accent":"#8fa9c4","--accent-2":"#CFD8E3",
-           "--on-accent":"#11161C","--pos":"#56c98a","--neg":"#e9695f","--warn":"#d9a441",
-           "--shadow":"0 1px 0 rgba(0,0,0,.35), 0 14px 40px -18px rgba(0,0,0,.7)" },
-           swatch:["#11161C","#2F3B49","#6E7F90","#CFD8E3","#F6F8FB"] },
-  lav:   { name:"Steel Lavender", light:false, vars:{ "--bg":"#1B1D23","--panel":"#23262e","--panel-hi":"#33363f",
-           "--border":"#3a3d47","--text":"#F4F3FB","--muted":"#9594a6","--accent":"#A6A0C4","--accent-2":"#D9D6EE",
-           "--on-accent":"#1B1D23","--pos":"#62c98f","--neg":"#e87d72","--warn":"#d6a951",
-           "--shadow":"0 1px 0 rgba(0,0,0,.35), 0 14px 40px -18px rgba(0,0,0,.7)" },
-           swatch:["#1B1D23","#515563","#A6A0C4","#D9D6EE","#F4F3FB"] },
-  paper: { name:"Daybook", light:true, vars:{ "--bg":"#ece6df","--panel":"#f6f2ec","--panel-hi":"#e7ddcf",
-           "--border":"#d6c9b6","--text":"#16303a","--muted":"#7a7062","--accent":"#d84f2a","--accent-2":"#124d54",
-           "--on-accent":"#fff7f2","--pos":"#2f9e57","--neg":"#d23b2c","--warn":"#b07d12",
-           "--shadow":"0 1px 0 rgba(20,40,50,.04), 0 14px 34px -18px rgba(20,40,50,.4)" },
-           swatch:["#ece6df","#d6c4b0","#d84f2a","#124d54","#16303a"] },
+  teal:{ name:"Teal Coral",
+    dark:{"--bg":"#091d26","--panel":"#0f2733","--panel-hi":"#143845","--border":"#1d4a52","--text":"#eaf2ef","--muted":"#7fa39c","--accent":"#f9744b","--accent-2":"#b1d9cf","--on-accent":"#0a0a0a","--pos":"#4fce74","--neg":"#f1604f","--warn":"#e0a23a","--shadow":"0 1px 0 rgba(0,0,0,.35), 0 14px 40px -18px rgba(0,0,0,.7)"},
+    light:{"--bg":"#eaf2f0","--panel":"#fbfbf8","--panel-hi":"#eceee8","--border":"#cfd6d3","--text":"#0d2026","--muted":"#6f7d7a","--accent":"#d84f2a","--accent-2":"#124d54","--on-accent":"#fff7f2","--pos":"#2f9e57","--neg":"#d23b2c","--warn":"#b07d12","--shadow":"0 1px 0 rgba(20,40,50,.05), 0 14px 34px -18px rgba(20,40,50,.32)"},
+    swatch:["#0f2733","#124d54","#f9744b","#b1d9cf","#ece6df"] },
+  blue:{ name:"Deep Blue",
+    dark:{"--bg":"#0c0c0c","--panel":"#14181d","--panel-hi":"#1b2129","--border":"#27303a","--text":"#e7e9e2","--muted":"#8b8f88","--accent":"#0b7b9e","--accent-2":"#7fc7da","--on-accent":"#eafaff","--pos":"#4fce74","--neg":"#f1604f","--warn":"#e0a23a","--shadow":"0 1px 0 rgba(0,0,0,.4), 0 14px 40px -18px rgba(0,0,0,.8)"},
+    light:{"--bg":"#f0f4fa","--panel":"#fafcff","--panel-hi":"#e6edf6","--border":"#c8d2e0","--text":"#0b1421","--muted":"#5d6c80","--accent":"#0b7b9e","--accent-2":"#2c6f8e","--on-accent":"#f5fbff","--pos":"#2f9e57","--neg":"#d23b2c","--warn":"#b07d12","--shadow":"0 1px 0 rgba(20,40,50,.05), 0 14px 34px -18px rgba(20,40,50,.32)"},
+    swatch:["#14181d","#00447c","#0b7b9e","#dddace","#f6f8fb"] },
+  slate:{ name:"Slate",
+    dark:{"--bg":"#11161C","--panel":"#1a212a","--panel-hi":"#2F3B49","--border":"#313c49","--text":"#F6F8FB","--muted":"#7E8FA0","--accent":"#8fa9c4","--accent-2":"#CFD8E3","--on-accent":"#11161C","--pos":"#56c98a","--neg":"#e9695f","--warn":"#d9a441","--shadow":"0 1px 0 rgba(0,0,0,.35), 0 14px 40px -18px rgba(0,0,0,.7)"},
+    light:{"--bg":"#eef1f5","--panel":"#fafbfc","--panel-hi":"#e2e7ed","--border":"#c5ccd6","--text":"#11161c","--muted":"#586473","--accent":"#5c7592","--accent-2":"#2f3b49","--on-accent":"#f6f8fb","--pos":"#2f9e57","--neg":"#d23b2c","--warn":"#b07d12","--shadow":"0 1px 0 rgba(20,30,40,.05), 0 14px 34px -18px rgba(20,30,40,.32)"},
+    swatch:["#1a212a","#2F3B49","#6E7F90","#CFD8E3","#F6F8FB"] },
+  lav:{ name:"Steel Lavender",
+    dark:{"--bg":"#1B1D23","--panel":"#23262e","--panel-hi":"#33363f","--border":"#3a3d47","--text":"#F4F3FB","--muted":"#9594a6","--accent":"#A6A0C4","--accent-2":"#D9D6EE","--on-accent":"#1B1D23","--pos":"#62c98f","--neg":"#e87d72","--warn":"#d6a951","--shadow":"0 1px 0 rgba(0,0,0,.35), 0 14px 40px -18px rgba(0,0,0,.7)"},
+    light:{"--bg":"#f4f1fa","--panel":"#fbfafe","--panel-hi":"#eae5f3","--border":"#d6cee5","--text":"#1b1d23","--muted":"#6d6786","--accent":"#6f6694","--accent-2":"#4a4569","--on-accent":"#f4f3fb","--pos":"#2f9e57","--neg":"#d23b2c","--warn":"#b07d12","--shadow":"0 1px 0 rgba(40,30,60,.05), 0 14px 34px -18px rgba(40,30,60,.32)"},
+    swatch:["#23262e","#515563","#A6A0C4","#D9D6EE","#F4F3FB"] },
+  sand:{ name:"Daybook",
+    dark:{"--bg":"#1f1a13","--panel":"#2a231a","--panel-hi":"#35291f","--border":"#463725","--text":"#f0e5d0","--muted":"#b3a489","--accent":"#ec754a","--accent-2":"#d5b385","--on-accent":"#1f1a13","--pos":"#62c98f","--neg":"#e87d72","--warn":"#d6a951","--shadow":"0 1px 0 rgba(0,0,0,.4), 0 14px 40px -18px rgba(0,0,0,.7)"},
+    light:{"--bg":"#ece6df","--panel":"#f6f2ec","--panel-hi":"#e7ddcf","--border":"#d6c9b6","--text":"#16303a","--muted":"#7a7062","--accent":"#d84f2a","--accent-2":"#124d54","--on-accent":"#fff7f2","--pos":"#2f9e57","--neg":"#d23b2c","--warn":"#b07d12","--shadow":"0 1px 0 rgba(20,40,50,.04), 0 14px 34px -18px rgba(20,40,50,.4)"},
+    swatch:["#2a231a","#d6c4b0","#d84f2a","#124d54","#16303a"] },
 };
+let THEME_MODE = (localStorage.getItem("cockpit-theme-mode")||"dark");
 function applyTheme(key, silent){
+  if(key==="paper") key="sand";   // back-compat: previously "paper" was the only light theme
   const t = THEMES[key]; if(!t) return;
-  for(const [k,v] of Object.entries(t.vars)) document.documentElement.style.setProperty(k,v);
-  document.documentElement.style.colorScheme = t.light ? "light" : "dark";   // native selects/datalists/scrollbars match theme
-  localStorage.setItem("cockpit-theme", key);   // instant pre-auth paint cache
+  const vars = t[THEME_MODE] || t.dark || t.light;
+  for(const [k,v] of Object.entries(vars)) document.documentElement.style.setProperty(k,v);
+  document.documentElement.style.colorScheme = THEME_MODE==="light" ? "light" : "dark";
+  localStorage.setItem("cockpit-theme", key); localStorage.setItem("cockpit-theme-mode", THEME_MODE);
   document.querySelectorAll(".theme").forEach(el=>el.classList.toggle("active", el.dataset.k===key));
-  if(!silent && booted) putSettings({theme:key});  // persist per-user (skip during initial load)
+  document.querySelectorAll(".theme-mode-toggle .tm").forEach(b=>b.classList.toggle("on", b.dataset.mode===THEME_MODE));
+  if(!silent && booted) putSettings({theme:key, theme_mode:THEME_MODE});
   if(typeof currentTab!=="undefined" && document.getElementById("view")) render();
 }
+function setThemeMode(mode){ THEME_MODE = (mode==="light")?"light":"dark";
+  applyTheme(localStorage.getItem("cockpit-theme")||"teal"); }
 function buildThemeList(){
   document.getElementById("themeList").innerHTML = Object.entries(THEMES).map(([k,t])=>`
     <div class="theme" data-k="${k}" onclick="applyTheme('${k}')">
       <span class="sw">${t.swatch.map(c=>`<i style="background:${c}"></i>`).join("")}</span>
-      <span class="nm">${t.name}${t.light?'<span class="lt">light</span>':''}</span><span class="ck">✓</span>
+      <span class="nm">${t.name}</span><span class="ck">✓</span>
     </div>`).join("");
 }
 const pop = document.getElementById("pop"), paletteBtn = document.getElementById("paletteBtn");
@@ -1525,7 +1661,8 @@ async function loadEndpoints(){
 }
 async function loadSettings(){
   try{ SETTINGS = await api("/api/settings"); }catch(e){ SETTINGS = {}; }
-  if(SETTINGS.theme) applyTheme(SETTINGS.theme, true);     // silent: don't re-persist
+  if(SETTINGS.theme_mode) THEME_MODE = SETTINGS.theme_mode;
+  if(SETTINGS.theme || SETTINGS.theme_mode) applyTheme(SETTINGS.theme||localStorage.getItem("cockpit-theme")||"teal", true);     // silent: don't re-persist
   if(SETTINGS.embed_model) embedModel = SETTINGS.embed_model;
   if(SETTINGS.vstore) vectorStore = SETTINGS.vstore;
   // Restore the manager-model selector from the saved setting (string slug or
@@ -1534,6 +1671,7 @@ async function loadSettings(){
   const slug = (typeof mm === "string") ? mm : (mm && mm.model);
   if(ms && slug) ms.value = slug;
   if(SETTINGS.layout) loadLayoutBlob(SETTINGS.layout);     // tab/tile customizations (per-user)
+  if(SETTINGS.winopts) loadWinOpts(SETTINGS.winopts);      // window/dock prefs (per-user)
   LIMITS = loadLimits();
 }
 function loadForTab(tab){
@@ -1772,12 +1910,26 @@ const VIEWS = {
         <div class="pcard"><h3>Activity log</h3><div class="desc">A behind-the-scenes look at what Helm has been doing. Most people can ignore this.</div>
           <div class="collapse"><div class="collapse-head" onclick="toggleCollapse(this)">Recent activity · ${net.length} <span class="chev">▶</span></div>
             <div class="collapse-body" style="padding:6px 4px">${net.map(r=>`<div class="log"><span class="lv ${r[0]}">${r[0]==="err"?"retry":"ok"}</span><span class="mono">${r[1]}</span><span>${r[2]}</span><span class="ts">${r[4]} · ${r[5]}</span></div>`).join("")}</div></div></div>
+        ${faqPcardHTML()}
         <div class="pcard"><h3>Reset</h3><div class="desc">Clears your notes, custom limits and theme from this browser. Your accounts aren't touched.</div>
           <div class="frow"><button class="btn danger" onclick="clearLocal()">Reset saved preferences</button></div></div>
       </div>`;
   },
 };
 function head(kick,title,sub){ return `<div class="vhead"><div class="kick">${kick}</div><h1>${title}</h1><div class="sub">${sub}</div></div>`; }
+const FAQ=[
+  ["How do I customize my dashboard?",`Click the ◑ button (bottom-right) → <b>Customize tabs</b>. Drag tiles to rearrange, resize from the edges, double-click a tile title to rename, and hit <b>+ Add tile</b> to drop in anything from the catalog. Hold <b>⇧ Shift</b> while dragging to free-place (leave gaps); otherwise tiles snap to align with their neighbours.`],
+  ["How do windows work?",`Clicking a card (account, position, ticker) opens it as a floating window. Each window has three controls top-right: <b>–</b> minimize to the dock at the bottom, <b>⤢</b> fullscreen (charts get an in-depth Yahoo-style page), <b>×</b> close. You can open many at once and drag them anywhere to compare side-by-side. The dock keeps minimized windows alive — re-opening the same one just pops it back up.`],
+  ["How do I send a chat?",`Type in the manager box on the left rail. <b>Enter</b> sends, <b>Shift + Enter</b> for a new line. Ask things like “show me how Apple is doing” — the manager has tools that open charts and surface info on your dashboard.`],
+  ["How do I halt all trading in a hurry?",`The big red <b>HALT TRADERS</b> button in the Risk tab (or as an addable tile) pauses every trader instantly. Tap again to resume.`],
+  ["Where are my customisations saved?",`Per user, on the server (and mirrored locally) — tab layouts, tile options, watchlist symbols, notes and theme all follow your account between browsers and devices.`],
+  ["How do I reset a tab or everything?",`In Customize mode the bottom bar has <b>Reset tab</b> (this tab only) and <b>Reset all</b> (everything back to the factory layout).`],
+];
+function faqPcardHTML(){
+  return `<div class="pcard"><h3>Help &amp; FAQ</h3><div class="desc">How to drive the cockpit — and how to replay the tour.</div>
+    <div class="frow" style="margin:8px 0 6px"><button class="btn ghost" onclick="startTour(true)">▶ Replay walkthrough</button></div>
+    <div class="faq">${FAQ.map(([q,a])=>`<details class="faq-q"><summary>${esc(q)}</summary><div class="faq-a">${a}</div></details>`).join("")}</div></div>`;
+}
 function limitRow(l,i){
   const w=Math.min(100, Math.round(l.value/l.cap*100)), c=w>=90?"crit":(w>=70?"warn":"");
   const cur = l.money?`$${money(l.value)}`:(l.pct?`${l.value.toFixed(1)}%`:l.value);
@@ -1861,6 +2013,22 @@ const TABS_HIDDEN=new Set();    // built-in tabs the user hid
 const TAB_ORDER=[];             // explicit tab ordering (ids)
 const FLATTEN={ risk:1, bench:1, settings:1 };  // split these tabs' .stack/.benchgrid into per-card tiles
 const TILES={};                 // finance/custom tile registry (populated below)
+/* ---- multi-select: shift/ctrl-click to highlight, drag selection as a group ---- */
+const SEL=new Set(); let _dragGroup=null;
+function selToggle(item){ if(SEL.has(item)){ SEL.delete(item); item.classList.remove("selected"); }
+  else{ SEL.add(item); item.classList.add("selected"); } updateSelBar(); }
+function selClear(){ SEL.forEach(el=>el.classList.remove("selected")); SEL.clear(); updateSelBar(); }
+function selPin(){ SEL.forEach(el=>{ const pin=el.dataset.pinned!=="1"; el.dataset.pinned=pin?"1":""; el.classList.toggle("pinned",pin);
+  if(TILEGRID) TILEGRID.update(el,{locked:pin,noMove:pin,noResize:pin}); }); persistCurrentLayout(currentTab); }
+function selDelete(){ const els=[...SEL]; SEL.clear(); els.forEach(el=>{ if(TILEGRID) TILEGRID.removeWidget(el); }); updateSelBar(); persistCurrentLayout(currentTab); }
+function updateSelBar(){ let bar=document.getElementById("selBar");
+  if(SEL.size<=1){ if(bar) bar.remove(); return; }
+  if(!bar){ bar=document.createElement("div"); bar.id="selBar"; bar.className="sel-bar"; document.body.appendChild(bar); }
+  bar.innerHTML=`<span class="sb-n">${SEL.size}</span><span class="sb-t">tiles selected</span>
+    <button class="sb-btn" onclick="selPin()" title="Pin / unpin">📌 Pin</button>
+    <button class="sb-btn danger" onclick="selDelete()" title="Remove all selected">✕ Delete</button>
+    <button class="sb-btn ghost" onclick="selClear()" title="Clear selection">Clear</button>`;
+}
 const TILE_ROW=10;              // px per grid row (fine granularity so heights hug content)
 
 // Size an auto-height tile to its content (GridStack's own sizeToContent can't
@@ -1876,7 +2044,12 @@ function fitTile(item){
   const n=item.gridstackNode; if(!n || n.h!==rows) TILEGRID.update(item,{h:rows});
 }
 function fitAll(){ if(!TILEGRID) return; TILEGRID.batchUpdate();
-  TILEGRID.getGridItems().forEach(fitTile); TILEGRID.batchUpdate(false); }
+  TILEGRID.getGridItems().forEach(fitTile);
+  // align rows: auto-h tiles sharing a y row all take the tallest tile's height (clean grid)
+  const rows={}; (TILEGRID.engine?.nodes||[]).forEach(n=>{ if(!n.el||!n.el.classList.contains("auto-h")) return; (rows[n.y]||(rows[n.y]=[])).push(n); });
+  Object.values(rows).forEach(arr=>{ if(arr.length<2) return; const maxH=Math.max(...arr.map(n=>n.h));
+    arr.forEach(n=>{ if(n.h!==maxH) TILEGRID.update(n.el,{h:maxH}); }); });
+  TILEGRID.batchUpdate(false); }
 // hold Shift to free-place (leave dead space); otherwise a dropped tile aligns to a near neighbour's column/row
 let _shiftKey=false;
 document.addEventListener("keydown",e=>{ if(e.key==="Shift") _shiftKey=true; });
@@ -1912,15 +2085,16 @@ function tileDef(t){ return TILES[t]; }
 function viewSections(tab){
   const tmp=document.createElement("div");
   try{ tmp.innerHTML = VIEWS[tab] ? VIEWS[tab]() : ""; }catch(e){ tmp.innerHTML=""; }
-  const nodes=[];
+  const nodes=[];   // {node, w}  — w is the default grid-column width that mirrors the classic layout
   [...tmp.children].forEach(ch=>{
     const c=ch.classList;
-    // split card grids (accounts/positions) into one tile per card, and stack/benchgrid into per-card tiles
-    if(c.contains("grid") || (FLATTEN[tab] && (c.contains("stack")||c.contains("benchgrid"))))
-      [...ch.children].forEach(g=>nodes.push(g));
-    else nodes.push(ch);
+    // split card grids (accounts/positions) into one tile per card (3-up: w=4), .benchgrid into 2-up (w=6), .stack into stacked (w=12)
+    if(c.contains("grid"))                                   [...ch.children].forEach(g=>nodes.push({node:g, w:4}));
+    else if(FLATTEN[tab] && c.contains("benchgrid"))         [...ch.children].forEach(g=>nodes.push({node:g, w:6}));
+    else if(FLATTEN[tab] && c.contains("stack"))             [...ch.children].forEach(g=>nodes.push({node:g, w:12}));
+    else                                                     nodes.push({node:ch, w:12});
   });
-  return nodes.map((node,i)=>({ key:tab+"#"+i, node, title:sectionTitle(node) }));
+  return nodes.map((s,i)=>({ key:tab+"#"+i, node:s.node, title:sectionTitle(s.node), w:s.w }));
 }
 function sectionTitle(node){
   if(node.classList.contains("vhead")) return (node.querySelector(".kick")?.textContent||"Header").trim();
@@ -1930,7 +2104,15 @@ function sectionTitle(node){
   return (node.className.split(" ")[0]||"Section").replace(/-/g," ");
 }
 function defaultLayout(tab){
-  return viewSections(tab).map((s,i)=>({ kind:"sec", key:s.key, x:0, y:i*4, w:12, h:4 }));
+  // pack sections into rows using their natural width (3-up cards, 2-up benchgrid, full-width otherwise)
+  const out=[]; let x=0, y=0;
+  viewSections(tab).forEach(s=>{
+    const w=s.w||12;
+    if(x+w>12){ x=0; y+=4; }
+    out.push({ kind:"sec", key:s.key, x, y, w, h:4 });
+    x+=w; if(x>=12){ x=0; y+=4; }
+  });
+  return out;
 }
 
 function safeRender(def,opts){ try{ return def.render(opts||{})||""; }catch(e){ return `<div class="empty">tile error: ${esc(e.message)}</div>`; } }
@@ -1982,11 +2164,14 @@ function renderTiles(tab){
     const content=document.createElement("div");
     content.className="grid-stack-item-content"+(it.kind==="tile" && !tileDef(it.t)?.bare?" tile-panel":"");
     const bar=document.createElement("div"); bar.className="tile-bar";
-    bar.innerHTML=`<span class="grip">⠿</span><span class="th" ondblclick="renameTile(this)" title="Double-click to rename">${esc(title||"Tile")}</span>`
+    bar.innerHTML=`<span class="grip" title="Drag to move">⠿</span><span class="th" ondblclick="renameTile(this)" title="Double-click to rename">${esc(title||"Tile")}</span>`
       + `<button class="tp ${it.pinned?'on':''}" title="Pin (lock position & size)" onclick="tilePin(this)">📌</button>`
       + (it.kind==="tile" && tileDef(it.t)?.optFields ? `<button class="tg" title="Options" onclick="tileOptions(this)">⚙</button>`:``)
+      + `<button class="td" title="Pop out into a window" onclick="tilePopout(this)">⤢</button>`
       + `<button class="tx" title="Remove" onclick="tileRemove(this)">✕</button>`;
-    const body=document.createElement("div"); body.className="tile-body"; body.appendChild(bodyNode);
+    const body=document.createElement("div"); body.className="tile-body";
+    body.setAttribute("ondblclick","if(!event.target.closest('input,textarea,button,a,select,.collapse-head')) tilePopout(this)");
+    body.appendChild(bodyNode);
     content.appendChild(bar); content.appendChild(body); item.appendChild(content);
     gridEl.appendChild(item);
     TILEGRID.makeWidget(item);
@@ -2001,8 +2186,27 @@ function renderTiles(tab){
   fitAll(); requestAnimationFrame(fitAll); setTimeout(fitAll, 350);
   // drag / resize lifecycle: lift class for animation + persist; a manual resize
   // pins that tile's height (drops out of auto-fit so the user's size sticks)
-  TILEGRID.on("dragstart resizestart",(e,el)=>el && el.classList.add("tile-dragging"));
-  TILEGRID.on("dragstop",(e,el)=>{ if(el){ el.classList.remove("tile-dragging"); if(!_shiftKey) snapAlign(el); } persistCurrentLayout(tab); });
+  TILEGRID.on("dragstart resizestart",(e,el)=>{ if(!el) return; el.classList.add("tile-dragging");
+    _dragGroup=null;
+    if(SEL.has(el) && SEL.size>1){ _dragGroup=[]; SEL.forEach(o=>{ const n=o.gridstackNode; if(n) _dragGroup.push({el:o, sx:n.x, sy:n.y}); }); }
+  });
+  TILEGRID.on("dragstop",(e,el)=>{ if(!el){ persistCurrentLayout(tab); return; }
+    el.classList.remove("tile-dragging");
+    if(_dragGroup && _dragGroup.length){
+      const lead=_dragGroup.find(g=>g.el===el), n=el.gridstackNode;
+      if(lead && n){ const dx=n.x-lead.sx, dy=n.y-lead.sy;
+        _dragGroup.forEach(g=>{ if(g.el!==el) TILEGRID.update(g.el,{x:Math.max(0,g.sx+dx), y:Math.max(0,g.sy+dy)}); }); }
+      _dragGroup=null;
+    }
+    if(!_shiftKey) snapAlign(el); persistCurrentLayout(tab);
+  });
+  // shift/ctrl/meta-click on a tile toggles its selection; in edit mode card onclicks (openAcct etc.) are suppressed
+  gridEl.addEventListener("click", ev=>{ if(!EDIT) return;
+    if(ev.target.closest(".tile-bar button, .ui-resizable-handle")) return;
+    const item=ev.target.closest(".grid-stack-item"); if(!item) return;
+    if(!ev.target.closest(".tile-bar")){ ev.preventDefault(); ev.stopPropagation(); }   // suppress inner onclicks while editing
+    if(ev.shiftKey||ev.metaKey||ev.ctrlKey) selToggle(item);
+  }, true);
   TILEGRID.on("resizestop",(e,el)=>{ if(el){ el.classList.remove("tile-dragging"); el.classList.remove("auto-h"); el.dataset.manual="1"; } persistCurrentLayout(tab); });
   TILEGRID.on("added removed",()=>persistCurrentLayout(tab));
 }
@@ -2066,6 +2270,33 @@ function tilePin(btn){ if(!TILEGRID) return; const item=btn.closest(".grid-stack
   const pin=item.dataset.pinned!=="1"; item.dataset.pinned=pin?"1":""; item.classList.toggle("pinned",pin);
   btn.classList.toggle("on",pin); TILEGRID.update(item,{locked:pin,noMove:pin,noResize:pin});
   persistCurrentLayout(currentTab); }
+// Open the tile's content as a floating window (bigger view). Double-click also.
+function tilePopout(elOrBtn){ const item=elOrBtn.closest(".grid-stack-item"); if(!item) return;
+  const titleEl=item.querySelector(".tile-bar .th"); const title=titleEl?titleEl.textContent.trim():"Tile";
+  const tt=item.dataset.tt, def=tt?TILES[tt]:null, opts=tt?JSON.parse(item.dataset.opts||"{}"):null;
+  openFloatWin({ key:"pop:"+(item.dataset.seckey||tt||"x")+":"+Date.now().toString(36), title, icon:"⤢", w:720,
+    bodyHTML:`<div class="popout-body" style="min-height:140px"></div>`,
+    onMount:(body,wEl)=>{ const host=body.querySelector(".popout-body");
+      if(def){ host.innerHTML=safeRender(def,opts||{}); if(def.mount){ try{def.mount(host,opts||{},wEl);}catch(e){console.error(e);} } }
+      else { const src=item.querySelector(".tile-body>*"); if(src) host.appendChild(src.cloneNode(true)); else host.innerHTML='<div class="fin-empty">empty tile</div>'; }
+    } }); }
+/* right-click in edit mode → contextual Add tile / Reset / Done */
+let _ctxOutsideFn=null;
+function _ctxOutside(e){ if(!e.target.closest(".ctxmenu")) closeCtxMenu(); }
+function openCtxMenu(x,y){ closeCtxMenu();
+  const m=document.createElement("div"); m.className="ctxmenu"; m.id="ctxMenu";
+  m.innerHTML=`<div class="cm-it" onclick="closeCtxMenu();openTilePalette()"><span class="cm-i">＋</span>Add tile…</div>
+    <div class="cm-it" onclick="closeCtxMenu();resetCurrentTab()"><span class="cm-i">↻</span>Reset tab</div>
+    <div class="cm-sep"></div>
+    <div class="cm-it" onclick="closeCtxMenu();exitEdit()"><span class="cm-i">✓</span>Done editing</div>`;
+  document.body.appendChild(m);
+  m.style.left=Math.min(window.innerWidth-m.offsetWidth-8,x)+"px";
+  m.style.top=Math.min(window.innerHeight-m.offsetHeight-8,y)+"px";
+  setTimeout(()=>document.addEventListener("mousedown",_ctxOutside),0); }
+function closeCtxMenu(){ document.removeEventListener("mousedown",_ctxOutside); const m=document.getElementById("ctxMenu"); if(m) m.remove(); }
+document.addEventListener("contextmenu", e=>{ if(!EDIT) return; if(!e.target.closest("#view")) return;
+  if(e.target.closest("input,textarea,select")) return;   // let inputs keep native menu
+  e.preventDefault(); openCtxMenu(e.clientX,e.clientY); });
 function tileOptions(btn){ openTileOpt(btn.closest(".grid-stack-item")); }
 function ensureSymDatalist(){ if(document.getElementById("symDatalist")) return;
   const dl=document.createElement("datalist"); dl.id="symDatalist";
@@ -2151,7 +2382,7 @@ function buildTabs(){
         (t.builtin?"":`<span class="tdel" title="Delete tab" onclick="deleteTab(event,'${t.id}')">✕</span>`)+
       `</span>`:"";
     return `<button class="tab ${t.id===currentTab?'active':''} ${hidden?'tab-hidden':''}" data-tab="${t.id}" ${EDIT?'draggable="true"':''}>`+
-      `${EDIT?'<span class="tgrip">⠿</span>':''}${esc(t.name)}${pip}${tools}</button>`;
+      `${EDIT?'<span class="tgrip" title="Drag to reorder">⠿</span>':''}${esc(t.name)}${pip}${tools}</button>`;
   }).join("");
   wrap.innerHTML = html + (EDIT?`<button class="tab tab-add" onclick="addTab()">＋ New tab</button>`:"");
   if(typeof updatePips==="function") updatePips();
@@ -2223,7 +2454,7 @@ function enterEdit(){
   toast("Customize mode","Drag tiles to rearrange · resize from the edges · add tiles or tabs","good");
 }
 function exitEdit(){
-  if(!EDIT) return; persistCurrentLayout(currentTab);
+  if(!EDIT) return; persistCurrentLayout(currentTab); selClear();
   EDIT=false; document.body.classList.remove("editing");
   showEditBar(false); closeTilePalette();
   buildTabs(); render(); loadForTab(currentTab);
@@ -2235,7 +2466,7 @@ function resetCurrentTab(){
 function showEditBar(on){
   let bar=document.getElementById("editbar");
   if(!bar){ bar=document.createElement("div"); bar.id="editbar"; bar.className="editbar";
-    bar.innerHTML=`<span class="eb-t">Customizing</span><span class="eb-s">drag · resize · hold ⇧ to free-place</span>`+
+    bar.innerHTML=`<span class="eb-t">Customizing</span><span class="eb-s">drag · resize · ⇧ free-place · ⌘/Ctrl-click to multi-select</span>`+
       `<button class="eb-add" onclick="openTilePalette()">＋ Add tile</button>`+
       `<button class="eb-reset" onclick="resetCurrentTab()">Reset tab</button>`+
       `<button class="eb-reset" onclick="resetAllTabs()">Reset all</button>`+
@@ -2344,7 +2575,7 @@ function openAcct(i){
       <div class="collapse"><div class="collapse-head" onclick="toggleCollapse(this)">Everything it's traded · ${hist.length} <span class="chev">▶</span></div>
         <div class="collapse-body" style="padding:4px 0">${hist.map(h=>{ const lv=h.status==="filled"?"trade":(h.status==="rejected"||h.status==="blocked"?"warn":"info");
           return `<div class="log"><span class="lv ${lv}">${h.action}</span><span class="mono">${h.qty} ${h.sym} @ $${money2(h.price)}</span><span class="code2">${h.status}</span><span style="color:var(--muted)">${h.reason}</span><span class="ts">${h.ts}</span></div>`;}).join("")}</div></div>`;
-  openFloatWin({ key:"acct:"+a.name, title:`${a.name} · practice account`, w:500, bodyHTML, onMount:(body)=>loadNotesIn(body) });
+  openFloatWin({ key:"acct:"+a.name, title:`${a.name} · practice account`, icon:"🤖", w:500, bodyHTML, onMount:(body)=>loadNotesIn(body) });
 }
 /* ===================== FLOATING MULTI-WINDOW MANAGER ===================== */
 let _fz=160;
@@ -2353,9 +2584,15 @@ function fwinHost(){ let h=document.getElementById("fwins"); if(!h){ h=document.
 function openFloatWin(opts){
   const host=fwinHost();
   let el=[...host.children].find(c=>c.dataset.key===opts.key);
-  if(el){ focusFloat(el); if(opts.onMount) try{opts.onMount(el.querySelector(".fw-body"), el);}catch(e){console.error(e);} return el; }
-  el=document.createElement("div"); el.className="fwin"; el.dataset.key=opts.key; if(opts.w) el.style.width=opts.w+"px";
-  el.innerHTML=`<div class="win-bar fw-bar"><span class="ttl">${opts.title||""}</span><button class="x" title="Close" onclick="this.closest('.fwin').remove()">×</button></div>
+  if(el){ // already open — if minimized, pop it back up; otherwise just raise & refresh
+    if(el.dataset.min){ restoreFloat(opts.key); }
+    else { focusFloat(el); if(opts.onMount) try{opts.onMount(el.querySelector(".fw-body"), el);}catch(e){console.error(e);} }
+    return el; }
+  el=document.createElement("div"); el.className="fwin"; el.dataset.key=opts.key; el.dataset.icon=opts.icon||"🗗"; if(opts.w) el.style.width=opts.w+"px";
+  el.innerHTML=`<div class="win-bar fw-bar"><span class="ttl">${opts.title||""}</span>
+    <span class="fw-btns"><button class="mn" title="Minimize" onclick="minFloat(this)">–</button>
+    <button class="fs" title="Full screen" onclick="toggleFull(this)">⤢</button>
+    <button class="x" title="Close" onclick="closeFloat(this)">×</button></span></div>
     <div class="win-body fw-body">${opts.bodyHTML||""}</div>`;
   host.appendChild(el);
   const n=host.children.length, off=((n-1)%6)*30;
@@ -2366,14 +2603,66 @@ function openFloatWin(opts){
   return el;
 }
 function makeFloatDraggable(el, handle){ let sx,sy,ox,oy,on=false;
-  handle.addEventListener("pointerdown",e=>{ if(e.target.closest(".x")) return; on=true; focusFloat(el);
+  handle.addEventListener("pointerdown",e=>{ if(e.target.closest(".fw-btns")) return; on=true; focusFloat(el);
     const r=el.getBoundingClientRect(); ox=r.left; oy=r.top; sx=e.clientX; sy=e.clientY;
     try{handle.setPointerCapture(e.pointerId);}catch(_){} document.body.style.userSelect="none"; });
   handle.addEventListener("pointermove",e=>{ if(!on)return; el.style.left=Math.max(0,ox+e.clientX-sx)+"px"; el.style.top=Math.max(0,oy+e.clientY-sy)+"px"; });
   handle.addEventListener("pointerup",e=>{ on=false; document.body.style.userSelect=""; try{handle.releasePointerCapture(e.pointerId);}catch(_){} });
-  el.addEventListener("pointerdown",()=>focusFloat(el), true);
+  el.addEventListener("pointerdown",()=>{ if(!el.dataset.min) focusFloat(el); }, true);
 }
-function closeAllFloats(){ const h=document.getElementById("fwins"); if(h) h.innerHTML=""; }
+/* ---- minimize to a macOS-style dock ---- */
+function fdockHost(){ let d=document.getElementById("fdock"); if(!d){ d=document.createElement("div"); d.id="fdock"; document.body.appendChild(d); } return d; }
+function dockPill(key){ return [...fdockHost().children].find(c=>c.dataset.key===key); }
+const WINOPTS={ dock:"mini", preview:true };
+function loadWinOpts(o){ if(!o) return; if(typeof o==="string"){ try{o=JSON.parse(o);}catch(_){ return; } } if(o&&typeof o==="object") Object.assign(WINOPTS,o); }
+try{ loadWinOpts(localStorage.getItem("cockpit-winopts")); }catch(_){}
+function saveWinOpts(){ try{localStorage.setItem("cockpit-winopts",JSON.stringify(WINOPTS));}catch(_){} if(typeof booted!=="undefined"&&booted) putSettings({winopts:WINOPTS}); }
+function shortLabel(title){ const t=(title||"").split(" · ")[0].trim(); return t; }   // CSS ellipsis handles overflow
+function minFloat(btn){ const el=btn.closest(".fwin"); if(!el) return; if(el.dataset.full){ toggleFull(el.querySelector(".fs")); }
+  el.dataset.min="1"; el.style.display="none";
+  const title=el.querySelector(".fw-bar .ttl")?.textContent.trim()||"Window";
+  if(dockPill(el.dataset.key)) return;
+  const mini=WINOPTS.dock!=="label", icon=el.dataset.icon||"🗗", sl=shortLabel(title);
+  const pill=document.createElement("div"); pill.className="fdock-pill "+(mini?"mini":"label")+(WINOPTS.preview?" preview":"");
+  pill.dataset.key=el.dataset.key; pill.title=title;
+  pill.innerHTML=(mini
+    ? `<div class="fp-mini"><div class="fp-mbar"><span class="fp-lights"><i></i><i></i><i></i></span><span class="fp-mi">${icon}</span></div>
+        <div class="fp-mbody">${esc(sl)}</div></div>`
+    : `<span class="fp-mi">${icon}</span><span class="fp-t">${esc(sl)}</span>`)
+    + `<div class="fp-full">${esc(title)}</div><button class="fp-x" title="Close" onclick="closeDockPill(event,this)">×</button>`;
+  pill.addEventListener("click",()=>restoreFloat(pill.dataset.key)); fdockHost().appendChild(pill); }
+function refreshDock(){ const dock=document.getElementById("fdock"); if(!dock) return;
+  const keys=[...dock.children].map(c=>c.dataset.key); dock.innerHTML="";
+  keys.forEach(k=>{ const el=[...fwinHost().children].find(c=>c.dataset.key===k); const mn=el&&el.querySelector(".mn"); if(mn) minFloat(mn); }); }
+function openWinOpts(){ if(pop){pop.classList.remove("open");} if(paletteBtn){paletteBtn.classList.remove("on");}
+  const scrim=document.createElement("div"); scrim.className="mm-scrim";
+  scrim.innerHTML=`<div class="mm"><div class="mm-t">Window &amp; dock</div><div class="mm-d">How minimized windows look &amp; behave.</div>
+    <label class="mm-l">Minimized style</label>
+    <select class="mm-i" id="woDock"><option value="mini"${WINOPTS.dock!=="label"?" selected":""}>Mini windows</option><option value="label"${WINOPTS.dock==="label"?" selected":""}>Labels</option></select>
+    <label class="mm-l">Hover to preview</label>
+    <select class="mm-i" id="woPrev"><option value="on"${WINOPTS.preview?" selected":""}>On</option><option value="off"${!WINOPTS.preview?" selected":""}>Off</option></select>
+    <div class="mm-f"><button class="mm-cancel">Cancel</button><button class="mm-ok">Save</button></div></div>`;
+  document.body.appendChild(scrim); const close=()=>{scrim.classList.remove("show"); setTimeout(()=>scrim.remove(),180);};
+  scrim.querySelector(".mm-cancel").onclick=close; scrim.onclick=e=>{ if(e.target===scrim) close(); };
+  scrim.querySelector(".mm-ok").onclick=()=>{ WINOPTS.dock=scrim.querySelector("#woDock").value; WINOPTS.preview=scrim.querySelector("#woPrev").value==="on"; saveWinOpts(); refreshDock(); close(); };
+  requestAnimationFrame(()=>scrim.classList.add("show")); }
+function restoreFloat(key){ const el=[...fwinHost().children].find(c=>c.dataset.key===key);
+  if(el){ el.style.display=""; delete el.dataset.min; focusFloat(el); } const pill=dockPill(key); if(pill) pill.remove(); }
+function closeDockPill(ev,btn){ ev.stopPropagation(); const pill=btn.closest(".fdock-pill"); const key=pill.dataset.key;
+  const el=[...fwinHost().children].find(c=>c.dataset.key===key); if(el) el.remove(); pill.remove(); }
+function closeFloat(btn){ const el=btn.closest(".fwin"); if(!el) return; const pill=dockPill(el.dataset.key); if(pill) pill.remove(); el.remove(); }
+function closeAllFloats(){ const h=document.getElementById("fwins"); if(h) h.innerHTML=""; const d=document.getElementById("fdock"); if(d) d.innerHTML=""; }
+function toggleFull(btn){ const el=btn.closest(".fwin"); if(!el) return;
+  if(el.dataset.full){ delete el.dataset.full; el.classList.remove("fwin-full");
+    if(el._prev){ el.style.left=el._prev.left; el.style.top=el._prev.top; el.style.width=el._prev.width; el.style.height=el._prev.height; }
+    btn.textContent="⤢"; btn.title="Full screen";
+    if(el._views) el._views.normal(el.querySelector(".fw-body"));
+  } else {
+    el._prev={ left:el.style.left, top:el.style.top, width:el.style.width||el.offsetWidth+"px", height:el.style.height||el.offsetHeight+"px" };
+    el.dataset.full="1"; el.classList.add("fwin-full"); el.style.left=""; el.style.top=""; el.style.width=""; el.style.height="";
+    btn.textContent="⤡"; btn.title="Exit full screen"; focusFloat(el);
+    if(el._views) el._views.full(el.querySelector(".fw-body"));
+  } }
 function closeWin(){ overlay.hidden=true; win.innerHTML=""; }
 function makeDraggable(w, handle){ if(!handle) return; let sx,sy,ox,oy,on=false;
   handle.onmousedown=e=>{ if(e.target.closest(".x")) return; on=true; const r=w.getBoundingClientRect();
@@ -2401,8 +2690,36 @@ function chartWinBody(sym, p){ const name=p?p.name:symName(sym);
     <div class="sectlabel" style="margin-top:16px">Key statistics</div><div class="fundWrap"><div class="fnote">Loading…</div></div>`;
 }
 function openChartWin(sym, p){ sym=String(sym||"").toUpperCase();
-  openFloatWin({ key:(p?"pos:":"sym:")+sym, title:`${sym} · ${p?esc(p.name):"live market data"}`, w:560, bodyHTML:chartWinBody(sym,p),
-    onMount:(body,wEl)=>{ wEl._sym={sym, range:"1D"}; loadNotesIn(body); loadSymRangeIn(wEl,"1D"); loadFundamentals(sym, body); } });
+  const el=openFloatWin({ key:(p?"pos:":"sym:")+sym, title:`${sym} · ${p?esc(p.name):"live market data"}`, icon:p?"📦":"📈", w:560, bodyHTML:`<div class="fin-empty">Loading ${sym}…</div>` });
+  el._views={
+    normal:(body)=>{ body.innerHTML=chartWinBody(sym,p); el._sym={sym, range:(el._sym&&el._sym.range)||"1D"}; loadNotesIn(body); loadSymRangeIn(el, el._sym.range); loadFundamentals(sym, body); },
+    full:(body)=>{ body.innerHTML=deepStockHTML(sym,p); el._sym={sym, range:(el._sym&&el._sym.range)||"6M"}; loadNotesIn(body); loadSymRangeIn(el, el._sym.range); loadFundamentals(sym, body); deepNews(body, sym); },
+  };
+  (el.dataset.full?el._views.full:el._views.normal)(el.querySelector(".fw-body"));
+}
+function deepStockHTML(sym,p){ const name=p?p.name:symName(sym);
+  return `<div class="deep">
+    <div class="deep-head"><div><div class="tk-sym" style="font-size:27px">${sym}</div><div class="tk-name">${esc(name)}</div></div>
+      <div class="deep-px"><div class="px symPx">—</div><div class="pnl symChg"></div></div></div>
+    <div class="tf-row tfRow">${TF_RANGES.map(r=>`<button class="tf${r==="6M"?" on":""}" data-r="${r}" onclick="symRange(this)">${r}</button>`).join("")}</div>
+    <div class="chartwrap chartWrap deep-chart"><div class="chart-empty">Loading real ${sym} prices…</div></div>
+    <div class="deep-cols">
+      <div class="deep-col"><div class="sectlabel">Key statistics</div><div class="fundWrap"><div class="fnote">Loading…</div></div></div>
+      <div class="deep-col"><div class="sectlabel">News &amp; research</div><div class="deep-news"><div class="fin-empty">Loading…</div></div></div>
+    </div>
+    ${p?`<div class="sectlabel" style="margin-top:16px">Held by</div>
+      ${p.holders.map(h=>{const pl=(p.price-h.avg)*h.qty,c=pl>=0?"pos":"neg";return `<div class="holder"><span class="st trading"></span><span class="ha">${h.acct}</span><span class="hn"><span>${h.qty} @ $${money2(h.avg)}</span><span class="${c}">${sgn(pl)}$${money(pl)}</span></span></div>`;}).join("")}`:""}
+    <div class="sectlabel" style="margin-top:16px">Your notes on ${esc(name)}</div>
+    <textarea class="notebox" placeholder="Your own take on ${sym}…" data-note="ticker:${sym}" oninput="onNote(this)"></textarea>
+    <div class="notehint"><span class="dotok"></span>saved to your account</div></div>`;
+}
+async function deepNews(body, sym){ const wrap=body.querySelector(".deep-news"); if(!wrap) return;
+  try{ const d=await api("/api/research?ticker="+encodeURIComponent(sym)); const arr=Array.isArray(d)?d:((d&&(d.research||d.briefs))||[]);
+    const items=arr.slice(0,8).map(r=>({title:r.topic||r.ticker||r.title||"Update", text:r.summary||r.text||"", who:r.who||r.trader||"", sources:r.sources||[]}));
+    wrap.innerHTML = items.length? `<div class="news">`+items.map(it=>`<div class="ni"><div class="nt">${esc(it.title)}</div>${it.text?`<div class="nm">${esc(String(it.text).slice(0,160))}</div>`:""}
+      <div class="nr">${it.who?`<span class="nwho">${esc(it.who)}</span>`:""}<span class="nsrc">${(it.sources||[]).slice(0,2).map((u,i)=>`<a href="${esc(String(u))}" target="_blank" rel="noopener">source${it.sources.length>1?i+1:""}↗</a>`).join(" ")}</span></div></div>`).join("")+`</div>`
+      : `<div class="fin-empty">No research yet for ${esc(sym)}. Run a pass from Bench Control.</div>`;
+  }catch(e){ wrap.innerHTML=`<div class="fin-empty">News unavailable${e.status?` (${e.status})`:""}.</div>`; }
 }
 function openSymbol(sym){ openChartWin(sym, null); }
 function symRange(btn){ const wEl=btn.closest(".fwin"); if(!wEl||!wEl._sym) return; const r=btn.dataset.r; wEl._sym.range=r;
@@ -2585,7 +2902,7 @@ TILES.watchlist={ title:"Watchlist", group:"Markets", icon:"⭐", w:5, h:9, refr
   optFields:[{key:"symbols",label:"Tickers",type:"symchips"}],
   defaults:{ symbols:["AAPL","MSFT","NVDA","TSLA","SPY"] },
   render(o){ const syms=o.symbols||[];
-    return `<div class="fin-title">Watchlist<span class="live-pip"></span></div><div class="wl">${ syms.length? syms.map(s=>`<div class="wl-row" onclick="openSymbol('${esc(s)}')">
+    return `<div class="fin-title">Watchlist<span class="live-pip"></span></div><div class="wl">${ syms.length? syms.map(s=>`<div class="wl-row" title="Open ${esc(s)} chart" onclick="openSymbol('${esc(s)}')">
       <div class="wl-id"><span class="wl-sym">${esc(s)}</span><span class="wl-nm">${esc(symName(s))}</span></div>
       <div class="wl-px">—</div><div class="wl-chg">—</div></div>`).join("")
       : `<div class="fin-empty">No symbols yet — open ⚙ to add some.</div>` }</div>`; },
@@ -2640,7 +2957,7 @@ function moversLoad(body){ if(!body) return; const wrap=body.querySelector(".mv"
    tiles) so users can rebuild the whole UI from the Add-tile drawer. */
 function accountCardHTML(a,i){
   const cls=a.ret>=0?"pos":"neg", col=cssvar(a.ret>=0?"--pos":"--neg"), pnl=a.value-100000;
-  return `<div class="card clk" style="--i:${i};--edge:${col}" onclick="openAcct(${i})">
+  return `<div class="card clk" title="Open ${esc(a.name)}" style="--i:${i};--edge:${col}" onclick="openAcct(${i})">
     <div class="card-head"><span class="st ${a.status}"></span><span class="name">${a.name}</span><span class="chip">${a.prov}</span></div>
     <div class="val">$${money(a.value)}</div>
     <div class="pnl ${cls}">${sgn(pnl)}$${money(pnl)} <span>${sgn(a.ret)}${a.ret.toFixed(2)}%</span></div>
@@ -2662,7 +2979,7 @@ function positionCardHTML(p,i){
   const col=cssvar(p.chg>=0?"--pos":"--neg"), cls=p.chg>=0?"pos":"neg";
   const qty=p.holders.reduce((s,h)=>s+h.qty,0);
   const mv=qty*p.price, npnl=p.holders.reduce((s,h)=>s+(p.price-h.avg)*h.qty,0), npcls=npnl>=0?"pos":"neg";
-  return `<div class="card clk" style="--i:${i};--edge:${col}" onclick="openPosition('${p.sym}')">
+  return `<div class="card clk" title="Open ${p.sym} — chart, holders & notes" style="--i:${i};--edge:${col}" onclick="openPosition('${p.sym}')">
     <div class="card-head"><span class="tk-sym">${p.sym}</span><span class="tk-name">${p.name}</span>
       <span class="chip ${cls}" style="color:${col};border-color:color-mix(in srgb,${col} 40%,var(--border))">${sgn(p.pct)}${p.pct.toFixed(2)}%</span></div>
     <div class="val">$${money2(p.price)}</div>
@@ -2818,9 +3135,8 @@ async function mountCompare(body,o){ if(!body) return; const el=body.querySelect
   chart.timeScale().fitContent(); body._lwc=chart;
 }
 function bigStopHTML(){ const on=killActive;
-  return `<div class="stopwrap"><button class="bigstop ${on?"on":""}" onclick="toggleKillBig(this)" title="${on?"Resume trading":"Halt all trading"}">
-    <span class="bs-face"><span class="bs-label">${on?"HALTED":"STOP"}</span></span></button>
-    <div class="bs-sub">${on?"All trading is paused — tap to resume":"Tap to halt every trader instantly"}</div></div>`; }
+  return `<div class="stopwrap"><button class="bigstop ${on?"on":""}" onclick="toggleKillBig(this)" title="${on?"Resume all trading":"Halt every trader instantly"}">
+    <span class="bs-face"><span class="bs-label">${on?"HALTED":"HALT TRADERS"}</span></span></button></div>`; }
 function toggleKillBig(btn){ killActive=!killActive; const on=killActive;
   api("/api/risk/kill",{method:"POST",body:{active:on}}).catch(()=>{});
   const wrap=btn.closest(".stopwrap"); if(wrap) wrap.outerHTML=bigStopHTML();
@@ -3181,7 +3497,21 @@ function signedOut(){ booted=false; sessionStorage.removeItem("cockpit-token"); 
   document.getElementById("app").hidden=true; document.getElementById("auth").hidden=false; }
 function enterApp(username){
   sessionStorage.setItem("cockpit-user", username);
+  const u=document.getElementById("userName"); if(u) u.textContent=username||"—";
   document.getElementById("auth").hidden=true; document.getElementById("app").hidden=false; bootApp(); }
+function toggleUserMenu(ev){ if(ev){ ev.stopPropagation(); }
+  if(document.getElementById("userMenu")){ closeUserMenu(); return; }
+  const btn=document.getElementById("userBtn"); if(!btn) return; const r=btn.getBoundingClientRect();
+  const u=sessionStorage.getItem("cockpit-user")||"—";
+  const m=document.createElement("div"); m.id="userMenu"; m.className="user-menu";
+  m.innerHTML=`<div class="um-head"><div class="um-av">👤</div><div style="min-width:0"><div class="um-nm">${esc(u)}</div><div class="um-sub">Signed in</div></div></div>
+    <div class="um-sep"></div>
+    <button class="um-act" onclick="logout()"><span class="um-ic">⎋</span>Log out</button>`;
+  document.body.appendChild(m);
+  m.style.right=Math.max(8,(window.innerWidth-r.right))+"px"; m.style.top=(r.bottom+8)+"px";
+  setTimeout(()=>document.addEventListener("mousedown",_userOutside),0); }
+function _userOutside(e){ if(!e.target.closest("#userMenu,#userBtn")) closeUserMenu(); }
+function closeUserMenu(){ document.removeEventListener("mousedown",_userOutside); const m=document.getElementById("userMenu"); if(m) m.remove(); }
 async function initSession(){   // validate an existing cookie/token session on load
   try{ const me = await api("/api/me"); enterApp(me.username); }
   catch(_){ /* not authenticated → keep the login screen visible */ } }
