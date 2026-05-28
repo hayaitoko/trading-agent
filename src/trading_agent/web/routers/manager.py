@@ -98,18 +98,20 @@ def chat(
     conv = store.get_or_create(user_id, body.conversation_id)
 
     try:
-        reply = _agent(request).chat(user_id, conv.id, message, ref)
+        turn = _agent(request).chat_with_actions(user_id, conv.id, message, ref)
     except CostGateError as exc:
         raise HTTPException(status_code=429, detail=str(exc))
     except EndpointError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
     # Persist only after a successful reply, so a failed call leaves no orphans.
+    # The assistant turn stores just the reply text — UI actions are transient.
     store.add_turn(conv.id, "user", message)
-    assistant_turn = store.add_turn(conv.id, "assistant", reply)
+    assistant_turn = store.add_turn(conv.id, "assistant", turn.reply)
     return {
         "conversation_id": conv.id,
-        "reply": reply,
+        "reply": turn.reply,
+        "actions": turn.actions,
         "model": ref.model,
         "created_at": assistant_turn.created_at,
     }

@@ -20,6 +20,9 @@ more. Tests assert the broker is never touched.
 
 from __future__ import annotations
 
+import json
+import re
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..config.endpoints import ModelRef
@@ -34,6 +37,7 @@ if TYPE_CHECKING:
     from .chat import ConversationStore
 
 __all__ = [
+    "ChatTurn",
     "CostGateError",
     "DEFAULT_MANAGER_MODEL",
     "DEFAULT_REFLECTION_MODEL",
@@ -79,6 +83,121 @@ SYSTEM_PROMPT = (
     "Ground every answer in the state below. If the state doesn't cover something, "
     "say you don't have that rather than guessing."
 )
+
+# Tool-call envelope. When you want to *also* surface something on the cockpit
+# dashboard alongside your reply, return a JSON object instead of plain text.
+# The frontend executes the listed actions; the ``reply`` text is shown in the
+# chat panel. Plain-text replies still work — only emit the JSON form when you
+# actually have an action to take.
+TOOL_PROMPT = (
+    "\n\n# Surfacing things on the dashboard (optional)\n"
+    "When the operator asks to *see*, *open*, *chart*, *pull up*, or *show* a "
+    "ticker, account, or tab, you can surface it for them by returning a "
+    "single JSON object instead of plain text:\n"
+    '{"reply": "<your short answer>", "actions": [<one or more actions>]}\n'
+    "Supported action types:\n"
+    '  · {"type": "open_quote",   "symbol": "AAPL"}   — open the in-depth quote/chart window\n'
+    '  · {"type": "open_chart",   "symbol": "AAPL"}   — same as open_quote (alias)\n'
+    '  · {"type": "open_account", "name":   "opus"}   — open the named trader\'s account window\n'
+    '  · {"type": "open_tab",     "tab":    "research"} — switch to a tab by id\n'
+    "Rules: only use these action types; emit at most 3 actions per turn; "
+    "if no surface action is needed, reply with plain text (no JSON envelope). "
+    "Never invent action types — unknown types are dropped."
+)
+
+
+@dataclass
+class ChatTurn:
+    """One overseer turn: the human-facing reply plus optional UI actions.
+
+    ``actions`` is a list of validated ``{type, ...args}`` dicts the cockpit
+    frontend already knows how to execute (open_quote / open_chart /
+    open_account / open_tab). Empty when the model just chats — the
+    backward-compatible ``ManagerAgent.chat()`` returns just ``reply``.
+    """
+
+    reply: str
+    actions: list[dict[str, Any]] = field(default_factory=list)
+
+
+# Known action types, each with its required key. Unknown types or actions
+# missing the required key are dropped silently so a hallucinating model
+# can't push junk through to the UI.
+_ACTION_REQUIRED_KEY: dict[str, str] = {
+    "open_quote": "symbol",
+    "open_chart": "symbol",
+    "open_account": "name",
+    "open_tab": "tab",
+}
+_MAX_ACTIONS_PER_TURN = 3
+
+# Optional code-fence wrapper the model may emit (```json ... ```). We strip it
+# before json.loads so the envelope still parses.
+_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```\s*$", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_fence(text: str) -> str:
+    match = _FENCE_RE.match(text.strip())
+    return match.group(1).strip() if match else text.strip()
+
+
+def _normalize_action(raw: Any) -> dict[str, Any] | None:
+    """Validate a single action dict; return the cleaned form or ``None``."""
+    if not isinstance(raw, dict):
+        return None
+    kind = raw.get("type")
+    if not isinstance(kind, str):
+        return None
+    required = _ACTION_REQUIRED_KEY.get(kind)
+    if required is None:
+        return None  # unknown action type — drop silently
+    value = raw.get(required)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    cleaned = {"type": kind, required: value.strip()}
+    # ``open_tab`` historically accepts an ``id`` alias; the cockpit reads
+    # ``a.tab||a.id``. Pass an ``id`` through too if the model used it.
+    if kind == "open_tab" and isinstance(raw.get("id"), str) and raw.get("id"):
+        cleaned["id"] = raw["id"]
+    return cleaned
+
+
+def parse_tool_response(content: str) -> tuple[str, list[dict[str, Any]]]:
+    """Split a model response into ``(reply, actions)``.
+
+    Accepts either a plain string (treated as the whole reply, no actions) or
+    a JSON object ``{"reply": "...", "actions": [...]}`` optionally wrapped in
+    a ```json ... ``` fence. Anything malformed degrades to ``(content, [])``
+    so a model that drifts from the envelope still produces a usable reply.
+    """
+    text = (content or "").strip()
+    if not text:
+        return "", []
+    candidate = _strip_fence(text)
+    # Only attempt JSON parse if it looks like a JSON object — avoids matching
+    # incidental "{" inside a normal sentence.
+    if not (candidate.startswith("{") and candidate.endswith("}")):
+        return text, []
+    try:
+        parsed = json.loads(candidate)
+    except (ValueError, TypeError):
+        return text, []
+    if not isinstance(parsed, dict) or "reply" not in parsed:
+        return text, []
+    reply = parsed.get("reply")
+    if not isinstance(reply, str):
+        return text, []
+    raw_actions = parsed.get("actions") or []
+    if not isinstance(raw_actions, list):
+        raw_actions = []
+    actions: list[dict[str, Any]] = []
+    for item in raw_actions:
+        cleaned = _normalize_action(item)
+        if cleaned is not None:
+            actions.append(cleaned)
+        if len(actions) >= _MAX_ACTIONS_PER_TURN:
+            break
+    return reply.strip(), actions
 
 
 class ManagerConfigError(RuntimeError):
@@ -190,17 +309,27 @@ class ManagerAgent:
     # --- chat ----------------------------------------------------------------
 
     def chat(self, user_id: str, conversation_id: str, message: str, ref: ModelRef) -> str:
+        """Backwards-compatible string reply. See :meth:`chat_with_actions`."""
+        return self.chat_with_actions(user_id, conversation_id, message, ref).reply
+
+    def chat_with_actions(
+        self, user_id: str, conversation_id: str, message: str, ref: ModelRef
+    ) -> ChatTurn:
         """One overseer turn: assemble context, make one cost-gated call, reply.
 
         Reads prior turns of ``conversation_id`` for continuity; the caller
         persists the new user/assistant turns. Raises :class:`CostGateError` if
         the daily ceiling would be exceeded and :class:`EndpointError` on a model
         failure — in both cases nothing is written.
+
+        The returned :class:`ChatTurn` carries the human-facing ``reply`` plus
+        any UI ``actions`` the model surfaced (open_quote / open_account / ...);
+        ``actions`` is empty when the model replied as plain text.
         """
         context = self._build_context(user_id, message)
-        system = SYSTEM_PROMPT
+        system = SYSTEM_PROMPT + TOOL_PROMPT
         if context:
-            system = f"{SYSTEM_PROMPT}\n\n# Live state\n{context}"
+            system = f"{system}\n\n# Live state\n{context}"
 
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
         messages.extend(self._conversations.history_messages(conversation_id))
@@ -212,7 +341,8 @@ class ManagerAgent:
         )
         spent = result.cost if result.cost is not None else _CALL_ESTIMATE_USD
         self._cost_gate.record(user_id, spent)
-        return result.content.strip()
+        reply, actions = parse_tool_response(result.content)
+        return ChatTurn(reply=reply, actions=actions)
 
     # --- flags ---------------------------------------------------------------
 
