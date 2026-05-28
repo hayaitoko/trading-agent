@@ -11,6 +11,8 @@ import pytest
 
 from trading_agent.config.db import Database
 from trading_agent.ingest.seed_sources import (
+    _BSKY_AUTHOR_SEEDS,
+    _BSKY_LIST_SEEDS,
     _SA_DEFAULT_TICKERS,
     _SA_GLOBAL_SEEDS,
     _SUBSTACK_SEEDS,
@@ -33,9 +35,15 @@ USER = "u1"
 
 
 def test_seed_inserts_all_expected_rows(db: Database) -> None:
-    """Every Substack + SA global + SA per-ticker row is inserted on first call."""
+    """Every Substack + SA global + SA per-ticker + Bluesky row is inserted on first call."""
     n = seed_finance_sources(db, USER)
-    expected = len(_SUBSTACK_SEEDS) + len(_SA_GLOBAL_SEEDS) + len(_SA_DEFAULT_TICKERS)
+    expected = (
+        len(_SUBSTACK_SEEDS)
+        + len(_SA_GLOBAL_SEEDS)
+        + len(_SA_DEFAULT_TICKERS)
+        + len(_BSKY_LIST_SEEDS)
+        + len(_BSKY_AUTHOR_SEEDS)
+    )
     assert n == expected
 
 
@@ -47,12 +55,21 @@ def test_seed_is_idempotent(db: Database) -> None:
     assert second == 0
 
 
-def test_seed_rows_have_rss_kind(db: Database) -> None:
-    """All seeded sources have kind='rss' so the existing RssSource adapter handles them."""
+def test_seed_rows_have_known_kinds(db: Database) -> None:
+    """All seeded sources use known adapter kinds (rss, bluesky_list, bluesky_author)."""
     seed_finance_sources(db, USER)
     rows = db.query("SELECT DISTINCT kind FROM sources WHERE user_id = ?", (USER,))
     kinds = {r["kind"] for r in rows}
-    assert kinds == {"rss"}
+    assert kinds <= {"rss", "bluesky_list", "bluesky_author"}
+
+
+def test_seed_rss_rows_exist(db: Database) -> None:
+    """RSS sources (Substack + SA) are seeded with kind='rss'."""
+    seed_finance_sources(db, USER)
+    rows = db.query(
+        "SELECT * FROM sources WHERE user_id = ? AND kind = 'rss'", (USER,)
+    )
+    assert len(rows) > 0
 
 
 def test_substack_urls_are_well_formed(db: Database) -> None:

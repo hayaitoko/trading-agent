@@ -1,9 +1,9 @@
-"""Default ingest-source seed definitions (B0 — Substack + Seeking Alpha RSS).
+"""Default ingest-source seed definitions (B0/B1 — Substack, Seeking Alpha RSS, Bluesky).
 
 Provides :func:`seed_finance_sources` which inserts a curated set of public RSS
-feeds for finance newsletters and Seeking Alpha market coverage into the
-``sources`` table for a given user.  Idempotent: existing rows (matched by name)
-are never duplicated.  All feeds are free, public, no-key required.
+feeds and Bluesky social sources into the ``sources`` table for a given user.
+Idempotent: existing rows (matched by name) are never duplicated.  All feeds are
+free, public, no-key required.
 
 **Sources seeded:**
 
@@ -156,6 +156,127 @@ _SA_GLOBAL_SEEDS: list[tuple[str, str, str]] = [
 # calls watch_symbol; until that hook exists, only these five are seeded.
 _SA_DEFAULT_TICKERS = ["SPY", "AAPL", "MSFT", "NVDA", "TSLA"]
 
+# ---------------------------------------------------------------------------
+# Bluesky — starter-pack lists + author handles (B1)
+# ---------------------------------------------------------------------------
+# Starter-pack list AT-URIs are resolved once via getStarterPack (see
+# bluesky.resolve_starter_pack) and persisted here as literal at:// URIs.
+# Starter-pack source: https://blueskystarterpack.com/personal-finance and
+# verified live 2026-05-28 via getStarterPack resolution.
+
+_BSKY_LIST_SEEDS: list[tuple[str, str, str]] = [
+    (
+        "Bluesky: Fintwit Starter Pack",
+        "at://did:plc:jd55pogp7q5j2x5kvuolkjxh/app.bsky.graph.list/3lbgeeito672c",
+        # alexbhturnbull's Fintwit Starter Pack — broad fintwit community list.
+        # Signal: real-money trader community, cashtag mentions, momentum sentiment.
+        "alexbhturnbull's Fintwit Starter Pack list — broad fintwit community.",
+    ),
+    (
+        "Bluesky: FinTwit (Kelly)",
+        "at://did:plc:7cpdlddyfbukheedyjtpfvb5/app.bsky.graph.list/3laptmz5rey2q",
+        # Steven Kelly's FinTwit list — curated financial Twitter migrants.
+        # Signal: institutional and independent trader sentiment, macro commentary.
+        "Steven Kelly's FinTwit list — curated financial community on Bluesky.",
+    ),
+    (
+        "Bluesky: Finance News + Analysis (Woodley)",
+        "at://did:plc:i45yxjwdcjmsznpeul24x4ad/app.bsky.graph.list/3lbcvvhrpmh2h",
+        # Kyle Woodley's Financial News + Analysis list — news/media accounts.
+        # Signal: breaking news from financial journalists, market-moving headlines.
+        "Kyle Woodley's Financial News + Analysis list — journalism-heavy.",
+    ),
+    (
+        "Bluesky: Finance Investing Econ (Roche)",
+        "at://did:plc:xpfbgs7fcdrzu7vvjdi6ykqn/app.bsky.graph.list/3lbgrvmvctn2p",
+        # Cullen Roche's Finance, Investing and Economics list — practitioner-heavy.
+        # Signal: portfolio construction, macro liquidity, academic-practitioner bridge.
+        "Cullen Roche's Finance, Investing and Economics starter-pack list.",
+    ),
+    (
+        "Bluesky: Investment + Financial Media (Lowe)",
+        "at://did:plc:z72aft2enkoeiw2xt4r2gky5/app.bsky.graph.list/3lbv3ofmexd2f",
+        # The Lowe Group's Investment + Financial Media list — fund managers + media.
+        # Signal: institutional perspective, sell-side + buy-side commentary mix.
+        "The Lowe Group's Investment + Financial Media list.",
+    ),
+]
+
+# High-signal individual finance handles (all verified live 2026-05-28).
+# Used as bluesky_author sources — per-person feeds for specific signal types.
+_BSKY_AUTHOR_SEEDS: list[tuple[str, str, str]] = [
+    (
+        "Bluesky: Carl Quintanilla (CNBC)",
+        "carlquintanilla.bsky.social",
+        # CNBC Squawk on the Street anchor — breaking market news, pre-market action.
+        # Signal: market-open framing, institutional flow color, macro morning setups.
+        "CNBC anchor — breaking market news and pre-market color.",
+    ),
+    (
+        "Bluesky: Joe Weisenthal (Bloomberg)",
+        "weisenthal.bsky.social",
+        # Bloomberg Odd Lots host — macro + markets + heterodox economics.
+        # Signal: macro narrative framing, yield-curve color, MMT-adjacent takes.
+        "Bloomberg Odd Lots host — macro, yields, heterodox economics.",
+    ),
+    (
+        "Bluesky: Andrew Ross Sorkin (NYT DealBook)",
+        "andrewrsorkin.bsky.social",
+        # NYT DealBook — M&A, tech finance, regulatory, PE/VC.
+        # Signal: deal flow, regulatory risk, big-tech business model commentary.
+        "NYT DealBook — M&A, tech finance, regulatory developments.",
+    ),
+    (
+        "Bluesky: Ben Casselman (NYT Economics)",
+        "bencasselman.bsky.social",
+        # NYT economics reporter — jobs reports, CPI, GDP, consumer data.
+        # Signal: macro data releases, labor market framing, consumer health.
+        "NYT economics reporter — macro data, labor market, consumer.",
+    ),
+    (
+        "Bluesky: Heather Long (WaPo Economics)",
+        "heatherlong.bsky.social",
+        # WaPo economics editor — fiscal policy, inequality, consumer trends.
+        # Signal: broad economic narrative, policy impact framing.
+        "WaPo economics editor — fiscal policy, inequality, consumer trends.",
+    ),
+    (
+        "Bluesky: Cullen Roche (Pragmatic Capitalist)",
+        "cullenroche.bsky.social",
+        # Monetary realism practitioner — liquidity cycles, portfolio construction.
+        # Signal: rate environment framing, macro liquidity commentary.
+        "Pragmatic Capitalist — monetary realism, macro liquidity, portfolio construction.",
+    ),
+    (
+        "Bluesky: Conor Sen (BofA Research)",
+        "conorsen.bsky.social",
+        # BofA macro strategy — housing, consumer, business cycle.
+        # Signal: mid-cycle vs late-cycle framing, sector rotation signals.
+        "BofA macro strategist — housing, consumer, business cycle timing.",
+    ),
+    (
+        "Bluesky: Jason Furman (Harvard / CEA)",
+        "jasonfurman.bsky.social",
+        # Harvard economist, ex-Obama CEA chair — fiscal policy, inflation, labor.
+        # Signal: academic rigor on macro data interpretation, policy credibility.
+        "Harvard economist, ex-CEA chair — fiscal policy, inflation, labor market.",
+    ),
+    (
+        "Bluesky: Steve Liesman (CNBC Fed)",
+        "steveliesman.bsky.social",
+        # CNBC's Fed reporter — FOMC interpretation, monetary policy color.
+        # Signal: Fed speak decoding, rate path framing, central bank credibility.
+        "CNBC senior economics reporter — FOMC, monetary policy, Fed speak.",
+    ),
+    (
+        "Bluesky: Mark Gurman (Bloomberg Tech)",
+        "markgurman.bsky.social",
+        # Bloomberg tech reporter — Apple, big tech supply chain, product cycles.
+        # Signal: AAPL/tech product-cycle catalyst, supply-chain color, earnings setup.
+        "Bloomberg tech reporter — Apple, big tech supply chain, product cycles.",
+    ),
+]
+
 
 def _sa_ticker_url(ticker: str) -> str:
     return f"https://seekingalpha.com/api/sa/combined/{ticker.upper()}.xml"
@@ -171,7 +292,7 @@ def _sa_ticker_name(ticker: str) -> str:
 
 
 def seed_finance_sources(db: Database, user_id: str) -> int:
-    """Insert default Substack + Seeking Alpha RSS sources for ``user_id``.
+    """Insert default Substack + SA RSS + Bluesky list/author sources for ``user_id``.
 
     Idempotent: sources with an identical ``name`` column are never duplicated.
     Returns the count of newly inserted rows.
@@ -181,6 +302,14 @@ def seed_finance_sources(db: Database, user_id: str) -> int:
 
     The ``INGEST_SEEDS_ENABLED`` environment variable (default ``"1"``) gates the
     whole function; set it to ``"0"`` in test environments that want a clean DB.
+
+    **Sources seeded:**
+
+    - 10 Substack finance newsletters (``rss`` kind)
+    - 3 Seeking Alpha global feeds (``rss`` kind)
+    - 5 SA per-ticker feeds for SPY/AAPL/MSFT/NVDA/TSLA (``rss`` kind)
+    - 5 Bluesky starter-pack lists (``bluesky_list`` kind; AT-URIs pre-resolved)
+    - 10 Bluesky author handles (``bluesky_author`` kind)
     """
     if not _SEEDS_ENABLED:
         return 0
@@ -194,7 +323,7 @@ def seed_finance_sources(db: Database, user_id: str) -> int:
 
     inserted = 0
 
-    # Substack sources
+    # Substack sources (rss kind)
     for name, slug, _desc in _SUBSTACK_SEEDS:
         if name in existing_names:
             continue
@@ -208,7 +337,7 @@ def seed_finance_sources(db: Database, user_id: str) -> int:
         existing_names.add(name)
         inserted += 1
 
-    # Seeking Alpha global feeds
+    # Seeking Alpha global feeds (rss kind)
     for name, url, _desc in _SA_GLOBAL_SEEDS:
         if name in existing_names:
             continue
@@ -221,7 +350,7 @@ def seed_finance_sources(db: Database, user_id: str) -> int:
         existing_names.add(name)
         inserted += 1
 
-    # Per-ticker SA sources (default tickers)
+    # Per-ticker SA sources (rss kind; default tickers)
     for ticker in _SA_DEFAULT_TICKERS:
         name = _sa_ticker_name(ticker)
         if name in existing_names:
@@ -231,6 +360,32 @@ def seed_finance_sources(db: Database, user_id: str) -> int:
         db.execute(
             "INSERT INTO sources (id, user_id, kind, name, config_json, enabled)"
             " VALUES (?, ?, 'rss', ?, ?, 1)",
+            (uuid.uuid4().hex, user_id, name, config),
+        )
+        existing_names.add(name)
+        inserted += 1
+
+    # Bluesky starter-pack lists (bluesky_list kind)
+    for name, list_uri, _desc in _BSKY_LIST_SEEDS:
+        if name in existing_names:
+            continue
+        config = json.dumps({"list_uri": list_uri})
+        db.execute(
+            "INSERT INTO sources (id, user_id, kind, name, config_json, enabled)"
+            " VALUES (?, ?, 'bluesky_list', ?, ?, 1)",
+            (uuid.uuid4().hex, user_id, name, config),
+        )
+        existing_names.add(name)
+        inserted += 1
+
+    # Bluesky author handles (bluesky_author kind)
+    for name, handle, _desc in _BSKY_AUTHOR_SEEDS:
+        if name in existing_names:
+            continue
+        config = json.dumps({"handle": handle})
+        db.execute(
+            "INSERT INTO sources (id, user_id, kind, name, config_json, enabled)"
+            " VALUES (?, ?, 'bluesky_author', ?, ?, 1)",
             (uuid.uuid4().hex, user_id, name, config),
         )
         existing_names.add(name)

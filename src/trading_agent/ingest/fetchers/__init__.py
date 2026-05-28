@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .base import HttpSource, RawItem, Source, SourceError
-from .bluesky import BlueskySource
+from .bluesky import BlueskyAuthorSource, BlueskyListSource, BlueskySource
 from .browser import BrowserSource, BrowserUnavailable
 from .reddit import RedditSource
 from .rss import RssSource
@@ -24,10 +24,14 @@ ADAPTERS: dict[str, Callable[..., Source]] = {
     StockTwitsSource.kind: StockTwitsSource,
     BrowserSource.kind: BrowserSource,
     BlueskySource.kind: BlueskySource,
+    BlueskyListSource.kind: BlueskyListSource,    # B1 — list/starter-pack feed
+    BlueskyAuthorSource.kind: BlueskyAuthorSource,  # B1 — per-handle feed
 }
 
 __all__ = [
     "ADAPTERS",
+    "BlueskyAuthorSource",
+    "BlueskyListSource",
     "BlueskySource",
     "BrowserSource",
     "BrowserUnavailable",
