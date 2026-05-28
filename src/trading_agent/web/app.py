@@ -41,6 +41,7 @@ from .routers import notifications as notifications_router
 from .routers import requests as requests_router
 from .routers import research as research_router
 from .routers import risk as risk_router
+from .routers import symbols as symbols_router
 
 if TYPE_CHECKING:
     from ..approval_queue import ApprovalQueue
@@ -62,6 +63,7 @@ _COCKPIT_ROUTERS = (
     requests_router.router,
     notes_router.router,
     calibration_router.router,
+    symbols_router.router,
 )
 
 
