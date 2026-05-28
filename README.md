@@ -10,6 +10,17 @@ modes:
 - **APPROVAL** — proposed trades land in a persistent queue; a human approves or
   rejects each one before execution. Proposals time out automatically.
 
+## Agent model
+
+Each trader is a **ReAct-style tool-using agent** (`AgentTrader` in `llm/trader.py`),
+not a prompt-stuffed structured-output pipeline.  The agent runs a tool-call loop
+each turn — calling LOOK tools (history, news, research, memory, market state), NOTE
+tools (reflect, remind_me, watchpoint), and ACT tools (trade, trade_batch) — and
+exits when it emits a terminal action (trade / hold / pass / done_for_day).  The
+operator sees the full tool-call trace per turn in the cockpit.  New traders receive
+three guided orientation turns via tutorial mode before operating freely.  See
+[`design/TRADER-AGENT.md`](design/TRADER-AGENT.md) for the full agent specification.
+
 ## Quickstart
 
 ```bash

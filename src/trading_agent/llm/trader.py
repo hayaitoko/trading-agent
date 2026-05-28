@@ -100,7 +100,7 @@ def decision_to_signal(d: TradeDecision) -> dict[str, Any] | None:
 # --- LLM trader -------------------------------------------------------------
 
 _SYSTEM_PROMPT = (
-    "You are an autonomous trading agent managing a paper account of US equities. "
+    "You are an autonomous trading agent managing a financial account of US equities. "
     "Given recent price bars and your current portfolio, decide what to trade to "
     "maximize risk-adjusted return. You may only trade the listed symbols, in whole "
     "shares, and must not spend more than your available cash. Respond with ONLY a "
@@ -547,6 +547,8 @@ class AgentTrader:
         risk_manager: Any = None,
         pending_trade_queue: Any = None,
         requires_approval: bool = False,
+        # A6 tutorial mode: first N turns use guided prompts; 0 = disabled.
+        tutorial_remaining: int = 3,
     ) -> None:
         self.model = model
         self.client = client
@@ -567,6 +569,11 @@ class AgentTrader:
         self.risk_manager = risk_manager
         self.pending_trade_queue = pending_trade_queue
         self.requires_approval = requires_approval
+        # A6 tutorial: remaining guided turns (decremented after each tutorial turn;
+        # zeroed immediately on first trade* terminal so auto-exit works).
+        self.tutorial_remaining: int = max(0, tutorial_remaining)
+        # Store original total so tutorial_extra_lines() can compute "turn N of M".
+        self._tutorial_total: int = self.tutorial_remaining
         # Price bar buffer (same shape as LLMTrader for observe() compat)
         self._bars: dict[str, deque[dict[str, Any]]] = {
             s: deque(maxlen=30) for s in self.symbols
@@ -626,6 +633,11 @@ class AgentTrader:
         # Reset after reading so next turn reverts to defaults.
         self._current_turn_type = "regular"
         self._current_wake_reason = "scheduled"
+
+        # A6: tutorial override — new traders always run tutorial turns until
+        # tutorial_remaining is exhausted (or a trade* auto-exits them).
+        if self.tutorial_remaining > 0:
+            turn_type = "tutorial"
 
         ctx = self._build_turn_context(
             account,
@@ -750,6 +762,15 @@ class AgentTrader:
         except OpenRouterError as exc:
             return DecisionResult(error=str(exc))
 
+        # A6: tutorial bookkeeping — must happen before return so the next
+        # call to decide() sees the updated count.
+        if self.tutorial_remaining > 0:
+            _trade_terminals = {"trade", "trade_batch", "confirm_trade"}
+            if terminal_action in _trade_terminals:
+                self.tutorial_remaining = 0  # auto-exit on first trade
+            else:
+                self.tutorial_remaining = max(0, self.tutorial_remaining - 1)
+
         return self._to_decision_result(
             terminal_action, terminal_args, cost_tracker
         )
@@ -823,6 +844,8 @@ class AgentTrader:
             reminder_soft_limit=rm_soft,
             previous_attempt_tools=list(previous_attempt_tools or []),
             extra_lines=self._turn_type_guidance(turn_type),
+            # A6: hint shown in place of the reflections slot for new traders.
+            no_prior_context_hint=self.tutorial_remaining > 0,
         )
 
     def _turn_type_guidance(self, turn_type: TurnType) -> list[str]:
@@ -863,6 +886,13 @@ class AgentTrader:
                     "is for housekeeping, not new entries."
                 )
             return lines
+        if turn_type == "tutorial":
+            from ..prompts.tutorial import tutorial_extra_lines
+            # tutorial_remaining is still pre-decrement here (decremented at end of
+            # decide()), so turn_num = total - remaining + 1 gives the correct
+            # 1-based index for this turn.
+            turn_num = max(1, self._tutorial_total - self.tutorial_remaining + 1)
+            return tutorial_extra_lines(turn_num, self._tutorial_total)
         return []
 
     # --- Tool definitions (stable; re-built per turn but content is constant) -

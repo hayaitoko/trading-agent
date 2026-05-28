@@ -569,7 +569,7 @@ def test_eod_scheduler_fire_drives_no_new_positions_guidance() -> None:
         usage={},
         cost=0.0,
     )
-    trader = AgentTrader("stub-model", client, symbols=["AAPL"], name="EoDSched")
+    trader = AgentTrader("stub-model", client, symbols=["AAPL"], name="EoDSched", tutorial_remaining=0)
     comp = SimpleNamespace(name="EoDSched", trader=trader)
 
     bench = MagicMock(spec=Bench)

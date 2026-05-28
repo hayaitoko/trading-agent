@@ -487,7 +487,7 @@ def test_sod_turn_injects_start_of_day_guidance() -> None:
     client = FakeToolClient([
         _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="pass", arguments={})]),
     ])
-    trader = AgentTrader("m", client, symbols=["AAPL"], name="SoDTrader")
+    trader = AgentTrader("m", client, symbols=["AAPL"], name="SoDTrader", tutorial_remaining=0)
     trader._current_turn_type = "SoD"
     trader.decide({"cash": 1_000.0, "positions": []})
 
@@ -504,7 +504,7 @@ def test_eod_turn_injects_end_of_day_guidance_no_new_positions() -> None:
     client = FakeToolClient([
         _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="hold", arguments={"reason": "eod"})]),
     ])
-    trader = AgentTrader("m", client, symbols=["AAPL"], name="EoDTrader")
+    trader = AgentTrader("m", client, symbols=["AAPL"], name="EoDTrader", tutorial_remaining=0)
     trader._current_turn_type = "EoD"
     # Mirror MarketScheduler._fire_one: it sets this True before an EoD decide().
     trader._eod_no_new_positions = True
@@ -524,7 +524,7 @@ def test_eod_turn_without_strict_flag_omits_no_new_positions() -> None:
     client = FakeToolClient([
         _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="hold", arguments={"reason": "eod"})]),
     ])
-    trader = AgentTrader("m", client, symbols=["AAPL"], name="EoDLooseTrader")
+    trader = AgentTrader("m", client, symbols=["AAPL"], name="EoDLooseTrader", tutorial_remaining=0)
     trader._current_turn_type = "EoD"
     # Flag deliberately left False (non-strict EoD).
     trader.decide({"cash": 1_000.0, "positions": []})

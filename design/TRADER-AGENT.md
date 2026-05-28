@@ -1,6 +1,6 @@
 # Trader Agent — Design Reference
 
-**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3 ✅ · A4 ✅ · A5–A6 in progress  
+**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3 ✅ · A4 ✅ · A5 ✅ · A6 ✅ (complete)  
 **Branch:** `feat/engine-realism`  
 **Legend:** ✅ exists · 🟡 partial · 🔵 planned
 
@@ -368,7 +368,7 @@ When a stop/TP/trail fires during dormancy:
 
 ---
 
-## 6. Tool Catalog (✅ A0 + A1 + A2 / 🔵 A3)
+## 6. Tool Catalog (✅ A0 + A1 + A2 + A3)
 
 All tools return a `ToolResult` — no exceptions escape the agent loop.
 
@@ -583,15 +583,110 @@ class PendingTrade:
 
 ---
 
-## 8. Tutorial Mode (🔵 A6)
+## 8. Tutorial Mode (✅ A6)
 
-_Stub — populated in A6._
+New traders arrive with no reflections, no watchpoints, and no intuition
+about which tools to use.  Tutorial mode gives them three structured turns
+before they operate freely.
 
-New trader field: `tutorial_remaining: int` (default 3).  First N turns use a
-guided prompt that forces `list_tools()` as the first call, demonstrates a
-`memory_search` + `reflect` cycle, and demonstrates a `watchpoint` setup.
-Tutorial mode auto-exits after `tutorial_remaining` reaches 0 or after the
-first `trade*` terminal.
+### New trader field: `tutorial_remaining`
+
+```python
+AgentTrader(..., tutorial_remaining=3)   # default — 3 guided turns
+AgentTrader(..., tutorial_remaining=0)   # tutorial disabled (legacy/test contexts)
+```
+
+`tutorial_remaining` starts at the configured value and counts down.  The
+original total is stored in `_tutorial_total` so guidance can render
+"turn N of M" correctly.
+
+### Activation and override
+
+In `AgentTrader.decide()`, before building the turn context, the tutorial
+override fires:
+
+```python
+if self.tutorial_remaining > 0:
+    turn_type = "tutorial"
+```
+
+This unconditionally replaces whatever turn type the scheduler injected
+(regular, SoD, EoD, etc.) — new traders always get tutorial guidance for
+their first `tutorial_remaining` turns.
+
+Existing code that tests SoD/EoD turn types must pass `tutorial_remaining=0`
+to avoid the override.
+
+### Tutorial prompt template (`prompts/tutorial.py`)
+
+`tutorial_extra_lines(turn_number, total_turns)` returns extra_lines that
+are appended to `TurnContext.extra_lines` via `_turn_type_guidance("tutorial")`.
+Each turn has a specific focus:
+
+| Turn | Focus | Step instruction |
+|---|---|---|
+| 1 | Tool discovery | Call `list_tools()` to see LOOK / NOTE / ACT / END catalog |
+| 2 | Memory | Call `memory_search()` (empty) then `reflect()` to write first lesson |
+| 3 | Watchpoints | Call `watchpoint()` to set a standing monitor on a universe symbol |
+| 4+ | Free exploration | Generic "try any tools you haven't used" message |
+
+Every rendered block begins with a header:
+
+```
+Tutorial — turn 2 of 3: 1 guided turn remains after this one.
+STEP 2 — Explore memory.  Call memory_search(query='first session') ...
+```
+
+The last tutorial turn says "after this turn you decide freely — no more
+guided prompts."
+
+**MONEY IS REAL invariant:** `prompts/tutorial.py` is scanned by
+`test_tutorial_mode.py::test_tutorial_templates_money_is_real` — none of
+the strings "paper", "sim", "demo", "fake", or "test mode" appear anywhere
+in the templates.
+
+### Empty-state handling (`intel/turn_context.py`)
+
+`TurnContext` has a new field `no_prior_context_hint: bool = False`.  When
+`tutorial_remaining > 0`, `AgentTrader._build_turn_context()` sets it
+`True`.  In `build_first_look()`, when `no_prior_context_hint=True` and
+`recent_reflections` is empty, a help line renders in place of the silent
+omission:
+
+```
+Context hint:     no prior context — you are new here; call list_tools() to see your full capability set.
+```
+
+If `recent_reflections` is non-empty (even for tutorial traders who already
+reflected), the normal `Recent reflections:` line renders instead — the hint
+disappears once the trader has memories.
+
+### Auto-exit
+
+At the end of each `decide()` call:
+
+```python
+if self.tutorial_remaining > 0:
+    if terminal_action in {"trade", "trade_batch", "confirm_trade"}:
+        self.tutorial_remaining = 0   # auto-exit on first trade
+    else:
+        self.tutorial_remaining = max(0, self.tutorial_remaining - 1)
+```
+
+- `pass()` / `hold()` / `done_for_day()` → decrement by 1.
+- Any `trade*` terminal → zero immediately (the trader demonstrated real agency).
+- After `tutorial_remaining == 0`: next `decide()` uses `turn_type="regular"`,
+  no tutorial guidance in extra_lines, no context hint in first-look.
+
+### Key files (A6)
+
+| File | Role |
+|---|---|
+| `prompts/__init__.py` | Package init |
+| `prompts/tutorial.py` | `tutorial_extra_lines(turn_number, total_turns)` — turn-specific guidance strings |
+| `llm/trader.py` | `tutorial_remaining` / `_tutorial_total` fields; tutorial override in `decide()`; `_turn_type_guidance("tutorial")`; bookkeeping after terminal |
+| `intel/turn_context.py` | `no_prior_context_hint` field + context-hint render in `build_first_look()` |
+| `tests/test_tutorial_mode.py` | 29 tests — template units, MONEY IS REAL scan, TurnContext hint, remaining-decrement, auto-exit, normal-after-exhausted |
 
 ---
 

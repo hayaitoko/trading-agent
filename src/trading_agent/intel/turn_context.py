@@ -117,6 +117,11 @@ class TurnContext:
     # Extra verbatim lines appended at the end (used by A1+ for enriched context)
     extra_lines: list[str] = field(default_factory=list)
 
+    # A6 tutorial mode: when True and recent_reflections is empty, build_first_look
+    # renders a new-trader hint in place of the silent omission of the reflections
+    # slot.  Set to True by AgentTrader when tutorial_remaining > 0.
+    no_prior_context_hint: bool = False
+
 
 def build_first_look(ctx: TurnContext) -> str:
     """Render a :class:`TurnContext` into the always-on first-look string.
@@ -156,6 +161,12 @@ def build_first_look(ctx: TurnContext) -> str:
         lines.append(f"Directed notes:   {' / '.join(ctx.directed_notes)}")
     if ctx.recent_reflections:
         lines.append(f"Recent reflections: {' / '.join(ctx.recent_reflections)}")
+    elif ctx.no_prior_context_hint:
+        # A6: new trader with no reflections yet — surface a capability hint.
+        lines.append(
+            "Context hint:     no prior context — you are new here; "
+            "call list_tools() to see your full capability set."
+        )
 
     if ctx.previous_attempt_tools:
         lines.append(f"Previous attempt: {', '.join(ctx.previous_attempt_tools)}")

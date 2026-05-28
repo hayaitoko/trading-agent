@@ -33,49 +33,87 @@ cockpit shows the org we *want*; this doc designs how to get there.
 | Component | Role | Status |
 |---|---|---|
 | **Market data feed** | One Alpaca data key → bars/quotes pushed to every book | ✅ `bench.observe_bar/observe_quote` |
-| **History & fundamentals service** | Deep historical bars + fundamentals + corporate events, queryable by any agent | 🔵 |
-| **Research agent** | One shared agent: ingests news/filings (social later) → writes per-ticker **briefs** | 🔵 |
-| **Research store** | Shared, read-only-to-traders store of briefs (what's happening + why) | 🔵 |
-| **Trader (per account)** | One model; emits BUY/SELL/HOLD + reason. Now reads history + relevant briefs + its own memory | ✅ role, 🟡 inputs |
-| **Per-trader memory** | Private, namespaced lessons each trader learns and recalls; pruned for hygiene | 🔵 |
-| **Reflection step** | After a round/trade, a trader writes durable lessons to *its own* memory | 🔵 |
-| **Manager / overseer** | One model watching all books; answers the operator (left-rail chat); raises flags | 🔵 |
-| **Risk manager (per book)** | Kill switch, limits, exposure checks before any fill | ✅ `risk_manager.py` |
-| **Approval queue** | Operator gate; trades wait for a yes | ✅ `approval_queue.py` (SQLite) |
-| **Notification center** | Stock-requests + alerts + fills to the operator | 🟡 `web/notifications.py`, `web/market_watch.py` exist; stock-requests 🔵 |
+| **History & fundamentals service** | Deep historical bars + fundamentals + corporate events, queryable by any agent | ✅ `data/history.HistoryService` — `history()` tool |
+| **Research agent** | One shared agent: ingests news/filings → writes per-user **briefs** | ✅ WS-C `research/` — `research_brief()` + `request_research()` tools |
+| **Research store** | Shared, read-only-to-traders store of briefs | ✅ `research/store.ResearchStore` |
+| **Trader (per account)** | ReAct tool-using agent; calls LOOK/NOTE/ACT tools; exits with hold/pass/trade | ✅ WS-Agent A0–A6 `llm/trader.AgentTrader` |
+| **Per-trader memory** | Private, namespaced lessons each trader learns and recalls | ✅ WS-D `memory/store.MemoryStore` — `memory_search()` + `reflect()` tools |
+| **Reflection step** | `reflect()` tool writes durable lessons (with tool-call provenance) | ✅ WS-D + WS-Agent A2 |
+| **Manager / overseer** | Watches all books; answers operator chat; responds to `ask_manager()` calls | ✅ WS-E `manager/` — `ask_manager()` tool (cost-gated) |
+| **Risk manager (per book)** | Kill switch, limits, idempotency checks before any fill | ✅ `risk_manager.py` |
+| **Approval queue** | Operator gate; trades await approval; callback turns fire on state changes | ✅ WS-Agent A3 `approval_queue.py` + `web/routers/approvals.py` |
+| **Attention queue** | Trader-set reminders + watchpoints; scheduler fires event turns on trip | ✅ WS-Agent A2 `intel/attention_queue.py` |
+| **Lifecycle scheduler** | ET-anchored SoD/EoD/regular/event turns; crash recovery; kill-switch soft halt | ✅ WS-Agent A4 `bench/scheduler.py` + `intel/lifecycle.py` |
+| **Turn trace + observability** | Full tool-call trace per turn; cockpit replay tiles; cost rollup | ✅ WS-Agent A5 `intel/turn_store.py` + `web/routers/traces.py` |
+| **Tutorial mode** | First N turns for new traders: tools → memory → watchpoints orientation | ✅ WS-Agent A6 `prompts/tutorial.py` |
+| **Notification center** | Stock-requests + alerts + fills to the operator | ✅ WS-H `web/routers/requests.py`, `web/notifications.py` |
 | **Bench controller** | Add/remove traders, cadence, start/stop, tick | ✅ `bench/controller.py` |
 
 ---
 
-## 2. The decision loop (target)
+## 2. The decision loop (as-built — WS-Agent tool-using model)
+
+**Status:** ✅ fully shipped as of WS-Agent A6.  See `design/TRADER-AGENT.md` for
+the complete specification and per-component docs.
+
+Each trader is a ReAct-style tool-using agent, not a structured-output pipeline.
+The trader decides what data to look at, can skip turns, trade multiple symbols
+at once, or do nothing — unconstrained by what the operator stuffed into the prompt.
 
 ```
                          ┌─────────────────────────────────────────────┐
-   news / filings  ───▶  │  RESEARCH AGENT (shared, on a cadence)        │
-   (social: later)       │  summarize → per-ticker briefs                │
+   news / filings  ───▶  │  RESEARCH AGENT (shared, per-user cadence)   │ ✅ WS-C
+   (RSS + Bluesky)       │  → per-ticker briefs in ResearchStore        │
                          └───────────────┬─────────────────────────────┘
                                          ▼
-   Alpaca bars/quotes ──▶  HISTORY & FUNDAMENTALS  ──▶  RESEARCH STORE (shared, read-only)
+   Alpaca bars/quotes ──▶  HISTORY SERVICE ✅ ──▶  RESEARCH STORE ✅ (shared read-only)
                                          │                       │
                                          ▼                       ▼
                  ┌──────────────────────────────────────────────────────────┐
-   each round:   │  TRADER (one model per book)                              │
-                 │   context = positions + cash + deep history +            │
-                 │             relevant briefs + ITS OWN memory             │
-                 │   → {action, symbol, qty, reason}                        │
-                 └───────┬───────────────────────────────────┬─────────────┘
-                         ▼                                   ▼
-                  RISK CHECK ✅                       REFLECTION → writes to
-                         │                            this trader's PRIVATE memory 🔵
-                         ▼
-              APPROVAL QUEUE ✅ ──(you say yes)──▶ PaperBroker fill ✅ ──▶ Activity log ✅
+   each turn:    │  AGENT TRADER (one model per book)        ✅ WS-Agent A0–A6  │
+                 │                                                          │
+                 │  always-on first-look context:                           │
+                 │    identity · account · wake_reason · turn_type · time   │
+                 │    cadence · attention counts · cost-so-far              │
+                 │    [directed notes · recent reflections · context hint]  │
+                 │                                                          │
+                 │  tool loop (until terminal):                             │
+                 │    LOOK tools: history, news, research_brief, situation, │
+                 │                account_state, memory_search, ask_manager │
+                 │    NOTE tools: reflect, remind_me, watchpoint,           │
+                 │                watch_symbol / unwatch_symbol             │
+                 │    ACT tools:  trade, trade_batch, confirm_trade,        │
+                 │                update_protective_order, abandon_trade    │
+                 │    END:        hold(reason) · pass() · done_for_day()    │
+                 │                trade* / confirm_trade*                   │
+                 └──────────┬──────────────────────────┬───────────────────┘
+                            ▼                          ▼
+                     RISK CHECK ✅              reflect() → MEMORY STORE ✅ WS-D
+                            │                  (per-trader, namespaced)
+                            ▼
+              APPROVAL QUEUE ✅ ──(approve)──▶ PaperBroker fill ✅ ──▶ Turn trace ✅ A5
 
-   MANAGER 🔵 reads: all books + recent decisions + risk + research  →  answers your chat,
-                     raises notifications (incl. stock-requests), summarizes the day.
+   MANAGER ✅ WS-E: reads bench snapshot → answers operator chat, flags traders,
+                    responds to trader ask_manager() calls (cost-gated ≤1/turn).
+                    Manager never discloses paper/live status or peer-trader state.
 ```
 
-Key point: **the research agent runs once and is shared by all traders** (cheap per-trader),
-while **memory is private per trader** (so they don't pollute each other).
+Key point: **the trader chooses what to look at**.  Data sources are tools the
+trader calls when it decides it needs them, not context stuffed unconditionally
+into the prompt.  Tool-call provenance (which tools fired before a trade) is
+recorded in the turn trace and measured in the P6 calibration experiment.
+
+**Lifecycle (ET-anchored, ✅ A4):**
+- T−60 min → SoD turn (absorb overnight intel, seed watchpoints).
+- RTH: regular cadence + event/reminder/callback turns.
+- T+30 min → EoD turn (reflect, lock protective orders).
+- Dormant outside that window; research agent continues independently.
+- Kill switch: ACT tools return `{ok:false, error:"unavailable"}`; LOOK/NOTE
+  tools and hold()/pass() continue to work.
+
+**Tutorial mode (✅ A6):** new traders (`tutorial_remaining=3` default) get
+three structured turns (tools → memory → watchpoints) before operating freely.
+See §8 of `design/TRADER-AGENT.md`.
 
 ---
 
