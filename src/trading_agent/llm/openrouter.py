@@ -1,13 +1,28 @@
-"""Minimal OpenRouter chat client (OpenAI-compatible) over httpx.
+"""OpenRouter chat client (OpenAI-compatible) over httpx.
 
-Kept deliberately thin: one ``chat`` call for completions and ``list_models``
-for the UI's model menu. ZDR is enforced per-request via the ``provider``
-routing block (``data_collection: deny``) so only non-retaining providers serve
-the call — matching Artoo's posture. Note that some providers (e.g. Alibaba's
-closed Qwen weights) are excluded under that policy.
+Provides two call styles:
+
+* :meth:`OpenRouterClient.chat` — plain completion (JSON or free text), used
+  by the legacy :class:`~trading_agent.llm.trader.LLMTrader` structured-output
+  path and the manager agent.
+
+* :meth:`OpenRouterClient.chat_with_tools` — OpenAI-compatible tool-calling,
+  used by the new :class:`~trading_agent.llm.trader.AgentTrader` ReAct loop.
+  Returns :class:`ToolCallChatResult` which carries either ``content`` (text)
+  or a list of :class:`ToolCall` objects (one per function the model invoked).
+
+ZDR is enforced per-request via the ``provider`` routing block
+(``data_collection: deny``) so only non-retaining providers serve each call —
+matching Artoo's posture.  Providers that require data retention (e.g. Alibaba
+closed-weight Qwens) are excluded under this policy.
 
 Inject a custom ``transport`` (e.g. ``httpx.MockTransport``) to test without a
 network or a live key.
+
+Cache breakpoint: for Anthropic-backend models, callers can add
+``{"cache_control": {"type": "ephemeral"}}`` to the last stable message block
+(system prompt + tool list) to engage Anthropic's prompt-caching tier.
+Non-Anthropic providers ignore the field.
 """
 
 from __future__ import annotations
@@ -30,6 +45,35 @@ class ChatResult:
     model: str
     usage: dict[str, Any] = field(default_factory=dict)
     cost: float | None = None
+
+
+@dataclass
+class ToolCall:
+    """One function invocation returned by the model in tool-call mode."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]  # pre-parsed from the JSON string
+
+
+@dataclass
+class ToolCallChatResult:
+    """Result from :meth:`OpenRouterClient.chat_with_tools`.
+
+    Exactly one of ``content`` or ``tool_calls`` carries data per turn:
+    * ``tool_calls`` is non-empty when the model invoked tools (finish_reason
+      ``"tool_calls"``).
+    * ``content`` is non-empty when the model returned plain text (finish_reason
+      ``"stop"`` or ``"end_turn"``).
+    * Both empty → treat as implicit hold (model returned nothing useful).
+    """
+
+    content: str | None
+    tool_calls: list[ToolCall]
+    model: str
+    usage: dict[str, Any] = field(default_factory=dict)
+    cost: float | None = None
+    finish_reason: str = ""
 
 
 class OpenRouterClient:
@@ -100,6 +144,79 @@ class OpenRouterClient:
             model=data.get("model", model),
             usage=data.get("usage", {}) or {},
             cost=(data.get("usage", {}) or {}).get("cost"),
+        )
+
+    def chat_with_tools(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        tool_choice: str = "auto",
+    ) -> ToolCallChatResult:
+        """OpenAI-compatible tool-calling completion.
+
+        ``tools`` should be a list of OpenAI function-tool dicts::
+
+            [{"type": "function", "function": {"name": ..., "description": ...,
+              "parameters": {...}}}]
+
+        The response carries either ``content`` (model returned text) or a list
+        of :class:`ToolCall` objects (model called one or more functions).
+
+        Args are pre-parsed from JSON so callers never deal with raw argument
+        strings.  A malformed arguments JSON from the model becomes an empty
+        dict with the raw string logged to ``arguments["_raw"]``.
+        """
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if self.zdr:
+            body["provider"] = {"data_collection": "deny"}
+
+        resp = self._client.post("/chat/completions", json=body)
+        if resp.status_code >= 400:
+            raise OpenRouterError(f"OpenRouter {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+        try:
+            choice = data["choices"][0]
+            msg = choice["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise OpenRouterError(f"Unexpected OpenRouter response shape: {exc}")
+
+        finish_reason = choice.get("finish_reason", "")
+        raw_calls = msg.get("tool_calls") or []
+        tool_calls: list[ToolCall] = []
+        for tc in raw_calls:
+            fn = tc.get("function", {})
+            raw_args = fn.get("arguments", "{}")
+            try:
+                args = json.loads(raw_args) if raw_args else {}
+            except json.JSONDecodeError:
+                args = {"_raw": raw_args}
+            tool_calls.append(
+                ToolCall(
+                    id=tc.get("id", ""),
+                    name=fn.get("name", ""),
+                    arguments=args if isinstance(args, dict) else {"_raw": str(args)},
+                )
+            )
+
+        usage = data.get("usage", {}) or {}
+        return ToolCallChatResult(
+            content=msg.get("content") or None,
+            tool_calls=tool_calls,
+            model=data.get("model", model),
+            usage=usage,
+            cost=usage.get("cost"),
+            finish_reason=finish_reason,
         )
 
     def list_models(self) -> list[dict[str, Any]]:

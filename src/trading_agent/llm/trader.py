@@ -1,22 +1,34 @@
-"""Bench competitors: a uniform ``Trader`` interface with two implementations.
+"""Bench competitors: a uniform ``Trader`` interface with three implementations.
 
 * :class:`LLMTrader` — prompts an OpenRouter model with recent price context +
   the current portfolio and parses a structured BUY/SELL/HOLD decision.
+  Legacy structured-output path; kept for bench backward-compat.
+
 * :class:`StrategyTrader` — wraps any deterministic :class:`Strategy` (e.g.
   mean-reversion) so it can compete in the same bench as a baseline.
 
-Both expose ``observe(bar)`` (cheap, every bar) and ``decide(account)`` (called
-by the bench at the chosen cadence). ``decide`` returns a :class:`DecisionResult`
-the bench turns into broker orders via :func:`decision_to_signal`.
+* :class:`AgentTrader` — new ReAct-style tool-calling agent (WS-Agent A0).
+  Runs a multi-step decision loop: build first-look context → call model with
+  tools → execute tools → repeat until terminal action or runaway guard.
+  Terminal actions in A0: ``hold(reason)`` and ``pass()``.
+  Later waves (A1–A3) add the LOOK/NOTE/ACT tool catalogs.
+
+All three expose ``observe(bar)`` and ``decide(account) -> DecisionResult`` so
+they are drop-in substitutes from the bench/controller's perspective.
 """
 
 from __future__ import annotations
 
+import json
+import os
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from .openrouter import OpenRouterError, parse_json_object
+from ..intel.cost_tracker import CostTracker
+from ..intel.tool_envelope import ToolError, ToolResult
+from ..intel.turn_context import TurnContext, TurnType, build_first_look
+from .openrouter import OpenRouterError, ToolCall, ToolCallChatResult, parse_json_object
 
 if TYPE_CHECKING:
     from ..data.history import HistoryService
@@ -433,3 +445,504 @@ class StrategyTrader:
             return DecisionResult(comment="no signal")
         decision, self._pending = self._pending, None
         return DecisionResult(decisions=[decision], comment="strategy signal")
+
+
+# ---------------------------------------------------------------------------
+# AgentTrader — WS-Agent A0: ReAct-style tool-calling foundation
+# ---------------------------------------------------------------------------
+
+# Runaway guard: maximum tool-invocation calls per turn before forced hold.
+_RUNAWAY_LIMIT = int(os.environ.get("AGENT_RUNAWAY_LIMIT", 100))
+
+# Context-window guard: when accumulated message content (rough char count) exceeds
+# this fraction of the model's assumed context, summarise older tool results.
+_CTX_WARN_FRAC = 0.70
+# Assumed context in chars (4 chars ≈ 1 token; 128k tokens = 512k chars).
+_CTX_CHARS = int(os.environ.get("AGENT_CTX_CHARS", 512_000))
+_CTX_WARN_CHARS = int(_CTX_CHARS * _CTX_WARN_FRAC)
+
+# A0 terminal tool names — when the model calls any of these the loop exits.
+_TERMINALS: frozenset[str] = frozenset({"pass", "hold", "done_for_day"})
+
+
+class AgentTrader:
+    """ReAct-style tool-calling trader agent (WS-Agent A0 foundation).
+
+    Replaces the structured-output :class:`LLMTrader` pipeline with a proper
+    multi-step decision loop:
+
+      1. Build always-on first-look context (:mod:`intel.turn_context`).
+      2. Call the model with tool definitions (OpenAI-compatible via OpenRouter).
+      3. On ``tool_calls`` response: execute each tool, append result to the
+         message list, repeat.
+      4. Exit on: terminal tool call (``hold`` / ``pass``) **or** model returns
+         plain text (implicit hold) **or** runaway guard (100 calls) **or**
+         context-window guard (summarise-and-trim).
+
+    A0 built-in tools: ``list_tools``, ``memory_search``, ``pass``, ``hold``.
+    Later waves add the full LOOK/NOTE/ACT catalogs.
+
+    **MONEY IS REAL invariant:** nothing in the system prompt, first-look
+    context, or any tool result may mention ``"paper"``, ``"sim"``, ``"demo"``,
+    or ``"fake"``.  The broker abstraction hides live vs. paper status; only
+    operator-facing surfaces (cockpit, audit log) badge it.
+
+    The ``decide()`` return is a :class:`DecisionResult` with an empty
+    ``decisions`` list in A0 (no ACT tools yet) and ``comment`` set to the
+    terminal reason.  The bench/controller sees this as a hold — correct
+    behaviour until A3 adds trade execution.
+
+    Failure modes:
+    - ``OpenRouterError`` from the model call → ``DecisionResult(error=...)``
+    - Malformed tool-call JSON from model → tool dispatched with empty args
+    - Tool raises unexpectedly → wrapped in ``ToolResult(ok=False, ...)``
+    """
+
+    RUNAWAY_LIMIT: int = _RUNAWAY_LIMIT
+    CTX_WARN_CHARS: int = _CTX_WARN_CHARS
+
+    def __init__(
+        self,
+        model: str,
+        client: Any,  # must expose chat_with_tools(); duck-typed to avoid cycle
+        *,
+        symbols: list[str],
+        name: str | None = None,
+        style: str | None = None,
+        cadence_minutes: int = 30,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        # WS-D memory (optional; A1 wires fully)
+        memory: Any = None,
+        owner_user_id: str | None = None,
+        memory_k: int = 5,
+    ) -> None:
+        self.model = model
+        self.client = client
+        self.symbols = list(symbols)
+        self.name = name or model
+        self.style = style
+        self.cadence_minutes = cadence_minutes
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.memory = memory
+        self.owner_user_id = owner_user_id
+        self.memory_k = memory_k
+        # Price bar buffer (same shape as LLMTrader for observe() compat)
+        self._bars: dict[str, deque[dict[str, Any]]] = {
+            s: deque(maxlen=30) for s in self.symbols
+        }
+        # Stable system message content (built once at construction)
+        self._stable_system_content: str = self._build_system_prompt()
+
+    # --- Trader Protocol interface -------------------------------------------
+
+    def observe(self, bar: dict[str, Any]) -> None:
+        """Accumulate price bars; cheap call every market tick."""
+        symbol = bar.get("symbol")
+        if symbol in self._bars:
+            self._bars[symbol].append(bar)
+
+    def decide(self, account: dict[str, Any]) -> DecisionResult:
+        """Run one full agent turn and return the terminal action as a DecisionResult."""
+        ctx = self._build_turn_context(account)
+        cost_tracker = CostTracker()
+
+        # Build initial message list: stable system + variable first-look.
+        # The system message gets cache_control for Anthropic-backend caching;
+        # non-Anthropic providers ignore the field.
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": self._stable_system_content,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
+            {"role": "user", "content": build_first_look(ctx)},
+        ]
+
+        tool_call_count = 0
+        terminal_action = "hold"
+        terminal_args: dict[str, Any] = {"reason": "no decision reached"}
+
+        try:
+            while True:
+                # Inject cost-warn nudge if threshold crossed (once per turn).
+                warn = cost_tracker.check_warn()
+                if warn:
+                    messages.append({"role": "system", "content": warn})
+
+                result: ToolCallChatResult = self.client.chat_with_tools(
+                    self.model,
+                    messages,
+                    tools=self._tool_definitions(),
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+
+                usage = result.usage or {}
+                cost_tracker.add_model_call(
+                    cost_usd=result.cost or 0.0,
+                    input_tokens=usage.get("prompt_tokens", 0),
+                    output_tokens=usage.get("completion_tokens", 0),
+                    cached_tokens=usage.get("cached_tokens", 0),
+                )
+
+                # Model returned plain text → implicit hold.
+                if not result.tool_calls:
+                    terminal_action = "hold"
+                    terminal_args = {"reason": result.content or "(no response)"}
+                    break
+
+                # Append the model's tool-call turn to the message list.
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.name,
+                                    "arguments": json.dumps(tc.arguments),
+                                },
+                            }
+                            for tc in result.tool_calls
+                        ],
+                    }
+                )
+
+                hit_terminal = False
+                for tc in result.tool_calls:
+                    tool_call_count += 1
+                    tool_result = self._execute_tool(tc, cost_tracker)
+
+                    if tc.name in _TERMINALS:
+                        terminal_action = tc.name
+                        terminal_args = tc.arguments
+                        hit_terminal = True
+                        # Append a stub tool result so the message list is valid.
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": json.dumps(tool_result.to_dict()),
+                            }
+                        )
+                        break
+
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": json.dumps(tool_result.to_dict()),
+                        }
+                    )
+
+                if hit_terminal:
+                    break
+
+                # Runaway guard.
+                if tool_call_count >= self.RUNAWAY_LIMIT:
+                    terminal_action = "hold"
+                    terminal_args = {
+                        "reason": f"runaway guard: {tool_call_count} tool calls in one turn"
+                    }
+                    break
+
+                # Context-window guard: summarise old tool results if too large.
+                self._maybe_trim_context(messages)
+
+        except OpenRouterError as exc:
+            return DecisionResult(error=str(exc))
+
+        return self._to_decision_result(
+            terminal_action, terminal_args, cost_tracker
+        )
+
+    # --- System prompt (stable; built at construction time) ------------------
+
+    def _build_system_prompt(self) -> str:
+        universe_str = ", ".join(self.symbols) if self.symbols else "(to be determined)"
+        mandate_str = f"\nYour mandate: {self.style.strip()}." if self.style else ""
+        return (
+            f"You are {self.name}, an autonomous trading agent managing a "
+            f"financial account investing in US equities and other instruments.{mandate_str}\n"
+            f"Your current tradable universe: {universe_str}.\n"
+            f"You are called every {self.cadence_minutes} minutes during regular trading hours.\n\n"
+            "Use the tools available to gather information, analyse your positions, "
+            "and make trading decisions.  When you are done, call one of the terminal tools:\n"
+            "  • hold(reason) — you considered the situation and chose not to trade; "
+            "reason is logged for later reflection.\n"
+            "  • pass() — nothing warranted your attention; no log entry.\n\n"
+            "Rules:\n"
+            "  • Trade only symbols in your universe.\n"
+            "  • Quantities in whole shares unless the instrument supports fractions.\n"
+            "  • Risk limits and position caps are enforced by the system — "
+            "focus on *what* to trade, not limit arithmetic.\n"
+            "  • When in doubt, hold rather than trade blindly.\n"
+        )
+
+    # --- Turn context (variable; rebuilt each turn) --------------------------
+
+    def _build_turn_context(
+        self,
+        account: dict[str, Any],
+        wake_reason: str = "scheduled",
+        turn_type: TurnType = "regular",
+        previous_attempt_tools: list[str] | None = None,
+    ) -> TurnContext:
+        positions = account.get("positions", [])
+        pos_count = len(positions) if isinstance(positions, list) else 0
+        return TurnContext(
+            trader_name=self.name,
+            model=self.model,
+            mandate=self.style,
+            cash=float(account.get("cash", 0)),
+            position_count=pos_count,
+            last_decision=account.get("last_decision"),
+            wake_reason=wake_reason,
+            turn_type=turn_type,
+            cadence_minutes=self.cadence_minutes,
+            previous_attempt_tools=list(previous_attempt_tools or []),
+        )
+
+    # --- Tool definitions (stable; re-built per turn but content is constant) -
+
+    def _tool_definitions(self) -> list[dict[str, Any]]:
+        """OpenAI-compatible tool list for A0.  A1 will extend this via the LOOK catalog."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_tools",
+                    "description": (
+                        "List every tool available to you with name, description, "
+                        "argument schema, latency tier, and cost class.  Call this "
+                        "first on unfamiliar turns to discover what you can do."
+                    ),
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "memory_search",
+                    "description": (
+                        "Search your private memory for lessons and reflections relevant "
+                        "to a query.  Returns up to k items; empty result means no prior "
+                        "context — you may be new here."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Semantic search query, e.g. 'AAPL momentum strategy'",
+                            },
+                            "k": {
+                                "type": "integer",
+                                "description": "Max results to return (default 5)",
+                                "default": 5,
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hold",
+                    "description": (
+                        "End this turn having considered the situation.  Use when you "
+                        "decided not to trade.  The reason is logged for reflection — "
+                        "be honest about why you are holding."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reason": {
+                                "type": "string",
+                                "description": "Why you chose to hold.",
+                            }
+                        },
+                        "required": ["reason"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "pass",
+                    "description": (
+                        "End this turn when there is genuinely nothing interesting. "
+                        "No reason is logged — use when you didn't even consider trading."
+                    ),
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            },
+        ]
+
+    # --- Tool executor -------------------------------------------------------
+
+    def _execute_tool(
+        self, tc: ToolCall, cost_tracker: CostTracker
+    ) -> ToolResult:
+        """Dispatch a tool call and return its :class:`ToolResult`.
+
+        Unknown tools return a ``not_found`` error rather than raising, so the
+        model sees a structured error and can reason about it.
+        """
+        try:
+            if tc.name == "list_tools":
+                return self._tool_list_tools()
+            if tc.name == "memory_search":
+                return self._tool_memory_search(
+                    tc.arguments.get("query", ""),
+                    int(tc.arguments.get("k", self.memory_k)),
+                    cost_tracker,
+                )
+            if tc.name in _TERMINALS:
+                # Terminal — just acknowledge; loop handles exit.
+                return ToolResult(ok=True, data={"action": tc.name})
+            return ToolResult(
+                ok=False,
+                error=ToolError(
+                    kind="not_found",
+                    message=f"Tool '{tc.name}' is not available in this turn. "
+                    "Call list_tools() to see what is enabled.",
+                ),
+            )
+        except Exception as exc:
+            return ToolResult(
+                ok=False,
+                error=ToolError(kind="internal", message=str(exc)),
+            )
+
+    def _tool_list_tools(self) -> ToolResult:
+        """Return the A0 tool catalog; extended by later waves."""
+        catalog = [
+            {
+                "name": "list_tools",
+                "description": "List all available tools.",
+                "args": {},
+                "latency": "instant",
+                "cost_class": "free",
+                "enabled": True,
+                "disabled_reason": None,
+            },
+            {
+                "name": "memory_search",
+                "description": "Search your private memory for relevant lessons.",
+                "args": {"query": "str", "k": "int (default 5)"},
+                "latency": "fast",
+                "cost_class": "free",
+                "enabled": True,
+                "disabled_reason": None,
+            },
+            {
+                "name": "hold",
+                "description": "Terminal: end this turn having considered the situation.",
+                "args": {"reason": "str"},
+                "latency": "instant",
+                "cost_class": "free",
+                "enabled": True,
+                "disabled_reason": None,
+            },
+            {
+                "name": "pass",
+                "description": "Terminal: end this turn — nothing interesting.",
+                "args": {},
+                "latency": "instant",
+                "cost_class": "free",
+                "enabled": True,
+                "disabled_reason": None,
+            },
+        ]
+        return ToolResult(ok=True, data={"tools": catalog})
+
+    def _tool_memory_search(
+        self,
+        query: str,
+        k: int,
+        cost_tracker: CostTracker,
+    ) -> ToolResult:
+        """Query the trader's private memory namespace; empty when store absent."""
+        if not query:
+            return ToolResult(
+                ok=False,
+                error=ToolError(kind="invalid_input", message="query must not be empty"),
+            )
+        if self.memory is None or self.owner_user_id is None:
+            return ToolResult(
+                ok=True,
+                data={"memories": [], "note": "memory store not yet available"},
+            )
+        try:
+            lessons = self.memory.recall(
+                self.owner_user_id, self.name, query, k
+            )
+            memories = [
+                {"text": str(getattr(lesson, "text", lesson)), "trader_id": self.name}
+                for lesson in lessons
+            ]
+            return ToolResult(ok=True, data={"memories": memories})
+        except Exception as exc:
+            return ToolResult(
+                ok=False,
+                error=ToolError(kind="internal", message=str(exc)),
+            )
+
+    # --- Context-window guard ------------------------------------------------
+
+    def _maybe_trim_context(self, messages: list[dict[str, Any]]) -> None:
+        """If the message list grows too large, summarise older tool results in-place.
+
+        Keeps the first two messages (system + first-look) and the most recent
+        4 messages intact; everything in between has its tool-result content
+        replaced with a one-line summary.
+        """
+        total_chars = sum(
+            len(json.dumps(m)) for m in messages
+        )
+        if total_chars <= self.CTX_WARN_CHARS:
+            return
+        # Summarise tool result messages in the middle section.
+        keep_tail = 4
+        boundary = len(messages) - keep_tail
+        for i in range(2, boundary):
+            m = messages[i]
+            if m.get("role") == "tool":
+                messages[i] = {
+                    "role": "tool",
+                    "tool_call_id": m.get("tool_call_id", ""),
+                    "content": "[earlier tool result summarised — context trimmed]",
+                }
+
+    # --- Result mapping ------------------------------------------------------
+
+    def _to_decision_result(
+        self,
+        action: str,
+        args: dict[str, Any],
+        cost_tracker: CostTracker,
+    ) -> DecisionResult:
+        """Map the terminal action to a bench-compatible DecisionResult."""
+        if action == "pass":
+            comment = "pass"
+        elif action == "hold":
+            comment = str(args.get("reason", "hold"))
+        elif action == "done_for_day":
+            comment = f"done_for_day: {args.get('reason', '')}"
+        else:
+            comment = action
+        return DecisionResult(
+            decisions=[],
+            comment=comment,
+            usage=cost_tracker.rollup(),  # type: ignore[arg-type]
+        )
