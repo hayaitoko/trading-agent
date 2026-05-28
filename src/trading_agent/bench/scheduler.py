@@ -23,14 +23,15 @@ Callback wiring (carry-over A4-b):
   abandon).  The callback turn fires via the bench's ``_run_one`` path with a
   synthetic ``wake_reason`` that describes the approval-state change.
 
-Kill-switch soft halt (A3 verified):
-  The scheduler honours the per-trader kill switch via the risk manager.  When
-  ``risk_manager.kill_switch_active`` is True, ACT tools already return
-  ``{ok:false, error:{kind:"unavailable"}}`` (A3's work).  The scheduler
-  additionally suppresses SoD/EoD/regular turn *firing* while the kill switch
-  is active — the trader is effectively frozen.  LOOK and NOTE turns that come
-  through event callbacks still run (the trader can still reason; it just
-  cannot trade).
+Kill-switch soft halt (enforced at the ACT tool layer, NOT the scheduler):
+  The kill switch is a *soft* halt: it blocks trading, not thinking.  When
+  ``risk_manager.kill_switch_active`` is True, ACT tools return
+  ``{ok:false, error:{kind:"unavailable", message:"bench halted by operator"}}``
+  (A3's work).  This scheduler does NOT suppress turn firing and holds no
+  risk-manager reference — SoD/EoD/regular/event/callback turns all continue to
+  fire normally while the kill switch is active.  The trader still wakes, keeps
+  full LOOK/NOTE access, and reaches ``hold()``/``pass()`` cleanly, so its state
+  of mind is preserved for forensics.
 
 After-hours protective-order fills:
   Tracked via :class:`~trading_agent.intel.lifecycle.LifecycleEngine`.

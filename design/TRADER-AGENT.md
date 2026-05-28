@@ -291,10 +291,16 @@ When `risk_manager.kill_switch_active` is `True`:
   `{ok: false, error: {kind: "unavailable", message: "bench halted by operator"}}`.
 - **LOOK and NOTE tools** are unaffected — the trader can still gather
   information and call `hold()` or `pass()` cleanly.
-- The scheduler suppresses new SoD/EoD/regular turns while the kill switch is
-  active.  Event-driven callback turns (informational only) are still delivered.
+- **Turns are NOT suppressed.**  SoD / EoD / regular / event / callback turns
+  all continue to fire normally — the scheduler holds no risk-manager reference
+  and does not gate turn firing on the kill switch.  The halt is *soft*: it
+  blocks trading at the ACT tool layer, not thinking.  The trader still wakes,
+  gathers information, and reaches `hold()` / `pass()`, preserving its state of
+  mind for forensics.
 
-Verified by A3 (ACT tool layer) and tested in `tests/test_lifecycle.py`.
+Enforced at the ACT tool layer (A3).  The soft-halt behaviour — ACT tools
+return `unavailable`, LOOK/NOTE tools work, `hold()`/`pass()` stay reachable —
+is tested in `tests/test_lifecycle.py` (`test_smoke_4_*`).
 
 ### Crash recovery (carry-over A4-a)
 
