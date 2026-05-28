@@ -28,6 +28,24 @@ def _utcnow_iso() -> str:
     return datetime.now(UTC).replace(tzinfo=None).isoformat()
 
 
+# P1: stale-decision guard defaults.
+# TTL: decisions older than 30 s are discarded (the LLM call took too long or
+# the decision was queued).  Drift: if the symbol's price moved more than 1%
+# since the snapshot, the signal is based on stale information → discard.
+# Both thresholds can be overridden via the settings store (stale_ttl_seconds /
+# stale_drift_pct) — these are the defaults applied when no override exists.
+_STALE_TTL_SECONDS: float = 30.0
+_STALE_DRIFT_PCT: float = 1.0
+
+
+@dataclass
+class _DecisionSnapshot:
+    """World-state captured just before a decide() call (P1 stale guard)."""
+    prices: dict[str, float]        # last prices at snapshot time
+    positions: dict[str, float]     # {symbol: quantity} at snapshot time
+    ts: datetime                    # UTC timestamp of the snapshot
+
+
 @dataclass
 class DecisionLogEntry:
     timestamp: str
@@ -177,6 +195,18 @@ class Bench:
             self._run_one(comp)
 
     def _run_one(self, comp: Competitor) -> None:
+        # P1: Capture the live state just before the (potentially slow) LLM call.
+        # Another thread may update prices or fire stops while decide() is in
+        # flight; the snapshot lets _apply_decision revalidate against live state.
+        with self._lock:
+            snapshot = _DecisionSnapshot(
+                prices=dict(self._last_prices),
+                positions={
+                    sym: pos.quantity
+                    for sym, pos in comp.broker.positions.items()
+                },
+                ts=datetime.now(UTC),
+            )
         account = {
             "cash": comp.broker.get_balance()["cash"],
             "positions": comp.broker.get_positions(),
@@ -195,9 +225,14 @@ class Bench:
                 self._audit("error", comp.name, {"error": result.error})
                 return
             for decision in result.decisions:
-                self._apply_decision(comp, decision)
+                self._apply_decision(comp, decision, snapshot)
 
-    def _apply_decision(self, comp: Competitor, decision: Any) -> None:
+    def _apply_decision(
+        self,
+        comp: Competitor,
+        decision: Any,
+        snapshot: _DecisionSnapshot | None = None,
+    ) -> None:
         signal = decision_to_signal(decision)
         if signal is None:
             return  # HOLD / zero qty
@@ -207,6 +242,15 @@ class Bench:
                 decision.quantity, status, reason=decision.reason, detail=detail,
             )
         )
+
+        # P1: Revalidate the decision against live state before executing.
+        if snapshot is not None:
+            stale_reason = self._stale_reason(comp, decision, snapshot)
+            if stale_reason:
+                log("blocked", stale_reason)
+                self._audit("stale_decision", comp.name, {"reason": stale_reason, "signal": signal})
+                return
+
         if comp.risk.check_kill_switch():
             log("blocked", "kill switch")
             return
@@ -222,6 +266,49 @@ class Bench:
         status = (result or {}).get("status", "UNKNOWN")
         log("filled" if status == "FILLED" else "rejected", f"status={status}")
         self._audit("trade", comp.name, {"order": result})
+
+    def _stale_reason(
+        self,
+        comp: Competitor,
+        decision: Any,
+        snapshot: _DecisionSnapshot,
+    ) -> str:
+        """Return a non-empty string reason if the decision is stale, else ''.
+
+        Checks three conditions (all configurable, defaults: TTL 30 s, drift 1%):
+        1. TTL: the snapshot is older than ``stale_ttl_seconds``.
+        2. Price drift: the symbol's price moved > ``stale_drift_pct`` since
+           the snapshot — the model decided on stale quotes.
+        3. Position mismatch: the snapshot assumed a long but a stop already
+           flattened it (or vice versa), making the signal accidentally wrong-way.
+        """
+        now = datetime.now(UTC)
+        age = (now - snapshot.ts).total_seconds()
+        if age > _STALE_TTL_SECONDS:
+            return f"stale:ttl ({age:.1f}s > {_STALE_TTL_SECONDS}s)"
+
+        sym = decision.symbol
+        snap_price = snapshot.prices.get(sym)
+        live_price = self._last_prices.get(sym)
+        if snap_price is not None and live_price is not None and snap_price > 0:
+            drift_pct = abs(live_price - snap_price) / snap_price * 100.0
+            if drift_pct > _STALE_DRIFT_PCT:
+                return f"stale:drift ({drift_pct:.2f}% > {_STALE_DRIFT_PCT}%)"
+
+        action = decision.action.upper()
+        if action not in ("BUY", "SELL"):
+            return ""
+        snap_qty = snapshot.positions.get(sym, 0.0)
+        live_pos = comp.broker.get_position(sym)
+        live_qty = live_pos.quantity if live_pos is not None else 0.0
+        # SELL assumed a long position that's already been flattened.
+        if action == "SELL" and snap_qty > 0 and live_qty <= 0:
+            return "stale:position (assumed long but now flat)"
+        # BUY to cover assumed a short that's already been covered.
+        if action == "BUY" and snap_qty < 0 and live_qty >= 0:
+            return "stale:position (assumed short but now flat)"
+
+        return ""
 
     # --- Reporting ----------------------------------------------------------
 
