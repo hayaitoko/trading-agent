@@ -822,7 +822,38 @@ class AgentTrader:
             active_reminders=active_rm,
             reminder_soft_limit=rm_soft,
             previous_attempt_tools=list(previous_attempt_tools or []),
+            extra_lines=self._turn_type_guidance(turn_type),
         )
+
+    @staticmethod
+    def _turn_type_guidance(turn_type: TurnType) -> list[str]:
+        """Turn-type-conditional special-prompt guidance for the first-look block.
+
+        SoD and EoD turns carry extra guidance describing what that turn is for.
+        Kept OUT of the cached system prefix (Discipline #6 token caching): these
+        lines render in the variable user-message suffix (``TurnContext.extra_lines``
+        → :func:`build_first_look`), so the stable system prompt stays cacheable
+        across every turn.  All other turn types add no extra lines.
+        """
+        if turn_type == "SoD":
+            return [
+                "",
+                "Start-of-day guidance: the market has not opened yet. Absorb "
+                "overnight developments (call news, research_brief, and situation "
+                "as needed), set your posture for the day, and seed watchpoints for "
+                "the symbols you want to track. There is no need to trade before the "
+                "open.",
+            ]
+        if turn_type == "EoD":
+            return [
+                "",
+                "End-of-day guidance: the session has closed. Reflect on today's "
+                "decisions (use reflect to capture what you learned), review and lock "
+                "in protective orders on your open positions, and queue watchpoints "
+                "or reminders for tomorrow. Do not open new positions on this turn — "
+                "the end-of-day turn is for housekeeping, not new entries.",
+            ]
+        return []
 
     # --- Tool definitions (stable; re-built per turn but content is constant) -
 

@@ -246,6 +246,23 @@ Dormant outside `sod_utc → eod_utc`.  Research agent continues independently.
 | `reminder` | `remind_me()` elapsed (via attention queue) | Forwarded as event |
 | `tutorial` | First N turns for new traders (A6) | Tutorial prompt injected |
 
+### Turn-type special-prompt guidance
+
+`SoD` and `EoD` turns carry turn-type-conditional guidance text so the trader
+knows what that turn is *for* (the "Prompt note" column above):
+
+- **SoD**: absorb overnight developments (news / `research_brief` / `situation`),
+  set posture for the day, seed watchpoints; no rush to trade before the open.
+- **EoD**: reflect (`reflect`), review and lock protective orders, queue
+  tomorrow's watchpoints/reminders; do not open new positions (default-strict).
+
+This guidance is injected into the **per-turn first-look** (the variable
+user-message suffix via `TurnContext.extra_lines` → `build_first_look`), **not**
+the cached system prefix — so the stable system prompt stays cacheable across
+every turn (Discipline #6 token caching).  See
+`AgentTrader._turn_type_guidance()` in `llm/trader.py`.  Tutorial-turn guidance
+is deferred to A6.
+
 ### Per-trader lifecycle config
 
 | Field | Default | Source |

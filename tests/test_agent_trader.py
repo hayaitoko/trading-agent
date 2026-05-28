@@ -467,3 +467,62 @@ def test_agent_trader_stable_system_message_has_cache_control() -> None:
     block = sys_msg["content"][0]
     assert block["type"] == "text"
     assert "cache_control" in block
+
+
+# ---------------------------------------------------------------------------
+# A4 fixer — SoD/EoD turn-type special-prompt guidance (finding #1)
+# ---------------------------------------------------------------------------
+
+
+def _first_look_and_system(client: FakeToolClient) -> tuple[str, str]:
+    """Return (first_look_user_message, stable_system_text) from the first call."""
+    msgs = client.calls[0]["messages"]
+    system_text = msgs[0]["content"][0]["text"]
+    first_look = msgs[1]["content"]
+    return first_look, system_text
+
+
+def test_sod_turn_injects_start_of_day_guidance() -> None:
+    """A SoD turn appends start-of-day guidance to the per-turn first-look."""
+    client = FakeToolClient([
+        _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="pass", arguments={})]),
+    ])
+    trader = AgentTrader("m", client, symbols=["AAPL"], name="SoDTrader")
+    trader._current_turn_type = "SoD"
+    trader.decide({"cash": 1_000.0, "positions": []})
+
+    first_look, system_text = _first_look_and_system(client)
+    assert "Start-of-day guidance:" in first_look
+    assert "seed watchpoints" in first_look
+    # Discipline #6: guidance must NOT leak into the cached system prefix.
+    assert "Start-of-day guidance:" not in system_text
+
+
+def test_eod_turn_injects_end_of_day_guidance_no_new_positions() -> None:
+    """An EoD turn appends end-of-day guidance including the no-new-positions line."""
+    client = FakeToolClient([
+        _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="hold", arguments={"reason": "eod"})]),
+    ])
+    trader = AgentTrader("m", client, symbols=["AAPL"], name="EoDTrader")
+    trader._current_turn_type = "EoD"
+    trader.decide({"cash": 1_000.0, "positions": []})
+
+    first_look, system_text = _first_look_and_system(client)
+    assert "End-of-day guidance:" in first_look
+    assert "Do not open new positions" in first_look
+    # Discipline #6: guidance must NOT leak into the cached system prefix.
+    assert "End-of-day guidance:" not in system_text
+
+
+def test_regular_turn_has_no_turn_type_guidance() -> None:
+    """A regular turn carries no SoD/EoD special-prompt guidance."""
+    client = FakeToolClient([
+        _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="pass", arguments={})]),
+    ])
+    trader = AgentTrader("m", client, symbols=["AAPL"], name="RegularTrader")
+    # turn_type defaults to "regular"
+    trader.decide({"cash": 1_000.0, "positions": []})
+
+    first_look, _ = _first_look_and_system(client)
+    assert "Start-of-day guidance:" not in first_look
+    assert "End-of-day guidance:" not in first_look
