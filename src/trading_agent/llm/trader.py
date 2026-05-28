@@ -825,8 +825,7 @@ class AgentTrader:
             extra_lines=self._turn_type_guidance(turn_type),
         )
 
-    @staticmethod
-    def _turn_type_guidance(turn_type: TurnType) -> list[str]:
+    def _turn_type_guidance(self, turn_type: TurnType) -> list[str]:
         """Turn-type-conditional special-prompt guidance for the first-look block.
 
         SoD and EoD turns carry extra guidance describing what that turn is for.
@@ -834,6 +833,12 @@ class AgentTrader:
         lines render in the variable user-message suffix (``TurnContext.extra_lines``
         → :func:`build_first_look`), so the stable system prompt stays cacheable
         across every turn.  All other turn types add no extra lines.
+
+        The EoD "do not open new positions" directive is gated on
+        ``self._eod_no_new_positions``, which the scheduler sets True for EoD
+        turns by default (default-strict).  Configuring EoD as non-strict (the
+        scheduler leaving the flag False) omits the directive — this is what
+        makes the flag the live control point for EoD position policy.
         """
         if turn_type == "SoD":
             return [
@@ -845,14 +850,19 @@ class AgentTrader:
                 "open.",
             ]
         if turn_type == "EoD":
-            return [
+            lines = [
                 "",
                 "End-of-day guidance: the session has closed. Reflect on today's "
                 "decisions (use reflect to capture what you learned), review and lock "
                 "in protective orders on your open positions, and queue watchpoints "
-                "or reminders for tomorrow. Do not open new positions on this turn — "
-                "the end-of-day turn is for housekeeping, not new entries.",
+                "or reminders for tomorrow.",
             ]
+            if self._eod_no_new_positions:
+                lines.append(
+                    "Do not open new positions on this turn — the end-of-day turn "
+                    "is for housekeeping, not new entries."
+                )
+            return lines
         return []
 
     # --- Tool definitions (stable; re-built per turn but content is constant) -

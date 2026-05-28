@@ -263,6 +263,16 @@ every turn (Discipline #6 token caching).  See
 `AgentTrader._turn_type_guidance()` in `llm/trader.py`.  Tutorial-turn guidance
 is deferred to A6.
 
+**EoD no-new-positions control (`_eod_no_new_positions`).**  The EoD
+"do not open new positions" directive is gated on the `_eod_no_new_positions`
+flag on the trader.  `MarketScheduler._fire_one` sets it `True` before firing an
+EoD turn (default-strict) and resets it to `False` afterward;
+`_turn_type_guidance` reads it when composing the EoD guidance.  This is
+instruction-level (the trader retains agency, consistent with the kill-switch
+soft-halt philosophy) — configuring EoD as non-strict (scheduler leaving the
+flag `False`) omits the directive.  Hard broker/risk-layer enforcement of
+no-new-positions is a possible future hardening, not implemented here.
+
 ### Per-trader lifecycle config
 
 | Field | Default | Source |

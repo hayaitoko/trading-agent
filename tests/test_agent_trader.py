@@ -499,12 +499,15 @@ def test_sod_turn_injects_start_of_day_guidance() -> None:
 
 
 def test_eod_turn_injects_end_of_day_guidance_no_new_positions() -> None:
-    """An EoD turn appends end-of-day guidance including the no-new-positions line."""
+    """An EoD turn (default-strict flag set, as the scheduler does) appends
+    end-of-day guidance including the no-new-positions directive."""
     client = FakeToolClient([
         _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="hold", arguments={"reason": "eod"})]),
     ])
     trader = AgentTrader("m", client, symbols=["AAPL"], name="EoDTrader")
     trader._current_turn_type = "EoD"
+    # Mirror MarketScheduler._fire_one: it sets this True before an EoD decide().
+    trader._eod_no_new_positions = True
     trader.decide({"cash": 1_000.0, "positions": []})
 
     first_look, system_text = _first_look_and_system(client)
@@ -512,6 +515,23 @@ def test_eod_turn_injects_end_of_day_guidance_no_new_positions() -> None:
     assert "Do not open new positions" in first_look
     # Discipline #6: guidance must NOT leak into the cached system prefix.
     assert "End-of-day guidance:" not in system_text
+
+
+def test_eod_turn_without_strict_flag_omits_no_new_positions() -> None:
+    """When EoD is configured non-strict (_eod_no_new_positions left False), the
+    EoD guidance still appears but omits the no-new-positions directive — proving
+    the flag is the live control point, not dead code."""
+    client = FakeToolClient([
+        _FakeToolResponse(tool_calls=[ToolCall(id="t1", name="hold", arguments={"reason": "eod"})]),
+    ])
+    trader = AgentTrader("m", client, symbols=["AAPL"], name="EoDLooseTrader")
+    trader._current_turn_type = "EoD"
+    # Flag deliberately left False (non-strict EoD).
+    trader.decide({"cash": 1_000.0, "positions": []})
+
+    first_look, _ = _first_look_and_system(client)
+    assert "End-of-day guidance:" in first_look
+    assert "Do not open new positions" not in first_look
 
 
 def test_regular_turn_has_no_turn_type_guidance() -> None:

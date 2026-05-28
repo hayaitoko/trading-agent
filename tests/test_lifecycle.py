@@ -548,6 +548,48 @@ def test_lifecycle_eod_fires_once_per_day() -> None:
     assert len(eod2) == 0, "EoD should not fire twice"
 
 
+def test_eod_scheduler_fire_drives_no_new_positions_guidance() -> None:
+    """End-to-end: MarketScheduler firing an EoD turn sets _eod_no_new_positions,
+    which the trader reads to inject the no-new-positions directive into its
+    first-look — then the scheduler resets the flag afterward.
+
+    This exercises the previously-dead flag through the real scheduler path
+    (reviewer A4 finding #2)."""
+    from types import SimpleNamespace
+
+    from trading_agent.bench.bench import Bench
+    from trading_agent.llm.openrouter import ToolCall, ToolCallChatResult
+    from trading_agent.llm.trader import AgentTrader
+
+    client = MagicMock()
+    client.chat_with_tools.return_value = ToolCallChatResult(
+        content=None,
+        tool_calls=[ToolCall(id="c1", name="hold", arguments={"reason": "eod"})],
+        model="stub-model",
+        usage={},
+        cost=0.0,
+    )
+    trader = AgentTrader("stub-model", client, symbols=["AAPL"], name="EoDSched")
+    comp = SimpleNamespace(name="EoDSched", trader=trader)
+
+    bench = MagicMock(spec=Bench)
+    bench._competitors = {"EoDSched": comp}
+    bench._run_one.side_effect = lambda c: c.trader.decide({"cash": 100_000, "positions": []})
+
+    day = _make_day()
+    scheduler = MarketScheduler(bench, calendar=_FixedCalendar(day))
+    scheduler._fire_one(comp, "EoD", "end-of-day: market closed at 16:00 ET")
+
+    # The first-look sent to the model carries the no-new-positions directive,
+    # because the scheduler set _eod_no_new_positions True before decide().
+    messages = client.chat_with_tools.call_args[0][1]
+    first_look = messages[1]["content"]
+    assert "End-of-day guidance:" in first_look
+    assert "Do not open new positions" in first_look
+    # The flag is reset to False after the EoD turn completes.
+    assert trader._eod_no_new_positions is False
+
+
 def test_lifecycle_after_hours_fill_queued_then_delivered() -> None:
     """After-hours protective-order fill is queued and delivered before next SoD."""
     day_today = _make_day(year=2026, month=5, day=28)
