@@ -32,6 +32,7 @@ from ..config.endpoints import EndpointRegistry
 from ..config.settings_store import SettingsStore
 from .routers import approvals as approvals_router
 from .routers import bench as bench_router
+from .routers import calibration as calibration_router
 from .routers import config as config_router
 from .routers import manager as manager_router
 from .routers import market as market_router
@@ -60,6 +61,7 @@ _COCKPIT_ROUTERS = (
     notifications_router.router,
     requests_router.router,
     notes_router.router,
+    calibration_router.router,
 )
 
 

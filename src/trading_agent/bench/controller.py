@@ -133,10 +133,22 @@ class BenchController:
         *,
         cash: float | None = None,
         style: str | None = None,
+        # P6: per-trader intelligence overrides. When provided, these OVERRIDE
+        # the owner-level settings for this specific trader instance. Pass the
+        # same model twice with different flags to get an A/B on intelligence.
+        intelligence_flags: dict[str, bool] | None = None,
+        # P3: optional per-trader situation layer objects.
+        regime_classifier: Any = None,
+        social_aggregator: Any = None,
+        calendar_events: list[dict[str, Any]] | None = None,
+        # P4: optional pattern KB.
+        pattern_store: Any = None,
     ) -> str:
         owner = self.owner_id
         research, research_k, memory_k = self.research, _RESEARCH_K, _MEMORY_RECALL_K
         settings = self._settings()
+
+        # Resolve per-owner settings first, then let per-trader flags override.
         if owner is not None and settings is not None:
             # Per-owner knobs (WS-A): research read toggle + recall breadth.
             if not settings.get(owner, "trader_research_read", True):
@@ -145,6 +157,16 @@ class BenchController:
             memory_k = int(
                 settings.get(owner, "trader_memory_recall_k", _MEMORY_RECALL_K) or _MEMORY_RECALL_K
             )
+
+        # P6: per-trader flag overrides disable specific intelligence layers.
+        flags = dict(intelligence_flags or {})
+        effective_research = research
+        effective_memory = self.memory
+        if flags.get("research") is False:
+            effective_research = None
+        if flags.get("memory") is False:
+            effective_memory = None
+
         trader = LLMTrader(
             model,
             self.client,
@@ -152,11 +174,19 @@ class BenchController:
             name=name or model,
             style=style,
             history=self.history,
-            research=research,
-            memory=self.memory,
+            research=effective_research,
+            memory=effective_memory,
             owner_user_id=owner,
             research_k=research_k,
             memory_k=memory_k,
+            # P3: situation layer
+            regime_classifier=regime_classifier,
+            social_aggregator=social_aggregator,
+            calendar_events=calendar_events or [],
+            # P4: pattern KB
+            pattern_store=pattern_store,
+            # P6: pass the full flags dict so situation/pattern can also be gated
+            intelligence_flags=flags,
         )
         self.bench.add_competitor(
             trader.name, trader, initial_balance=cash, style=style
