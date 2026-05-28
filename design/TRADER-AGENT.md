@@ -1,6 +1,6 @@
 # Trader Agent — Design Reference
 
-**Status:** WS-Agent A0 landed · A1–A6 in progress  
+**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3–A6 in progress  
 **Branch:** `feat/engine-realism`  
 **Legend:** ✅ exists · 🟡 partial · 🔵 planned
 
@@ -215,9 +215,9 @@ _Stub — populated in A4._
 
 ---
 
-## 6. Tool Catalog (🔵 A1 / A2 / A3)
+## 6. Tool Catalog (✅ A0 + A1 + A2 / 🔵 A3)
 
-_Stub — populated incrementally per wave.  See plan §A1–A3 for full tables._
+All tools return a `ToolResult` — no exceptions escape the agent loop.
 
 ### A0 built-ins (✅)
 
@@ -228,15 +228,77 @@ _Stub — populated incrementally per wave.  See plan §A1–A3 for full tables.
 | `hold(reason)` | END | instant | free |
 | `pass()` | END | instant | free |
 
-### A1 LOOK catalog (🔵)
+### A1 LOOK catalog (✅)
 
-`recent_turns`, `history`, `news`, `research_brief`, `request_research`,
-`situation`, `world_events`, `prediction_market_odds`, `options_iv`, `forecast`,
-`watchlist`, `account_state`, `ask_manager`
+Lives in `intel/tools/look/`.  Each tool is one module; all use `LookToolBase`.
 
-### A2 NOTE catalog (🔵)
+#### Enabled tools
 
-`reflect`, `remind_me`, `watchpoint`, `watch_symbol`, `unwatch_symbol`
+| Tool | Wraps | Latency | Cost class | Notes |
+|---|---|---|---|---|
+| `list_tools()` | static catalog | instant | free | Extended from A0; now lists full LOOK+NOTE set |
+| `recent_turns(n=5, include_tool_calls=True)` | `intel/turn_store.TurnStore` (A5) | fast | free | Returns empty gracefully until A5 ships |
+| `history(symbol, days=30)` | `data.history.HistoryService` | fast | free | Returns OHLCV bars + realized-vol stats |
+| `news(symbol=None, limit=10)` | `ingest.store.IngestStore` raw_items | fast | free | Per-user scoped; empty when store absent |
+| `research_brief(symbol)` | `research.store.ResearchStore` (WS-C) | fast | free | Shared per-user; None when no brief yet |
+| `request_research(symbol, question)` | WS-C `ResearchAgent.run` | queued | queued | Fire-and-forget; check research_brief() next turn |
+| `situation()` | `situation.regime.RegimeClassifier` + `SocialAggregator` (P3) | fast | free | Regime label + social metrics + calendar events |
+| `watchlist()` | trader + operator symbol sets | instant | free | Union of watch_symbol() + operator pins |
+| `account_state()` | PaperBroker / broker adapter | instant | free | MONEY IS REAL: "paper" scrubbed from all fields |
+| `memory_search(query, k=5)` | `memory.store.MemoryStore` (WS-D) | fast | free | Per-(user,trader) namespace; empty if new |
+| `advisor_notes(symbol=None, scope="trader"\|"ticker"\|"global")` | `notes.NotesStore` (WS-H) | fast | free | Strict isolation: own trader's notes only |
+| `ask_manager(question)` | `manager.agent.ManagerAgent.chat()` | slow | model_call | ≤1/turn; paper/peer filter injected |
+
+#### Disabled stubs — provider lands in WS-Situation+Forecast
+
+| Tool | Provider | When enabled |
+|---|---|---|
+| `world_events(theme=None, timespan="24h")` | GDELT | WS-Situation Track A |
+| `prediction_market_odds(category, query=None)` | Polymarket / Kalshi | WS-Situation Track A |
+| `options_iv(symbol)` | `instruments/options` IV surface | WS-Situation Track A |
+| `forecast(symbol, horizon=5\|10\|30)` | `intel/forecast.py` | WS-Situation Track C |
+
+Disabled stubs return `ToolResult(ok=False, error=ToolError(kind="disabled", …))`.
+`list_tools()` surfaces them with `enabled=false` + `disabled_reason`.  When the
+provider lands, only the stub body gets unwired — wrapper class and catalog entry stay.
+
+#### TurnContext slot fix (A0 reviewer note, shipped in A1)
+
+A0 had an `extra_lines` escape-hatch.  A1 adds two explicit, plan-spec'd fields
+to `intel/turn_context.py`:
+
+| First-look line | Dataclass field | Populated by |
+|---|---|---|
+| `Directed notes:` | `directed_notes: list[str]` | `AdvisorNotesTool.directed_notes_for_slot()` — unread operator notes; marked read after surfacing |
+| `Recent reflections:` | `recent_reflections: list[str]` | `MemorySearchTool.reflections_for_slot()` — top-3 reflection lessons tagged with today's symbols |
+
+Both appear between `Cost this turn:` and `Previous attempt:` when non-empty.
+Empty → not rendered (no blank lines).
+
+#### advisor_notes isolation contract
+
+`advisor_notes` is scoped strictly to `(owner_user_id, trader_id)`.  The store
+is called with the correct user_id + scope + ref; no cross-trader or cross-user
+data can leak by construction.
+
+#### ask_manager safety contract
+
+Every call prepends `_MANAGER_FILTER` to the question before it reaches the
+manager LLM.  The filter instructs the manager to never disclose paper/sim/demo
+status or peer-trader state.  `_scrub_answer()` provides defence-in-depth
+post-hoc scrubbing.  The A1 red-team test `tests/test_ask_manager_no_paper_leak.py`
+enforces §Discipline rule 10 — asking "is this real money?" never produces a reply
+containing any forbidden disclosure word.
+
+### A2 NOTE catalog (✅)
+
+| Tool | What | Latency | Cost class |
+|---|---|---|---|
+| `reflect(note, *, tags)` | Write a durable lesson to per-trader memory (WS-D `MemoryStore`). Carries provenance (prior tool names) for P5 calibrated learning. | fast | free |
+| `remind_me(when, about)` | Time-based deferred self-poke. `when` accepts ISO datetime or relative (`"in 15min"`, `"in 2h"`, `"tomorrow 10am ET"`). Auto-expires on fire OR after 7d. | fast | free |
+| `watchpoint(symbol, why, *, condition, ttl_hours)` | Event-based monitor. Condition forms: `"price > 580"`, `"news_rate > 2x"`, `"realized_vol > 1.5x"`. Omit condition → "interesting move" heuristic. TTL default 24h, max 168h. | fast | free |
+| `watch_symbol(symbol)` | Add symbol to trader's personal watchlist (stored in `user_settings`). Idempotent. Overlays cockpit watchlist tile (A5). | instant | free |
+| `unwatch_symbol(symbol)` | Remove symbol from personal watchlist. Idempotent. | instant | free |
 
 ### A3 ACT catalog (🔵)
 
@@ -323,7 +385,77 @@ from provider-level KV caching even without explicit annotation.
 
 ---
 
-## Key Files (A0)
+## 11. NOTE Toolkit — "Interesting Move" Heuristic
+
+When a `watchpoint` is registered with `condition=None`, the scheduler evaluates
+the **"interesting move" heuristic** on every tick.  It fires if **any** of these
+rules trips:
+
+| Rule | Signal | Threshold |
+|---|---|---|
+| Price sigma | `abs(price_change_1h) > 1σ` | 30-day realized vol × price |
+| News rate spike | `current_rate / baseline_rate > 2.0` | configurable per-trader via `INTERESTING_MOVE_RULES` |
+| Vol spike | `realized_vol_ratio > 1.5` | configurable per-trader |
+| Approval queue | Symbol has a pending approval entry | any |
+
+The heuristic is evaluated in `intel/tools/note/watchpoint.py::evaluate_condition`.
+All four rules are on by default; any subset can be disabled via `user_settings`
+key `INTERESTING_MOVE_RULES` (JSON list of enabled rule names).
+
+---
+
+## 12. Pending-Attention Queue
+
+SQLite table `attention_queue` (bootstrapped by `db/migrations/001_attention.sql`).
+Managed by `intel/attention_queue.py::AttentionQueue`.
+
+```
+attention_queue
+  id           INTEGER PRIMARY KEY
+  trader_id    TEXT              -- bench competitor name
+  kind         TEXT              -- 'reminder' | 'watchpoint'
+  payload_json TEXT              -- {symbol?, when_unix?, condition?, why}
+  created_at   INTEGER           -- Unix seconds UTC
+  expires_at   INTEGER           -- Unix seconds UTC
+  fired_at     INTEGER           -- NULL = unfired
+  fire_reason  TEXT              -- 'elapsed' | 'condition: ...' | 'interesting-move: ...' | 'expired'
+```
+
+**Partial index:** `idx_attention_pending ON attention_queue(trader_id, fired_at) WHERE fired_at IS NULL`
+— the scheduler polls only unfired rows without a full-table scan.
+
+**Soft limits** (surfaced in always-on first-look):
+- Watchpoints: default 20 (`WATCHPOINT_SOFT_LIMIT`), hard cap 100.
+- Reminders: default 10 (`REMINDER_SOFT_LIMIT`), hard cap 50.
+
+Exceeding soft limit injects a nudge in first-look context.  Exceeding hard cap →
+`watchpoint()` / `remind_me()` returns `{ok: false, error: {kind: "unavailable"}}`.
+
+**Time math:** `when_unix` stored and compared in UTC.  "Tomorrow 10am ET" is
+parsed in `America/New_York` (never local server TZ) and stored as UTC.
+
+---
+
+## 13. Scheduler Hooks (A2)
+
+`bench/controller.py::BenchController._scan_attention()` runs on every cadence
+tick (after `run_decisions` + `_maybe_reflect`).
+
+Steps:
+1. Resolve the `AttentionQueue` from any `AgentTrader` competitor.
+2. Call `aq.expire_old()` to soft-expire past-TTL rows.
+3. `aq.poll_all_due()` → list of unfired, non-expired rows.
+4. For each **reminder** row: if `payload.when_unix ≤ now` → `mark_fired("elapsed")`
+   → wake the owning trader via `bench._run_one(comp)`.
+5. For each **watchpoint** row: call `evaluate_condition(payload, last_prices, ...)` →
+   if tripped → `mark_fired(reason)` → wake via `bench.run_decisions_for_symbol(symbol)`.
+
+Full event-driven wake (dedicated turn type `"reminder"` / `"event"`) is A4's
+deliverable; A2 reuses the existing market-wake mechanism for immediacy.
+
+---
+
+## Key Files (A0–A2)
 
 | File | Role |
 |---|---|
@@ -331,6 +463,16 @@ from provider-level KV caching even without explicit annotation.
 | `intel/tool_envelope.py` | `ToolResult` / `ToolError` universal contract |
 | `intel/turn_context.py` | `TurnContext` + `build_first_look()` |
 | `intel/cost_tracker.py` | `CostTracker` — per-turn cost rollup + soft warn |
-| `llm/trader.py` | `AgentTrader` class (A0 loop + A0 built-in tools) |
+| `intel/attention_queue.py` | Pending-attention queue (reminders + watchpoints) — **A2** |
+| `intel/tools/note/_base.py` | Shared scaffolding for NOTE tools — **A2** |
+| `intel/tools/note/reflect.py` | `ReflectTool` — write lesson to WS-D memory — **A2** |
+| `intel/tools/note/remind_me.py` | `RemindMeTool` — time-based self-poke — **A2** |
+| `intel/tools/note/watchpoint.py` | `WatchpointTool` + `evaluate_condition` — **A2** |
+| `intel/tools/note/watch_symbol.py` | `WatchSymbolTool` — personal watchlist add — **A2** |
+| `intel/tools/note/unwatch_symbol.py` | `UnwatchSymbolTool` — personal watchlist remove — **A2** |
+| `db/migrations/001_attention.sql` | Migration: `attention_queue` table + partial index — **A2** |
+| `llm/trader.py` | `AgentTrader` class (A0 loop + A0/A2 tool dispatchers) |
 | `llm/openrouter.py` | `ToolCall`, `ToolCallChatResult`, `chat_with_tools()` |
+| `bench/controller.py` | `BenchController` + `_scan_attention` scheduler hook — **A2** |
 | `tests/test_agent_trader.py` | 31 tests covering A0 (smoke + unit) |
+| `tests/test_note_tools.py` | 57 tests covering A2 NOTE toolkit + attention queue |

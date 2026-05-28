@@ -7,11 +7,13 @@
 * :class:`StrategyTrader` — wraps any deterministic :class:`Strategy` (e.g.
   mean-reversion) so it can compete in the same bench as a baseline.
 
-* :class:`AgentTrader` — new ReAct-style tool-calling agent (WS-Agent A0).
+* :class:`AgentTrader` — new ReAct-style tool-calling agent (WS-Agent A0+A2).
   Runs a multi-step decision loop: build first-look context → call model with
   tools → execute tools → repeat until terminal action or runaway guard.
   Terminal actions in A0: ``hold(reason)`` and ``pass()``.
-  Later waves (A1–A3) add the LOOK/NOTE/ACT tool catalogs.
+  A2 adds the NOTE catalog: ``reflect``, ``remind_me``, ``watchpoint``,
+  ``watch_symbol``, ``unwatch_symbol``.
+  Later waves (A1/A3) add the full LOOK/ACT catalogs.
 
 All three expose ``observe(bar)`` and ``decide(account) -> DecisionResult`` so
 they are drop-in substitutes from the bench/controller's perspective.
@@ -480,7 +482,9 @@ class AgentTrader:
          context-window guard (summarise-and-trim).
 
     A0 built-in tools: ``list_tools``, ``memory_search``, ``pass``, ``hold``.
-    Later waves add the full LOOK/NOTE/ACT catalogs.
+    A2 NOTE tools: ``reflect``, ``remind_me``, ``watchpoint``, ``watch_symbol``,
+    ``unwatch_symbol``.
+    Later waves add the full LOOK/ACT catalogs.
 
     **MONEY IS REAL invariant:** nothing in the system prompt, first-look
     context, or any tool result may mention ``"paper"``, ``"sim"``, ``"demo"``,
@@ -516,6 +520,9 @@ class AgentTrader:
         memory: Any = None,
         owner_user_id: str | None = None,
         memory_k: int = 5,
+        # A2: attention queue + per-user settings (both optional)
+        attention_queue: Any = None,
+        settings_store: Any = None,
     ) -> None:
         self.model = model
         self.client = client
@@ -528,12 +535,17 @@ class AgentTrader:
         self.memory = memory
         self.owner_user_id = owner_user_id
         self.memory_k = memory_k
+        # A2: attention queue (AttentionQueue instance, may be None → degrade)
+        self.attention_queue = attention_queue
+        self.settings_store = settings_store
         # Price bar buffer (same shape as LLMTrader for observe() compat)
         self._bars: dict[str, deque[dict[str, Any]]] = {
             s: deque(maxlen=30) for s in self.symbols
         }
         # Stable system message content (built once at construction)
         self._stable_system_content: str = self._build_system_prompt()
+        # Per-turn tool-call name accumulator (used by reflect provenance)
+        self._turn_tool_names: list[str] = []
 
     # --- Trader Protocol interface -------------------------------------------
 
@@ -545,6 +557,8 @@ class AgentTrader:
 
     def decide(self, account: dict[str, Any]) -> DecisionResult:
         """Run one full agent turn and return the terminal action as a DecisionResult."""
+        # Reset per-turn tool name accumulator (used by reflect provenance).
+        self._turn_tool_names = []
         ctx = self._build_turn_context(account)
         cost_tracker = CostTracker()
 
@@ -698,6 +712,14 @@ class AgentTrader:
     ) -> TurnContext:
         positions = account.get("positions", [])
         pos_count = len(positions) if isinstance(positions, list) else 0
+
+        # A2: populate attention-queue counts (defaults to 0/soft-limit when absent).
+        aq = self.attention_queue
+        active_wp = aq.count_active(self.name, "watchpoint") if aq is not None else 0
+        active_rm = aq.count_active(self.name, "reminder") if aq is not None else 0
+        wp_soft = int(getattr(aq, "watchpoint_soft_limit", 20)) if aq is not None else 20
+        rm_soft = int(getattr(aq, "reminder_soft_limit", 10)) if aq is not None else 10
+
         return TurnContext(
             trader_name=self.name,
             model=self.model,
@@ -708,13 +730,28 @@ class AgentTrader:
             wake_reason=wake_reason,
             turn_type=turn_type,
             cadence_minutes=self.cadence_minutes,
+            active_watchpoints=active_wp,
+            watchpoint_soft_limit=wp_soft,
+            active_reminders=active_rm,
+            reminder_soft_limit=rm_soft,
             previous_attempt_tools=list(previous_attempt_tools or []),
         )
 
     # --- Tool definitions (stable; re-built per turn but content is constant) -
 
     def _tool_definitions(self) -> list[dict[str, Any]]:
-        """OpenAI-compatible tool list for A0.  A1 will extend this via the LOOK catalog."""
+        """OpenAI-compatible tool list for A0 + A2 NOTE catalog.
+
+        A1 will extend this further via the LOOK catalog.
+        """
+        from ..intel.tools.note import (
+            REFLECT_DEF,
+            REMIND_DEF,
+            UNWATCH_DEF,
+            WATCH_DEF,
+            WATCHPOINT_DEF,
+        )
+
         return [
             {
                 "type": "function",
@@ -754,6 +791,12 @@ class AgentTrader:
                     },
                 },
             },
+            # A2 NOTE catalog
+            REFLECT_DEF,
+            REMIND_DEF,
+            WATCHPOINT_DEF,
+            WATCH_DEF,
+            UNWATCH_DEF,
             {
                 "type": "function",
                 "function": {
@@ -798,6 +841,10 @@ class AgentTrader:
         Unknown tools return a ``not_found`` error rather than raising, so the
         model sees a structured error and can reason about it.
         """
+        # Track tool name for reflect() provenance (exclude terminals + list_tools).
+        if tc.name not in _TERMINALS and tc.name not in ("list_tools",):
+            self._turn_tool_names.append(tc.name)
+
         try:
             if tc.name == "list_tools":
                 return self._tool_list_tools()
@@ -807,6 +854,28 @@ class AgentTrader:
                     int(tc.arguments.get("k", self.memory_k)),
                     cost_tracker,
                 )
+            # A2 NOTE tools
+            if tc.name == "reflect":
+                return self._tool_reflect(
+                    tc.arguments.get("note", ""),
+                    tags=tc.arguments.get("tags"),
+                )
+            if tc.name == "remind_me":
+                return self._tool_remind_me(
+                    tc.arguments.get("when", ""),
+                    tc.arguments.get("about", ""),
+                )
+            if tc.name == "watchpoint":
+                return self._tool_watchpoint(
+                    tc.arguments.get("symbol", ""),
+                    tc.arguments.get("why", ""),
+                    condition=tc.arguments.get("condition"),
+                    ttl_hours=tc.arguments.get("ttl_hours"),
+                )
+            if tc.name == "watch_symbol":
+                return self._tool_watch_symbol(tc.arguments.get("symbol", ""))
+            if tc.name == "unwatch_symbol":
+                return self._tool_unwatch_symbol(tc.arguments.get("symbol", ""))
             if tc.name in _TERMINALS:
                 # Terminal — just acknowledge; loop handles exit.
                 return ToolResult(ok=True, data={"action": tc.name})
@@ -825,7 +894,15 @@ class AgentTrader:
             )
 
     def _tool_list_tools(self) -> ToolResult:
-        """Return the A0 tool catalog; extended by later waves."""
+        """Return the A0 + A2 tool catalog; extended by later waves."""
+        from ..intel.tools.note import (
+            REFLECT_CATALOG,
+            REMIND_CATALOG,
+            UNWATCH_CATALOG,
+            WATCH_CATALOG,
+            WATCHPOINT_CATALOG,
+        )
+
         catalog = [
             {
                 "name": "list_tools",
@@ -845,6 +922,12 @@ class AgentTrader:
                 "enabled": True,
                 "disabled_reason": None,
             },
+            # A2 NOTE catalog entries
+            REFLECT_CATALOG,
+            REMIND_CATALOG,
+            WATCHPOINT_CATALOG,
+            WATCH_CATALOG,
+            UNWATCH_CATALOG,
             {
                 "name": "hold",
                 "description": "Terminal: end this turn having considered the situation.",
@@ -865,6 +948,71 @@ class AgentTrader:
             },
         ]
         return ToolResult(ok=True, data={"tools": catalog})
+
+    # --- A2 NOTE tool dispatchers -------------------------------------------
+
+    def _note_base_kwargs(self) -> dict[str, Any]:
+        """Common kwargs for NoteToolBase constructors."""
+        return {
+            "attention_queue": self.attention_queue,
+            "memory": self.memory,
+            "owner_user_id": self.owner_user_id,
+            "trader_id": self.name,
+        }
+
+    def _tool_reflect(self, note: str, *, tags: Any = None) -> ToolResult:
+        """Write a durable lesson to the trader's private memory (WS-D MemoryStore)."""
+        from ..intel.tools.note.reflect import ReflectTool
+
+        tool = ReflectTool(**self._note_base_kwargs())
+        tag_list = list(tags) if isinstance(tags, (list, tuple)) else None
+        return tool.run(
+            note,
+            tags=tag_list,
+            tool_call_names=list(self._turn_tool_names),
+        )
+
+    def _tool_remind_me(self, when: str, about: str) -> ToolResult:
+        """Schedule a time-based deferred self-poke."""
+        from ..intel.tools.note.remind_me import RemindMeTool
+
+        tool = RemindMeTool(**self._note_base_kwargs())
+        return tool.run(when, about)
+
+    def _tool_watchpoint(
+        self,
+        symbol: str,
+        why: str,
+        *,
+        condition: str | None = None,
+        ttl_hours: Any = None,
+    ) -> ToolResult:
+        """Register an event-based symbol monitor."""
+        from ..intel.tools.note.watchpoint import WatchpointTool
+
+        tool = WatchpointTool(**self._note_base_kwargs())
+        ttl = float(ttl_hours) if ttl_hours is not None else None
+        return tool.run(symbol, why, condition=condition, ttl_hours=ttl)
+
+    def _tool_watch_symbol(self, symbol: str) -> ToolResult:
+        """Add a symbol to the trader's personal watchlist."""
+        from ..intel.tools.note.watch_symbol import WatchSymbolTool
+
+        tool = WatchSymbolTool(
+            **self._note_base_kwargs(),
+            settings_store=self.settings_store,
+        )
+        return tool.run(symbol)
+
+    def _tool_unwatch_symbol(self, symbol: str) -> ToolResult:
+        """Remove a symbol from the trader's personal watchlist."""
+        from ..intel.tools.note.unwatch_symbol import UnwatchSymbolTool
+
+        tool = UnwatchSymbolTool(
+            **self._note_base_kwargs(),
+            settings_store=self.settings_store,
+        )
+        return tool.run(symbol)
 
     def _tool_memory_search(
         self,

@@ -229,12 +229,14 @@ class BenchController:
                 self.bench.run_decisions()
             except Exception:  # never let one bad tick kill the loop
                 continue
-            self._maybe_reflect()  # gated, self-contained — never raises
+            self._maybe_reflect()   # gated, self-contained — never raises
+            self._scan_attention()  # A2: fire due reminders + tripped watchpoints
 
     def tick_now(self) -> None:
         """Run one decision round immediately (manual trigger from the UI)."""
         self.bench.run_decisions()
         self._maybe_reflect()
+        self._scan_attention()
 
     # --- Reflection (WS-A write path) ---------------------------------------
 
@@ -368,6 +370,133 @@ class BenchController:
         except Exception:
             return  # never let a wake-hook failure break anything
         self._maybe_reflect()
+
+    # --- A2: Attention-queue scanner ----------------------------------------
+
+    def _scan_attention(self) -> None:
+        """Per-tick scan of the pending-attention queue.
+
+        Fires:
+          - **Reminders** whose ``payload.when_unix`` has elapsed (UTC).
+          - **Watchpoints** whose condition trips against current market data.
+
+        Each fire enqueues an event-driven turn by calling
+        :meth:`~trading_agent.bench.bench.Bench.run_decisions_for_symbol` or
+        waking the individual competitor (reuses the market-move mechanism so
+        the bench doesn't need a new entry point yet — full event-driven wake
+        is A4's deliverable).
+
+        Design notes:
+          - Runs AFTER the cadence tick so price data is fresh.
+          - Never raises: any failure is silently swallowed so it can't kill
+            the cadence loop.
+          - The actual wake-and-decide is gated by whether the bench is running;
+            if stopped, rows still fire (mark_fired) but no turn is triggered.
+        """
+        try:
+            self._do_scan_attention()
+        except Exception:
+            pass  # never let attention scan kill the loop
+
+    def _do_scan_attention(self) -> None:
+        """Concrete attention scan (may raise; wrapped by :meth:`_scan_attention`)."""
+        # Resolve the attention queue from any competitor's AgentTrader.
+        # All traders on the same bench share the same queue instance (or None).
+        aq = self._resolve_attention_queue()
+        if aq is None:
+            return
+
+        import time as _time
+
+        now = int(_time.time())
+        # Clean up expired rows first.
+        aq.expire_old()
+
+        # Pull all unfired, non-expired rows.
+        rows = aq.poll_all_due(now=now)
+        if not rows:
+            return
+
+        # Build lightweight market-data snapshots for watchpoint evaluation.
+        prices = self._attention_prices()
+        approval_syms = self._attention_approval_symbols()
+
+        # Import evaluator lazily to avoid heavy import at module load.
+        from ..intel.tools.note.watchpoint import evaluate_condition
+
+        fired_traders: set[str] = set()
+        for row in rows:
+            if row.kind == "reminder":
+                when_unix = row.payload.get("when_unix")
+                if when_unix is not None and int(when_unix) <= now:
+                    aq.mark_fired(row.id, "elapsed")
+                    fired_traders.add(row.trader_id)
+            elif row.kind == "watchpoint":
+                symbol = str(row.payload.get("symbol", "")).upper()
+                tripped, reason = evaluate_condition(
+                    row.payload,
+                    last_prices=prices,
+                    approval_symbols=approval_syms,
+                )
+                if tripped:
+                    aq.mark_fired(row.id, reason)
+                    fired_traders.add(row.trader_id)
+                    # Trigger an off-cadence turn for traders watching this symbol.
+                    if self._running and symbol:
+                        try:
+                            self.bench.run_decisions_for_symbol(symbol)
+                        except Exception:
+                            pass
+
+        # For reminder fires (no specific symbol), wake the affected traders.
+        if self._running and fired_traders:
+            for trader_name in fired_traders:
+                try:
+                    # Wake traders that had a reminder fire (no symbol context).
+                    comp = self.bench._competitors.get(trader_name)
+                    if comp is not None:
+                        self.bench._run_one(comp)
+                except Exception:
+                    pass
+
+    def _resolve_attention_queue(self) -> Any:
+        """Return the attention_queue from any AgentTrader competitor, or None."""
+        for comp in self.bench._competitors.values():
+            aq = getattr(comp.trader, "attention_queue", None)
+            if aq is not None:
+                return aq
+        return None
+
+    def _attention_prices(self) -> dict[str, float]:
+        """Current last prices for watchpoint evaluation."""
+        try:
+            return dict(self.bench._last_prices)
+        except Exception:
+            return {}
+
+    def _attention_approval_symbols(self) -> set[str]:
+        """Set of symbols with pending approval entries (best-effort).
+
+        Gathers pending approval records from every competitor's broker,
+        scanning for symbols with open approval-queue entries.  Returns an
+        empty set if the approval queue is unavailable or the bench has no
+        competitors.
+        """
+        symbols: set[str] = set()
+        try:
+            for comp in self.bench._competitors.values():
+                # AgentTrader may carry an approval_queue reference (A3 wires this).
+                # For now, check if broker has any pending orders for the signal model.
+                aq = getattr(comp.trader, "_approval_queue", None)
+                if aq is None:
+                    continue
+                for record in aq.pending():
+                    sym = str(record.signal.get("asset", "") or "").upper()
+                    if sym:
+                        symbols.add(sym)
+        except Exception:
+            pass
+        return symbols
 
     # --- Model menu ---------------------------------------------------------
 
