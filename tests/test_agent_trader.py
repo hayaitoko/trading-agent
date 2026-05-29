@@ -22,7 +22,7 @@ from trading_agent.intel.cost_tracker import CostTracker
 from trading_agent.intel.tool_envelope import ToolError, ToolResult
 from trading_agent.intel.turn_context import TurnContext, build_first_look
 from trading_agent.llm.openrouter import ToolCall, ToolCallChatResult
-from trading_agent.llm.trader import AgentTrader, Trader
+from trading_agent.llm.trader import AgentTrader, DecisionResult, Trader
 
 # ---------------------------------------------------------------------------
 # Tool envelope
@@ -652,3 +652,56 @@ def test_c0_list_tools_includes_situation_tools() -> None:
     assert "world_events" in names_enabled
     assert "prediction_market_odds" in names_enabled
     assert "options_iv" in names_enabled
+
+
+# ---------------------------------------------------------------------------
+# WS-Bench-Migration M0 — Trader-protocol parity (AgentTrader ⇄ bench.Trader)
+# ---------------------------------------------------------------------------
+
+
+def test_agent_trader_satisfies_bench_trader_protocol() -> None:
+    """M0: AgentTrader is a structural match for the bench ``Trader`` protocol.
+
+    The bench treats every competitor through the runtime-checkable ``Trader``
+    protocol (``name`` + ``observe`` + ``decide``).  This guards the migration
+    contract: the bench can hold an AgentTrader anywhere it held the legacy
+    structured-output trader.
+    """
+    trader = _make_trader()
+    assert isinstance(trader, Trader)
+    assert isinstance(trader.name, str) and trader.name
+    assert callable(trader.observe)
+    assert callable(trader.decide)
+
+
+def test_agent_trader_decide_returns_bench_consumable_result() -> None:
+    """M0: a terminal hold yields ``DecisionResult(decisions=[])`` the bench can apply."""
+    trader = _make_trader()  # default scripted client emits hold("default")
+    result = trader.decide({"cash": 100_000.0, "positions": []})
+    assert isinstance(result, DecisionResult)
+    assert result.decisions == []  # ACT tools settle on the broker; bench must not re-exec
+    assert result.error is None
+    assert isinstance(result.comment, str)
+
+
+def test_bench_consumes_agent_trader_end_to_end() -> None:
+    """M0: a full ``Bench.run_decisions()`` round with an AgentTrader competitor.
+
+    Proves the ``decisions=[]`` terminal path is handled by bench accounting:
+    no broker re-execution, no error surfaced, ``decision_count`` increments,
+    ``last_comment`` is set from the terminal reason.
+    """
+    from trading_agent.bench.bench import Bench
+
+    bench = Bench(["AAPL"], initial_balance=100_000.0)
+    trader = _make_trader(symbols=["AAPL"], name="BenchAgent")  # default → hold("default")
+    comp = bench.add_competitor("BenchAgent", trader)
+    bench.observe_bar({"symbol": "AAPL", "close": 200.0})
+
+    bench.run_decisions()
+
+    assert comp.decision_count == 1
+    assert comp.error is None
+    assert comp.last_comment == "default"  # hold reason from the default scripted client
+    # decisions=[] → the bench applied no fills, so no trades landed on the book.
+    assert bench.leaderboard()[0]["trades"] == 0

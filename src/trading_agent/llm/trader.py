@@ -489,8 +489,16 @@ _TERMINALS: frozenset[str] = frozenset(
 class AgentTrader:
     """ReAct-style tool-calling trader agent (WS-Agent A0 foundation).
 
-    Replaces the structured-output :class:`LLMTrader` pipeline with a proper
-    multi-step decision loop:
+    This is the bench's canonical :class:`Trader` (WS-Bench-Migration): it
+    satisfies the runtime-checkable ``Trader`` protocol (``name`` + ``observe``
+    + ``decide``) so :class:`~trading_agent.bench.bench.Bench` and the
+    controller hold it anywhere they once held the legacy structured-output
+    trader.  Every terminal turn returns ``DecisionResult(decisions=[])`` — the
+    ACT tools settle against the broker directly, so the bench does not
+    re-execute decisions (see :meth:`_to_decision_result`); the bench's
+    ``_run_one`` accounting handles the empty-decisions path as a clean no-op.
+
+    The multi-step decision loop:
 
       1. Build always-on first-look context (:mod:`intel.turn_context`).
       2. Call the model with tool definitions (OpenAI-compatible via OpenRouter).
