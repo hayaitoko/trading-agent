@@ -323,6 +323,27 @@ def build_cockpit(
     # when no Alpaca key is present).
     scheduler = MarketScheduler(bench) if os.environ.get("TRADING_AGENT_SCHEDULER") else None
 
+    # WS-COCKPIT-REAL-DATA R0: SITUATION providers — wire before BenchController so
+    # every AgentTrader the controller builds has access to real macro + market data.
+    # Construction gating:
+    #   GDELTProvider          — no API key needed; always constructed.
+    #   PredictionMarketsProvider — no API key needed; always constructed.
+    #   AlpacaOptionChainProvider — needs ALPACA_API_KEY; omitted when key absent so
+    #                               the options_iv LOOK tool degrades to
+    #                               ToolError(kind="unavailable") rather than crashing.
+    # Per-user SITUATION_* flags continue to gate actual tool dispatch downstream
+    # (implemented in the LOOK tools); we do NOT read them here — they are
+    # per-user in user_settings and the process owner may not be resolved yet.
+    from ..data.providers.gdelt import GDELTProvider
+    from ..data.providers.prediction_markets import PredictionMarketsProvider
+    from ..instruments.options_chain import AlpacaOptionChainProvider
+
+    gdelt_provider: GDELTProvider = GDELTProvider()
+    pm_provider: PredictionMarketsProvider = PredictionMarketsProvider()
+    chain_provider: AlpacaOptionChainProvider | None = (
+        AlpacaOptionChainProvider() if os.environ.get("ALPACA_API_KEY") else None
+    )
+
     # Real market data for the cockpit charts + fundamentals popup. Bars come
     # from the same Alpaca data key as the live books; fundamentals from whatever
     # provider has a key in the environment (real data only — no synthetic feed).
@@ -382,6 +403,11 @@ def build_cockpit(
             pending_trade_queue=app.state.pending_trades,
             turn_store=app.state.turn_store,
             scheduler=scheduler,
+            # WS-COCKPIT-REAL-DATA R0: SITUATION providers (per-user flags gate
+            # dispatch; construction-time gating is env-key only, see above).
+            gdelt_provider=gdelt_provider,
+            pm_provider=pm_provider,
+            chain_provider=chain_provider,
             # WS-LOOKTOOL-WIRING: A1 LOOK toolkit backing services.
             notes_store=look_deps["notes_store"],
             manager_agent=look_deps["manager_agent"],
