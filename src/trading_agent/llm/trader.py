@@ -692,6 +692,12 @@ class AgentTrader:
         wp_soft = int(getattr(aq, "watchpoint_soft_limit", 20)) if aq is not None else 20
         rm_soft = int(getattr(aq, "reminder_soft_limit", 10)) if aq is not None else 10
 
+        # A1 first-look slots (WS-LOOKTOOL-WIRING): directed advisor notes + the
+        # trader's most relevant recent reflections.  Both degrade to [] when their
+        # backing store is absent, so A0/tutorial turns render unchanged.
+        directed_notes = self._first_look_directed_notes()
+        recent_reflections = self._first_look_recent_reflections()
+
         return TurnContext(
             trader_name=self.name,
             model=self.model,
@@ -706,11 +712,56 @@ class AgentTrader:
             watchpoint_soft_limit=wp_soft,
             active_reminders=active_rm,
             reminder_soft_limit=rm_soft,
+            directed_notes=directed_notes,
+            recent_reflections=recent_reflections,
             previous_attempt_tools=list(previous_attempt_tools or []),
             extra_lines=self._turn_type_guidance(turn_type),
             # A6: hint shown in place of the reflections slot for new traders.
             no_prior_context_hint=self.tutorial_remaining > 0,
         )
+
+    def _first_look_directed_notes(self) -> list[str]:
+        """A1: unread directed (trader-scoped) advisor notes for the first-look slot.
+
+        Surfaces each unread directed note ONCE per session via the
+        AdvisorNotesTool's session de-dup set (``_directed_notes_read_ids``); the
+        full text stays reachable via the advisor_notes() tool on later turns.
+        """
+        if self._notes_store is None or self.owner_user_id is None:
+            return []
+        try:
+            from ..intel.tools.look.advisor_notes import AdvisorNotesTool
+
+            tool = AdvisorNotesTool(
+                owner_user_id=self.owner_user_id,
+                trader_id=self.name,
+                notes_store=self._notes_store,
+                session_read_ids=self._directed_notes_read_ids,
+            )
+            return tool.directed_notes_for_slot()
+        except Exception:
+            return []
+
+    def _first_look_recent_reflections(self, k: int = 3) -> list[str]:
+        """A1: top-k of this trader's own reflections for the first-look slot.
+
+        Ranked by the memory store against the trader's universe; anything beyond
+        the top-k stays behind the memory_search() tool.  Empty when memory is
+        absent (or the trader is new), so the A6 no-prior-context hint still shows.
+        """
+        if self.memory is None or self.owner_user_id is None:
+            return []
+        query = " ".join(self.symbols) if self.symbols else "recent lessons"
+        try:
+            lessons = self.memory.recall(self.owner_user_id, self.name, query, k)
+        except Exception:
+            return []
+        out: list[str] = []
+        for lesson in lessons[:k]:
+            text = str(getattr(lesson, "text", lesson)).strip()
+            if text:
+                out.append(text)
+        return out
 
     def _turn_type_guidance(self, turn_type: TurnType) -> list[str]:
         """Turn-type-conditional special-prompt guidance for the first-look block.
@@ -935,6 +986,209 @@ class AgentTrader:
             },
         ]
 
+        # A1 LOOK catalog (WS-LOOKTOOL-WIRING) — always declared so the model can
+        # discover them; each dispatcher returns ToolError(kind="unavailable") when
+        # its backing service is absent. Schemas mirror the C0 SITUATION pattern.
+        defs += [
+            {
+                "type": "function",
+                "function": {
+                    "name": "recent_turns",
+                    "description": (
+                        "Retrieve your N most recent turns (wake reason, tool calls, "
+                        "final action, cost). Use for continuity across turns."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "n": {
+                                "type": "integer",
+                                "description": "How many recent turns to return (default 5, max 50).",
+                                "default": 5,
+                            },
+                            "include_tool_calls": {
+                                "type": "boolean",
+                                "description": "Include each turn's tool-call summary (default true).",
+                                "default": True,
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "history",
+                    "description": (
+                        "Historical OHLCV bars for a symbol over the last N days. "
+                        "Returns close prices, volume, and key stats (min/max/mean/"
+                        "last + annualized realized vol)."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string", "description": "Ticker, e.g. 'AAPL'."},
+                            "days": {
+                                "type": "integer",
+                                "description": "Calendar-day lookback (default 30, max 365).",
+                                "default": 30,
+                            },
+                        },
+                        "required": ["symbol"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "news",
+                    "description": (
+                        "Recent news/social headlines from the ingest pipeline. Pass "
+                        "symbol to narrow to one ticker; omit for the cross-ticker feed."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Optional ticker filter, e.g. 'TSLA'.",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Max headlines to return (default 10, max 100).",
+                                "default": 10,
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "research_brief",
+                    "description": (
+                        "Latest distilled research brief for a symbol (LLM summary of "
+                        "recent news/social, sentiment score, catalysts). Returns null "
+                        "when no brief exists yet — queue one with request_research()."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string", "description": "Ticker, e.g. 'NVDA'."},
+                        },
+                        "required": ["symbol"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "request_research",
+                    "description": (
+                        "Queue a new research pass for a symbol+question. Returns "
+                        "immediately with a request_id; the result lands in "
+                        "research_brief() on a later turn. Incurs a cheap async model "
+                        "call (cost_class=queued)."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string", "description": "Ticker to research."},
+                            "question": {
+                                "type": "string",
+                                "description": "The specific question to research.",
+                            },
+                        },
+                        "required": ["symbol", "question"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "situation",
+                    "description": (
+                        "Current market situation: regime label (calm/elevated/"
+                        "event-window/risk-off), realized vol, per-symbol social "
+                        "metrics, and upcoming calendar events."
+                    ),
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "watchlist",
+                    "description": (
+                        "Your own watchlist of symbols (set via watch_symbol / "
+                        "unwatch_symbol), overlaid with any symbols the operator pinned."
+                    ),
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "account_state",
+                    "description": (
+                        "Fresh snapshot of your account: cash, open positions with "
+                        "current market value, and unrealized P&L."
+                    ),
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "advisor_notes",
+                    "description": (
+                        "Operator-written advisor notes scoped to your account "
+                        "(scope='trader'), a specific ticker (scope='ticker'), or "
+                        "global notes (scope='global'). Returns notes visible to you "
+                        "only — never other traders' notes."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Ticker — required when scope='ticker'.",
+                            },
+                            "scope": {
+                                "type": "string",
+                                "description": "Note scope to read.",
+                                "enum": ["ticker", "trader", "global"],
+                                "default": "trader",
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "ask_manager",
+                    "description": (
+                        "Ask the overseer manager a question. Cost-gated: at most once "
+                        "per turn (a model call). Use for strategic guidance only."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "Your question for the overseer.",
+                            },
+                        },
+                        "required": ["question"],
+                    },
+                },
+            },
+        ]
+
         # A3 ACT catalog — only injected when broker is wired.
         if self.broker is not None:
             from ..intel.tools.act import (
@@ -1079,6 +1333,47 @@ class AgentTrader:
                     symbol=str(tc.arguments.get("symbol", "")),
                     horizon=int(tc.arguments.get("horizon", 30)),
                 )
+            # A1 LOOK tools (WS-LOOKTOOL-WIRING)
+            if tc.name == "recent_turns":
+                return self._tool_recent_turns(
+                    n=int(tc.arguments.get("n", 5)),
+                    include_tool_calls=bool(tc.arguments.get("include_tool_calls", True)),
+                )
+            if tc.name == "history":
+                return self._tool_history(
+                    symbol=str(tc.arguments.get("symbol", "")),
+                    days=int(tc.arguments.get("days", 30)),
+                )
+            if tc.name == "news":
+                return self._tool_news(
+                    symbol=tc.arguments.get("symbol"),
+                    limit=int(tc.arguments.get("limit", 10)),
+                )
+            if tc.name == "research_brief":
+                return self._tool_research_brief(
+                    symbol=str(tc.arguments.get("symbol", "")),
+                )
+            if tc.name == "request_research":
+                return self._tool_request_research(
+                    symbol=str(tc.arguments.get("symbol", "")),
+                    question=str(tc.arguments.get("question", "")),
+                )
+            if tc.name == "situation":
+                return self._tool_situation()
+            if tc.name == "watchlist":
+                return self._tool_watchlist()
+            if tc.name == "account_state":
+                return self._tool_account_state()
+            if tc.name == "advisor_notes":
+                return self._tool_advisor_notes(
+                    symbol=tc.arguments.get("symbol"),
+                    scope=str(tc.arguments.get("scope", "trader")),
+                )
+            if tc.name == "ask_manager":
+                return self._tool_ask_manager(
+                    question=str(tc.arguments.get("question", "")),
+                    cost_tracker=cost_tracker,
+                )
             # A3 ACT tools (also terminals — loop exits after these)
             if tc.name == "trade":
                 return self._tool_trade(
@@ -1183,8 +1478,94 @@ class AgentTrader:
             owner_user_id=self.owner_user_id,
             trader_id=self.name,
             extra_entries=extra,
+            availability=self._look_tool_availability(),
         )
         return tool()
+
+    def _look_tool_availability(self) -> dict[str, str | None]:
+        """WS-LOOKTOOL-WIRING (Concern #1): truthful enabled-state for each LOOK tool.
+
+        Maps ``tool_name -> disabled_reason|None``.  A non-None reason flips the
+        catalog entry to ``enabled: false`` with that reason; ``None`` keeps it
+        enabled.  This makes ``list_tools()`` report whether a tool is *actually
+        dispatchable right now* (dependency wired + feature flag on) rather than the
+        old blanket ``enabled: true`` claim.
+        """
+        avail: dict[str, str | None] = {
+            # Always-dispatchable: builtins + NOTE + watchlist degrade to empty data,
+            # so they stay enabled regardless of wiring.
+            "list_tools": None,
+            "memory_search": None,
+            "watchlist": None,
+            # recent_turns reads the turn_store; degrades to [] when absent — still
+            # callable, so enabled.
+            "recent_turns": None,
+            # A1 LOOK tools gated on their backing service being wired.
+            "history": (
+                None if self._history_service is not None
+                else "history service not wired"
+            ),
+            "news": (
+                None if (self._news_db is not None and self.owner_user_id is not None)
+                else "ingest store / user context not wired"
+            ),
+            "research_brief": (
+                None if (self._research_store is not None and self.owner_user_id is not None)
+                else "research store not wired"
+            ),
+            "request_research": (
+                None if (self._research_run_fn is not None and self.owner_user_id is not None)
+                else "research agent not wired"
+            ),
+            "situation": (
+                None if self._regime_classifier is not None
+                else "situation layer (regime classifier) not wired"
+            ),
+            "account_state": (
+                None if self.broker is not None else "broker not wired"
+            ),
+            "advisor_notes": (
+                None if (self._notes_store is not None and self.owner_user_id is not None)
+                else "advisor notes store not wired"
+            ),
+            "ask_manager": (
+                None if (self._manager_agent is not None and self.owner_user_id is not None)
+                else "manager agent not wired"
+            ),
+        }
+        # C0 SITUATION tools: enabled only when their SITUATION_* flag is on AND the
+        # provider is wired (mirrors each tool's own disabled-error logic).
+        avail["world_events"] = self._situation_tool_reason(
+            "SITUATION_GDELT", self._gdelt_provider, "world_events"
+        )
+        avail["prediction_market_odds"] = self._situation_tool_reason(
+            "SITUATION_PREDICTION_MARKETS", self._pm_provider, "prediction_market_odds"
+        )
+        avail["options_iv"] = self._situation_tool_reason(
+            "SITUATION_OPTIONS_IV", self._chain_provider, "options_iv"
+        )
+        avail["forecast"] = self._situation_tool_reason(
+            "SITUATION_FORECAST", self._chain_provider, "forecast"
+        )
+        return avail
+
+    def _situation_tool_reason(
+        self, flag: str, provider: Any, tool_name: str
+    ) -> str | None:
+        """None when a SITUATION tool is dispatchable; else its disabled reason."""
+        flag_on = False
+        if self.settings_store is not None:
+            try:
+                flag_on = bool(
+                    self.settings_store.get(self.owner_user_id or "", flag, False)
+                )
+            except Exception:
+                flag_on = False
+        if not flag_on:
+            return f"disabled — enable {flag} in trader settings"
+        if provider is None:
+            return f"{flag} on but provider not wired"
+        return None
 
     # --- Fresh spot prices (Concern #2) --------------------------------------
 
@@ -1269,6 +1650,171 @@ class AgentTrader:
             spot_prices=self._fresh_spot_prices(),
         )
         return tool(symbol, horizon=horizon)
+
+    # --- A1 LOOK tool dispatchers (WS-LOOKTOOL-WIRING) -----------------------
+
+    def _tool_recent_turns(self, n: int = 5, include_tool_calls: bool = True) -> ToolResult:
+        """Dispatch recent_turns — wraps the A5 turn_store (graceful when absent)."""
+        from ..intel.tools.look.recent_turns import RecentTurnsTool
+
+        tool = RecentTurnsTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            turn_store=self._turn_store,
+        )
+        return tool(n=n, include_tool_calls=include_tool_calls)
+
+    def _tool_history(self, symbol: str, days: int = 30) -> ToolResult:
+        """Dispatch history — wraps HistoryService.get_bars (unavailable when absent)."""
+        from ..intel.tools.look.history import HistoryTool
+
+        tool = HistoryTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            history_service=self._history_service,
+        )
+        return tool(symbol, days=days)
+
+    def _tool_news(self, symbol: str | None = None, limit: int = 10) -> ToolResult:
+        """Dispatch news — wraps the ingest raw_items reader (empty when absent)."""
+        from ..intel.tools.look.news import NewsTool
+
+        tool = NewsTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            db=self._news_db,
+        )
+        return tool(symbol, limit=limit)
+
+    def _tool_research_brief(self, symbol: str) -> ToolResult:
+        """Dispatch research_brief — wraps the WS-C ResearchStore (read-only)."""
+        from ..intel.tools.look.research_brief import ResearchBriefTool
+
+        tool = ResearchBriefTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            research_store=self._research_store,
+        )
+        return tool(symbol)
+
+    def _tool_request_research(self, symbol: str, question: str) -> ToolResult:
+        """Dispatch request_research — fire-and-forget WS-C pass (unavailable when absent)."""
+        from ..intel.tools.look.request_research import RequestResearchTool
+
+        tool = RequestResearchTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            run_fn=self._research_run_fn,
+        )
+        return tool(symbol, question)
+
+    def _tool_situation(self) -> ToolResult:
+        """Dispatch situation — P3 regime + social over the trader's fresh closes."""
+        from ..intel.tools.look.situation import SituationTool
+
+        tool = SituationTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            regime_classifier=self._regime_classifier,
+            recent_closes=self._recent_closes(),
+            calendar_events=self._calendar_events,
+            social_aggregator=self._social_aggregator,
+            symbols=self.symbols,
+        )
+        return tool()
+
+    def _tool_watchlist(self) -> ToolResult:
+        """Dispatch watchlist — the trader's own watchlist (from A2 watch_symbol)."""
+        from ..intel.tools.look.watchlist import WatchlistTool
+        from ..intel.tools.note.watch_symbol import _load_watchlist
+
+        trader_syms = _load_watchlist(self.settings_store, self.owner_user_id, self.name)
+        tool = WatchlistTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            trader_symbols=trader_syms,
+        )
+        return tool()
+
+    def _tool_account_state(self) -> ToolResult:
+        """Dispatch account_state — fresh broker snapshot (MONEY-IS-REAL scrubbed)."""
+        from ..intel.tools.look.account_state import AccountStateTool
+
+        tool = AccountStateTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            broker=self.broker,
+        )
+        return tool()
+
+    def _tool_advisor_notes(
+        self, symbol: str | None = None, scope: str = "trader"
+    ) -> ToolResult:
+        """Dispatch advisor_notes — operator notes scoped to (this user, this trader)."""
+        from ..intel.tools.look.advisor_notes import AdvisorNotesTool
+
+        tool = AdvisorNotesTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            notes_store=self._notes_store,
+            session_read_ids=self._directed_notes_read_ids,
+        )
+        return tool(symbol=symbol, scope=scope)
+
+    def _tool_ask_manager(self, question: str, cost_tracker: CostTracker) -> ToolResult:
+        """Dispatch ask_manager — cost-gated ≤1/turn overseer chat.
+
+        The ≤1/turn gate lives on the trader (``_ask_manager_called_this_turn``)
+        because the tool is constructed fresh each dispatch.  No manager model call
+        happens outside this gated path (Discipline #4 / Rule 11).  The model_ref is
+        resolved per-call via ``manager_ref_fn`` so a missing endpoint degrades to a
+        clean unavailable error rather than crashing.
+        """
+        from ..intel.tools.look.ask_manager import AskManagerTool
+
+        # Enforce the ≤1/turn gate at the trader level (survives per-dispatch tools).
+        if self._ask_manager_called_this_turn:
+            return ToolResult(
+                ok=False,
+                error=ToolError(
+                    kind="rate_limit",
+                    message=(
+                        "ask_manager may only be called once per turn. Use the earlier "
+                        "answer or terminal the turn."
+                    ),
+                ),
+            )
+
+        model_ref = self._manager_ref_fn() if self._manager_ref_fn is not None else None
+        tool = AskManagerTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            manager_agent=self._manager_agent,
+            model_ref=model_ref,
+            cost_tracker=cost_tracker,
+        )
+        result = tool(question)
+        # Mark the gate spent only when the call actually reached the manager
+        # (ok=True) — a missing dep / invalid input leaves the gate open for retry.
+        if result.ok:
+            self._ask_manager_called_this_turn = True
+        return result
+
+    def _recent_closes(self) -> list[float]:
+        """Fresh close-price series from the per-symbol price-bar buffer (situation())."""
+        closes: list[float] = []
+        for sym in self.symbols:
+            buf = self._bars.get(sym)
+            if not buf:
+                continue
+            for bar in buf:
+                try:
+                    c = float(bar.get("close", 0))
+                except (TypeError, ValueError):
+                    continue
+                if c > 0:
+                    closes.append(c)
+        return closes
 
     # --- A2 NOTE tool dispatchers -------------------------------------------
 

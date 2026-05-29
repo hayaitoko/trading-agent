@@ -66,9 +66,18 @@ class ListToolsTool(LookToolBase):
         owner_user_id: str | None = None,
         trader_id: str,
         extra_entries: list[dict[str, Any]] | None = None,
+        availability: dict[str, str | None] | None = None,
     ) -> None:
         super().__init__(owner_user_id=owner_user_id, trader_id=trader_id)
         self._extra_entries: list[dict[str, Any]] = list(extra_entries or [])
+        # WS-LOOKTOOL-WIRING (Concern #1): a {tool_name: disabled_reason|None} map.
+        # When a tool appears here with a non-None reason it is reported
+        # ``enabled: false`` with that reason; ``None`` keeps it enabled.  Tools
+        # absent from the map keep their static TOOL_META state.  This is how the
+        # catalog tells the truth about which tools are *actually dispatchable*
+        # (e.g. ask_manager is enabled:false when no ManagerAgent is wired) rather
+        # than always claiming enabled:true.
+        self._availability: dict[str, str | None] = dict(availability or {})
 
     def __call__(self) -> ToolResult:
         """Return the full tool catalog.
@@ -333,4 +342,15 @@ class ListToolsTool(LookToolBase):
             },
         ]
 
-        return builtins + look_tools + self._extra_entries
+        catalog = builtins + look_tools + self._extra_entries
+        # WS-LOOKTOOL-WIRING (Concern #1): apply the availability overrides so the
+        # catalog's enabled flag reflects whether each tool is actually dispatchable
+        # right now (dependency wired + feature flag on), not a static claim.
+        if self._availability:
+            for entry in catalog:
+                name = entry.get("name")
+                if name in self._availability:
+                    reason = self._availability[name]
+                    entry["enabled"] = reason is None
+                    entry["disabled_reason"] = reason
+        return catalog

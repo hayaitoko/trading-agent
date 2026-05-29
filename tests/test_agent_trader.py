@@ -640,7 +640,14 @@ def test_c0_world_events_flag_on_mock_provider() -> None:
 
 
 def test_c0_list_tools_includes_situation_tools() -> None:
-    """C0: _tool_list_tools() (via ListToolsTool) now shows world_events etc. as enabled=True."""
+    """C0/WS-LOOKTOOL-WIRING: SITUATION tools are LISTED but report truthful enabled state.
+
+    Concern #1 fix: the catalog no longer claims ``enabled: true`` blanket.  With no
+    settings_store / providers wired (the ``_make_trader`` default), the four
+    SITUATION tools are listed (so the model can discover them) but marked
+    ``enabled: false`` with a "enable SITUATION_* in trader settings" reason — which
+    is the truth, since they would return a disabled error if called.
+    """
     from trading_agent.intel.cost_tracker import CostTracker
     from trading_agent.llm.openrouter import ToolCall
 
@@ -648,10 +655,94 @@ def test_c0_list_tools_includes_situation_tools() -> None:
     tc = ToolCall(id="x", name="list_tools", arguments={})
     result = trader._execute_tool(tc, CostTracker())
     assert result.ok is True
-    names_enabled = {t["name"] for t in result.data["tools"] if t["enabled"]}
-    assert "world_events" in names_enabled
-    assert "prediction_market_odds" in names_enabled
-    assert "options_iv" in names_enabled
+    by_name = {t["name"]: t for t in result.data["tools"]}
+    # Present in the catalog (discoverable)…
+    for name in ("world_events", "prediction_market_odds", "options_iv", "forecast"):
+        assert name in by_name, f"{name} missing from catalog"
+        # …but accurately reported disabled when the flag/provider is absent.
+        assert by_name[name]["enabled"] is False
+        assert "SITUATION_" in (by_name[name]["disabled_reason"] or "")
+
+
+def test_looktool_wiring_catalog_reports_truthful_enabled_state() -> None:
+    """WS-LOOKTOOL-WIRING (Concern #1): the 10 A1 LOOK tools report accurate enabled state.
+
+    Unwired (the ``_make_trader`` default), each gated LOOK tool is listed with
+    ``enabled: false`` + a reason; the always-callable ones (recent_turns / watchlist)
+    stay enabled.
+    """
+    from trading_agent.intel.cost_tracker import CostTracker
+    from trading_agent.llm.openrouter import ToolCall
+
+    trader = _make_trader()
+    result = trader._execute_tool(
+        ToolCall(id="x", name="list_tools", arguments={}), CostTracker()
+    )
+    by_name = {t["name"]: t for t in result.data["tools"]}
+    # Always callable (degrade to empty data), so enabled even when unwired.
+    for always_on in ("recent_turns", "watchlist"):
+        assert by_name[always_on]["enabled"] is True
+    # Gated on a backing service — unwired => enabled false + reason.
+    for gated in (
+        "history", "news", "research_brief", "request_research",
+        "situation", "account_state", "advisor_notes", "ask_manager",
+    ):
+        assert by_name[gated]["enabled"] is False, f"{gated} should be disabled when unwired"
+        assert by_name[gated]["disabled_reason"], f"{gated} missing disabled_reason"
+
+
+def test_looktool_wiring_unwired_tools_degrade_not_stub() -> None:
+    """WS-LOOKTOOL-WIRING W1: each gated LOOK tool fails LOUD when unwired (Discipline #4).
+
+    No silent stubs — every gated tool with an absent dependency returns
+    ``ToolResult(ok=False, error.kind in {"unavailable"})``.  The always-callable
+    tools (recent_turns / news / research_brief / situation / watchlist /
+    advisor_notes) return ``ok=True`` with empty/None data + a note.
+    """
+    from trading_agent.intel.cost_tracker import CostTracker
+    from trading_agent.llm.openrouter import ToolCall
+
+    trader = _make_trader(owner_user_id="u1")  # owner set, but no backing services
+    ct = CostTracker()
+
+    def call(name: str, **args: Any) -> ToolResult:
+        return trader._execute_tool(ToolCall(id="x", name=name, arguments=args), ct)
+
+    # Hard-unavailable (no graceful empty shape possible).
+    assert call("history", symbol="AAPL").error.kind == "unavailable"
+    assert call("request_research", symbol="AAPL", question="q").error.kind == "unavailable"
+    assert call("account_state").error.kind == "unavailable"
+    assert call("ask_manager", question="q").error.kind == "unavailable"
+    # Graceful-empty (still ok=True with a note; never a fabricated value).
+    assert call("recent_turns", n=3).ok is True
+    assert call("watchlist").ok is True
+    assert call("situation").ok is True
+    assert call("advisor_notes", scope="trader").ok is True
+
+
+def test_looktool_wiring_ask_manager_gate_one_per_turn() -> None:
+    """WS-LOOKTOOL-WIRING W1: ask_manager is rate-limited to ≤1/turn at the trader level."""
+    from trading_agent.intel.cost_tracker import CostTracker
+    from trading_agent.llm.openrouter import ToolCall
+
+    class _Mgr:
+        def chat(self, u: str, c: str, m: str, r: Any) -> str:
+            return "guidance"
+
+    trader = _make_trader(
+        owner_user_id="u1", manager_agent=_Mgr(), manager_ref_fn=lambda: object()
+    )
+    ct = CostTracker()
+    trader._ask_manager_called_this_turn = False  # simulate turn start
+    first = trader._execute_tool(
+        ToolCall(id="1", name="ask_manager", arguments={"question": "a"}), ct
+    )
+    second = trader._execute_tool(
+        ToolCall(id="2", name="ask_manager", arguments={"question": "b"}), ct
+    )
+    assert first.ok is True
+    assert second.ok is False
+    assert second.error.kind == "rate_limit"
 
 
 # ---------------------------------------------------------------------------

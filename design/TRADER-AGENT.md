@@ -58,6 +58,20 @@ moot — the class is gone and the bench builds `AgentTrader` exclusively.
 The only money-is-real-relevant prompt is now `AgentTrader._build_system_prompt()`,
 which never names paper/sim/demo/fake.
 
+**A1 LOOK toolkit fully wired (WS-LOOKTOOL-WIRING, 2026-05-28).** WS-Bench-Migration
+discovered the 10 A1 LOOK tools (`recent_turns`, `history`, `news`,
+`research_brief`, `request_research`, `situation`, `watchlist`, `account_state`,
+`advisor_notes`, `ask_manager`) shipped as catalog-only wrapper classes — described
+by `list_tools()` but never reachable from the decision loop.  They are now declared
+as tool schemas and dispatched into their wrapper classes; their backing services
+are threaded through the `AgentTrader` constructor and `BenchController.add_model()`,
+and `serve.py` builds them (`NotesStore`, a read-only `ManagerAgent`, a fire-and-forget
+research run callable).  The trader's toolkit is therefore complete: LOOK + NOTE +
+ACT + END are all dispatchable, so paper trading exercises the whole surface.  The
+catalog also tells the truth now — `list_tools()` reports `enabled: false` with a
+reason for any tool whose dependency is unwired or whose `SITUATION_*` flag is off
+(it previously claimed `enabled: true` for every tool).
+
 ---
 
 ## 2. Always-On First-Look
@@ -405,26 +419,45 @@ All tools return a `ToolResult` — no exceptions escape the agent loop.
 | `hold(reason)` | END | instant | free |
 | `pass()` | END | instant | free |
 
-### A1 LOOK catalog (✅)
+### A1 LOOK catalog (✅ — dispatch wiring complete, WS-LOOKTOOL-WIRING 2026-05-28)
 
 Lives in `intel/tools/look/`.  Each tool is one module; all use `LookToolBase`.
 
+**Wiring status.** A1 shipped these as wrapper classes + catalog entries, but they
+were *catalog-only* — described by `list_tools()` yet absent from the AgentTrader's
+`_tool_definitions()` / `_execute_tool()`, so the model could not actually call
+them.  **WS-LOOKTOOL-WIRING closes that gap:** all 10 are now declared as
+OpenAI-compatible tool schemas and dispatched into their wrapper classes.  The
+backing service for each is threaded through the `AgentTrader` constructor
+(optional, default `None`) and forwarded by `BenchController.add_model()`; when a
+dependency is absent the tool fails loud via `ToolError` (Discipline #4 — never a
+silent stub) and `list_tools()` reports it `enabled: false` with a reason.
+
 #### Enabled tools
 
-| Tool | Wraps | Latency | Cost class | Notes |
-|---|---|---|---|---|
-| `list_tools()` | static catalog | instant | free | Extended from A0; now lists full LOOK+NOTE set |
-| `recent_turns(n=5, include_tool_calls=True)` | `intel/turn_store.TurnStore` (A5) | fast | free | Returns empty gracefully until A5 ships |
-| `history(symbol, days=30)` | `data.history.HistoryService` | fast | free | Returns OHLCV bars + realized-vol stats |
-| `news(symbol=None, limit=10)` | `ingest.store.IngestStore` raw_items | fast | free | Per-user scoped; empty when store absent |
-| `research_brief(symbol)` | `research.store.ResearchStore` (WS-C) | fast | free | Shared per-user; None when no brief yet |
-| `request_research(symbol, question)` | WS-C `ResearchAgent.run` | queued | queued | Fire-and-forget; check research_brief() next turn |
-| `situation()` | `situation.regime.RegimeClassifier` + `SocialAggregator` (P3) | fast | free | Regime label + social metrics + calendar events |
-| `watchlist()` | trader + operator symbol sets | instant | free | Union of watch_symbol() + operator pins |
-| `account_state()` | PaperBroker / broker adapter | instant | free | MONEY IS REAL: "paper" scrubbed from all fields |
-| `memory_search(query, k=5)` | `memory.store.MemoryStore` (WS-D) | fast | free | Per-(user,trader) namespace; empty if new |
-| `advisor_notes(symbol=None, scope="trader"\|"ticker"\|"global")` | `notes.NotesStore` (WS-H) | fast | free | Strict isolation: own trader's notes only |
-| `ask_manager(question)` | `manager.agent.ManagerAgent.chat()` | slow | model_call | ≤1/turn; paper/peer filter injected |
+Gating column reads: "wired" when the dependency is threaded → tool dispatchable;
+otherwise the dispatcher returns `ToolError(kind="unavailable")` and the catalog
+shows `enabled: false`.
+
+| Tool | Wraps | Latency | Cost class | Gating / dependency | Constructor param |
+|---|---|---|---|---|---|
+| `list_tools()` | static catalog | instant | free | always on | — |
+| `recent_turns(n=5, include_tool_calls=True)` | `intel/turn_store.TurnStore` (A5) | fast | free | always on; empty `turns` when store absent | `turn_store` |
+| `history(symbol, days=30)` | `data.history.HistoryService.get_bars` | fast | free | `unavailable` when service absent | `history_service` |
+| `news(symbol=None, limit=10)` | `ingest.store.IngestStore` raw_items | fast | free | per-user scoped; empty when db/owner absent | `news_db` |
+| `research_brief(symbol)` | `research.store.ResearchStore.get` (WS-C) | fast | free | shared per-user; `None` brief when store absent | `research_store` |
+| `request_research(symbol, question)` | WS-C `ResearchAgent.run` (fire-and-forget) | queued | queued | `unavailable` when run_fn/owner absent | `research_run_fn` |
+| `situation()` | `situation.regime.RegimeClassifier` + `SocialAggregator` (P3) | fast | free | `regime: null` when classifier absent | `regime_classifier`, `social_aggregator`, `calendar_events` |
+| `watchlist()` | trader settings (`trader_watchlist:<id>`) + operator pins | instant | free | always on; reads watch_symbol() set | `settings_store` |
+| `account_state()` | PaperBroker / broker adapter | instant | free | `unavailable` when broker unbound; MONEY IS REAL scrub | bound via `bind_execution(broker=…)` |
+| `memory_search(query, k=5)` | `memory.store.MemoryStore` (WS-D) | fast | free | per-(user,trader) namespace; empty if new | `memory` |
+| `advisor_notes(symbol=None, scope="trader"\|"ticker"\|"global")` | `notes.NotesStore` (WS-H) | fast | free | empty when store/owner absent; strict (user,trader) isolation | `notes_store` |
+| `ask_manager(question)` | `manager.agent.ManagerAgent.chat()` | slow | model_call | ≤1/turn (trader-level gate); `unavailable` when manager absent; paper/peer filter injected | `manager_agent`, `manager_ref_fn` |
+
+Per-call freshness (Concern #2): `account_state()`, `options_iv()`, and
+`forecast()` read prices via `_fresh_spot_prices()` — `spot_prices_fn()`
+(bench's live `_last_prices`) → bound broker's `market_prices` → static snapshot —
+so a mid-session move is visible the same turn rather than frozen at construction.
 
 #### Disabled stubs — provider lands in WS-Situation+Forecast
 
@@ -435,22 +468,29 @@ Lives in `intel/tools/look/`.  Each tool is one module; all use `LookToolBase`.
 | `options_iv(symbol)` | `instruments/options` IV surface | WS-Situation Track A |
 | `forecast(symbol, horizon=5\|10\|30)` | `intel/forecast.py` | WS-Situation Track C |
 
-Disabled stubs return `ToolResult(ok=False, error=ToolError(kind="disabled", …))`.
-`list_tools()` surfaces them with `enabled=false` + `disabled_reason`.  When the
-provider lands, only the stub body gets unwired — wrapper class and catalog entry stay.
+These four are *dispatchable* (the C0 wiring landed earlier) but each returns
+`ToolResult(ok=False, error=ToolError(kind="disabled", …))` until its `SITUATION_*`
+feature flag is enabled AND its provider is wired.  `list_tools()` surfaces them with
+`enabled: false` + a `disabled_reason` — and, post WS-LOOKTOOL-WIRING, that flag is
+computed from the live flag+provider state (`_situation_tool_reason()`) rather than a
+hardcoded value, so the catalog flips to `enabled: true` the moment the flag is set
+and the provider lands.
 
 #### TurnContext slot fix (A0 reviewer note, shipped in A1)
 
 A0 had an `extra_lines` escape-hatch.  A1 adds two explicit, plan-spec'd fields
 to `intel/turn_context.py`:
 
-| First-look line | Dataclass field | Populated by |
+| First-look line | Dataclass field | Populated by (WS-LOOKTOOL-WIRING) |
 |---|---|---|
-| `Directed notes:` | `directed_notes: list[str]` | `AdvisorNotesTool.directed_notes_for_slot()` — unread operator notes; marked read after surfacing |
-| `Recent reflections:` | `recent_reflections: list[str]` | `MemorySearchTool.reflections_for_slot()` — top-3 reflection lessons tagged with today's symbols |
+| `Directed notes:` | `directed_notes: list[str]` | `AgentTrader._first_look_directed_notes()` → `AdvisorNotesTool.directed_notes_for_slot()` — unread operator notes; de-duped per session via `_directed_notes_read_ids` (surfaces once, then lives behind `advisor_notes()`) |
+| `Recent reflections:` | `recent_reflections: list[str]` | `AgentTrader._first_look_recent_reflections()` → `memory.recall(owner, trader, universe, k=3)` — top-3 lessons; the rest stay behind `memory_search()` |
 
 Both appear between `Cost this turn:` and `Previous attempt:` when non-empty.
-Empty → not rendered (no blank lines).
+Empty → not rendered (no blank lines).  A1 shipped the dataclass fields and the
+`AdvisorNotesTool.directed_notes_for_slot()` helper, but the AgentTrader did not
+call them during first-look assembly (slots always rendered empty) until
+WS-LOOKTOOL-WIRING wired `_build_turn_context()` to populate both.
 
 #### advisor_notes isolation contract
 
