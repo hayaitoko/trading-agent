@@ -194,6 +194,16 @@ class HistoryService:
 
     # --- data access (CONTRACTS surface) ------------------------------------
 
+    def get_bars(self, symbol: str, timeframe: str, lookback: int) -> list[Bar]:
+        """Alias for :meth:`bars` matching the :class:`BarProvider` protocol.
+
+        The A1 ``history()`` LOOK tool (WS-LOOKTOOL-WIRING) is duck-typed against
+        any object exposing ``get_bars(symbol, timeframe, lookback)``, so this
+        service can be wired into the tool directly while still going through the
+        cached :meth:`bars` path.
+        """
+        return self.bars(symbol, timeframe, lookback)
+
     def bars(self, symbol: str, timeframe: str, lookback: int) -> list[Bar]:
         """Return up to ``lookback`` bars for ``symbol``, cached for ``bar_ttl``."""
         key = (symbol, timeframe, lookback)

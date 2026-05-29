@@ -184,7 +184,30 @@ class AgentTrader:
     A0 built-in tools: ``list_tools``, ``memory_search``, ``pass``, ``hold``.
     A2 NOTE tools: ``reflect``, ``remind_me``, ``watchpoint``, ``watch_symbol``,
     ``unwatch_symbol``.
-    Later waves add the full LOOK/ACT catalogs.
+    A3 ACT tools (when a broker is bound): ``trade``, ``trade_batch``,
+    ``update_protective_order``, ``confirm_trade``, ``abandon_trade``.
+    C0 SITUATION LOOK tools: ``world_events``, ``prediction_market_odds``,
+    ``options_iv``, ``forecast`` (each gated by its ``SITUATION_*`` flag).
+    A1 LOOK tools (WS-LOOKTOOL-WIRING): ``recent_turns``, ``history``, ``news``,
+    ``research_brief``, ``request_research``, ``situation``, ``watchlist``,
+    ``account_state``, ``advisor_notes``, ``ask_manager``.  Each wraps an optional
+    backing service threaded through the constructor (see the ``*_service`` /
+    ``*_store`` / ``manager_*`` params below); when its service is ``None`` the tool
+    returns ``ToolError(kind="unavailable")`` — never a silent stub (Discipline #4),
+    and ``list_tools()`` reports it ``enabled: false`` with the reason.
+
+    Constructor LOOK-toolkit params (all optional, default ``None``):
+        ``history_service``  → ``history()`` (needs ``get_bars(symbol, tf, n)``)
+        ``research_store``   → ``research_brief()`` (WS-C, ``get(user, ticker)``)
+        ``research_run_fn``  → ``request_research()`` (``(user, tickers) -> None``)
+        ``news_db``          → ``news()`` (ingest ``raw_items`` reader)
+        ``notes_store``      → ``advisor_notes()`` (WS-H ``NotesStore``)
+        ``manager_agent`` + ``manager_ref_fn`` → ``ask_manager()`` (WS-E)
+        ``regime_classifier`` / ``social_aggregator`` / ``calendar_events``
+                              → ``situation()`` (P3 regime + social + calendar)
+        ``spot_prices_fn``   → fresh per-turn last prices for ``options_iv()`` /
+                               ``forecast()`` (Concern #2); overrides the static
+                               ``spot_prices`` snapshot.
 
     **MONEY IS REAL invariant:** nothing in the system prompt, first-look
     context, or any tool result may mention ``"paper"``, ``"sim"``, ``"demo"``,
@@ -238,6 +261,36 @@ class AgentTrader:
         # A5 observability: persistent turn-trace store (optional; None → no trace
         # write, agent still runs).  Populated by the bench controller.
         turn_store: Any = None,
+        # WS-LOOKTOOL-WIRING (A1 LOOK toolkit dependencies — all optional; absent →
+        # the matching tool returns ToolError(kind="unavailable") rather than a
+        # silent stub).  Wired by the bench controller's add_model().
+        #   history_service     — history() OHLCV bars (data.history.HistoryService)
+        #   research_store       — research_brief() shared per-user briefs (WS-C)
+        #   research_run_fn      — request_research() fire-and-forget queue
+        #                          callable(user_id, tickers) -> None (WS-C)
+        #   news_db              — news() ingest raw_items reader (config.db.Database)
+        #   notes_store          — advisor_notes() operator notes (WS-H NotesStore)
+        #   manager_agent        — ask_manager() overseer chat (WS-E ManagerAgent)
+        #   manager_ref_fn       — callable() -> ModelRef for ask_manager() (resolved
+        #                          per call so a missing endpoint degrades gracefully)
+        #   regime_classifier    — situation() market-regime label (P3)
+        #   social_aggregator    — situation() per-symbol social metrics (P3)
+        #   calendar_events      — situation() upcoming high-impact events (list)
+        #   spot_prices_fn       — callable() -> dict[str,float] of fresh last prices;
+        #                          when supplied it OVERRIDES the static spot_prices
+        #                          snapshot so options_iv()/forecast() read per-turn
+        #                          fresh data (Concern #2).
+        history_service: Any = None,
+        research_store: Any = None,
+        research_run_fn: Any = None,
+        news_db: Any = None,
+        notes_store: Any = None,
+        manager_agent: Any = None,
+        manager_ref_fn: Any = None,
+        regime_classifier: Any = None,
+        social_aggregator: Any = None,
+        calendar_events: list[dict[str, Any]] | None = None,
+        spot_prices_fn: Any = None,
     ) -> None:
         self.model = model
         self.client = client
@@ -268,6 +321,24 @@ class AgentTrader:
         self._spot_prices: dict[str, float] = dict(spot_prices or {})
         # A5 observability: turn-trace store (None → trace writes are skipped).
         self._turn_store = turn_store
+        # WS-LOOKTOOL-WIRING: A1 LOOK toolkit backing services (all optional).
+        self._history_service = history_service
+        self._research_store = research_store
+        self._research_run_fn = research_run_fn
+        self._news_db = news_db
+        self._notes_store = notes_store
+        self._manager_agent = manager_agent
+        self._manager_ref_fn = manager_ref_fn
+        self._regime_classifier = regime_classifier
+        self._social_aggregator = social_aggregator
+        self._calendar_events: list[dict[str, Any]] = list(calendar_events or [])
+        self._spot_prices_fn = spot_prices_fn
+        # ask_manager ≤1/turn gate lives on the trader (the tool is constructed
+        # fresh per dispatch) so the rate limit holds across calls in one turn.
+        self._ask_manager_called_this_turn: bool = False
+        # advisor_notes directed-notes session de-dup set (cleared each turn so a
+        # directed note re-surfaces in a later session but not twice in one turn).
+        self._directed_notes_read_ids: set[str] = set()
         # Store original total so tutorial_extra_lines() can compute "turn N of M".
         self._tutorial_total: int = self.tutorial_remaining
         # Price bar buffer (rolling per-symbol window fed by observe())
@@ -304,6 +375,7 @@ class AgentTrader:
         risk_manager: Any = None,
         pending_trade_queue: Any = None,
         requires_approval: bool = False,
+        spot_prices_fn: Any = None,
     ) -> None:
         """Attach the bench's per-competitor broker + risk + approval queue.
 
@@ -314,6 +386,13 @@ class AgentTrader:
         very book the leaderboard values (so trades land on the tracked book rather
         than a detached broker).
 
+        ``spot_prices_fn`` (WS-LOOKTOOL-WIRING, Concern #2): an optional
+        ``callable() -> dict[str, float]`` that returns fresh last prices.  The
+        controller passes one that reads the *bench's* live ``_last_prices`` (kept
+        current every market tick) so ``options_iv()`` / ``forecast()`` see prices
+        that reflect mid-session moves, not a snapshot frozen at construction.  When
+        absent, the per-call read falls back to the static ``spot_prices`` snapshot.
+
         Rebuilds the cached system prompt so the ACT terminals (``trade`` /
         ``trade_batch`` / ``confirm_trade`` / ``abandon_trade``) are advertised in
         the stable prefix.  Runs once, before the first ``decide()``, so the prefix
@@ -323,6 +402,8 @@ class AgentTrader:
         self.risk_manager = risk_manager
         self.pending_trade_queue = pending_trade_queue
         self.requires_approval = requires_approval
+        if spot_prices_fn is not None:
+            self._spot_prices_fn = spot_prices_fn
         self._stable_system_content = self._build_system_prompt()
 
     # --- Trader Protocol interface -------------------------------------------
@@ -349,6 +430,10 @@ class AgentTrader:
         self._turn_tool_names = []
         # Reset done_for_day flag.
         self._done_for_day_this_turn = False
+        # WS-LOOKTOOL-WIRING: reset the per-turn ask_manager ≤1/turn gate and the
+        # directed-notes session de-dup set so each turn starts clean.
+        self._ask_manager_called_this_turn = False
+        self._directed_notes_read_ids = set()
 
         # Determine turn type and wake reason (set by scheduler or defaults).
         turn_type_raw = self._current_turn_type
@@ -1101,6 +1186,28 @@ class AgentTrader:
         )
         return tool()
 
+    # --- Fresh spot prices (Concern #2) --------------------------------------
+
+    def _fresh_spot_prices(self) -> dict[str, float]:
+        """Return the freshest available last-price snapshot for this turn.
+
+        Order of preference (Concern #2 — never a stale construction snapshot):
+          1. ``spot_prices_fn()`` if wired (bench's live ``_last_prices``).
+          2. The bound broker's ``market_prices`` (updated every market tick).
+          3. The static ``spot_prices`` snapshot passed at construction (fallback).
+        """
+        if self._spot_prices_fn is not None:
+            try:
+                fresh = self._spot_prices_fn()
+                if fresh:
+                    return dict(fresh)
+            except Exception:
+                pass
+        broker_prices = getattr(self.broker, "market_prices", None)
+        if broker_prices:
+            return dict(broker_prices)
+        return dict(self._spot_prices)
+
     # --- C0: Situation Track A LOOK tool dispatchers -------------------------
 
     def _tool_world_events(
@@ -1145,7 +1252,7 @@ class AgentTrader:
             trader_id=self.name,
             settings_store=self.settings_store,
             chain_provider=self._chain_provider,
-            spot_prices=dict(self._spot_prices),
+            spot_prices=self._fresh_spot_prices(),
         )
         return tool(symbol, expiry=expiry)
 
@@ -1159,7 +1266,7 @@ class AgentTrader:
             settings_store=self.settings_store,
             chain_provider=self._chain_provider,
             pm_provider=self._pm_provider,
-            spot_prices=dict(self._spot_prices),
+            spot_prices=self._fresh_spot_prices(),
         )
         return tool(symbol, horizon=horizon)
 

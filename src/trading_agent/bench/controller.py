@@ -102,6 +102,22 @@ class BenchController:
         gdelt_provider: Any = None,
         pm_provider: Any = None,
         chain_provider: Any = None,
+        # WS-LOOKTOOL-WIRING: A1 LOOK toolkit backing services threaded into every
+        # AgentTrader. All optional → the matching tool degrades to a
+        # ToolError(kind="unavailable") when its dependency is None.
+        #   notes_store      — advisor_notes() operator notes (WS-H NotesStore)
+        #   manager_agent    — ask_manager() overseer chat (WS-E ManagerAgent)
+        #   manager_ref_fn   — callable() -> ModelRef for ask_manager() (resolved
+        #                      per call so a missing endpoint degrades gracefully)
+        #   research_run_fn  — request_research() fire-and-forget callable
+        #                      (user_id, tickers) -> None (WS-C)
+        #   regime_classifier / social_aggregator — situation() inputs (P3)
+        notes_store: Any = None,
+        manager_agent: Any = None,
+        manager_ref_fn: Any = None,
+        research_run_fn: Any = None,
+        regime_classifier: Any = None,
+        social_aggregator: Any = None,
     ) -> None:
         self.bench = bench
         self.client = client
@@ -143,6 +159,13 @@ class BenchController:
         self._gdelt_provider = gdelt_provider
         self._pm_provider = pm_provider
         self._chain_provider = chain_provider
+        # WS-LOOKTOOL-WIRING: A1 LOOK toolkit backing services.
+        self._notes_store = notes_store
+        self._manager_agent = manager_agent
+        self._manager_ref_fn = manager_ref_fn
+        self._research_run_fn = research_run_fn
+        self._regime_classifier = regime_classifier
+        self._social_aggregator = social_aggregator
 
     @property
     def owner_id(self) -> str | None:
@@ -210,6 +233,9 @@ class BenchController:
         flags = dict(intelligence_flags or {})
         effective_memory = None if flags.get("memory") is False else self.memory
 
+        # WS-LOOKTOOL-WIRING: prefer a per-trader regime/social passed by the caller
+        # (A/B harness), else fall back to the controller-wide instances. calendar
+        # events are per-trader only (the controller holds none).
         trader = AgentTrader(
             model,
             self.client,
@@ -227,6 +253,17 @@ class BenchController:
             pm_provider=self._pm_provider,
             chain_provider=self._chain_provider,
             spot_prices=dict(self.bench._last_prices),
+            # WS-LOOKTOOL-WIRING: A1 LOOK toolkit backing services.
+            history_service=self.history,
+            research_store=self.research,
+            research_run_fn=self._research_run_fn,
+            news_db=self.db,
+            notes_store=self._notes_store,
+            manager_agent=self._manager_agent,
+            manager_ref_fn=self._manager_ref_fn,
+            regime_classifier=regime_classifier or self._regime_classifier,
+            social_aggregator=social_aggregator or self._social_aggregator,
+            calendar_events=calendar_events,
         )
         # Register the competitor first (the bench mints its isolated paper book),
         # then bind that very broker + risk into the trader's ACT toolkit so trades
@@ -240,6 +277,10 @@ class BenchController:
             risk_manager=comp.risk,
             pending_trade_queue=self._pending_trade_queue,
             requires_approval=False,
+            # Concern #2: fresh per-turn spot prices read from the bench's live
+            # last-price map (kept current every market tick) rather than a snapshot
+            # frozen at construction — so options_iv()/forecast() see mid-session moves.
+            spot_prices_fn=lambda: dict(self.bench._last_prices),
         )
         # A4: register with lifecycle scheduler if wired.
         if self.scheduler is not None:

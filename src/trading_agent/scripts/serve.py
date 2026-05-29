@@ -356,6 +356,12 @@ def build_cockpit(
         except OpenRouterError:
             client = None  # no key -> reads still work; add-trader returns 503
     if client is not None:
+        # WS-LOOKTOOL-WIRING: build the A1 LOOK toolkit backing services so every
+        # AgentTrader the controller adds can actually call advisor_notes /
+        # ask_manager / request_research (history + research_brief use the existing
+        # `history` / `research` already threaded above). Each is optional — the
+        # tool degrades to ToolError(kind="unavailable") when its dep is None.
+        look_deps = _build_look_tool_deps(app, bench)
         # Thread the intelligence layer into the controller so every trader it
         # adds decides on history + research + its own memory, and reflects after
         # each round. owner_user_id stays the *explicit* hint — the controller
@@ -376,8 +382,84 @@ def build_cockpit(
             pending_trade_queue=app.state.pending_trades,
             turn_store=app.state.turn_store,
             scheduler=scheduler,
+            # WS-LOOKTOOL-WIRING: A1 LOOK toolkit backing services.
+            notes_store=look_deps["notes_store"],
+            manager_agent=look_deps["manager_agent"],
+            manager_ref_fn=look_deps["manager_ref_fn"],
+            research_run_fn=look_deps["research_run_fn"],
         )
     return app
+
+
+def _build_look_tool_deps(app: FastAPI, bench: Bench) -> dict[str, Any]:
+    """Assemble the A1 LOOK toolkit backing services (WS-LOOKTOOL-WIRING).
+
+    Returns a dict of ``notes_store`` / ``manager_agent`` / ``manager_ref_fn`` /
+    ``research_run_fn``.  Every entry is optional: any piece that cannot be built
+    (no endpoint, no owner, no research store) is returned as ``None`` so the
+    matching tool surfaces ``ToolError(kind="unavailable")`` rather than crashing.
+
+    MANAGER FRUGALITY (Discipline #4 / Rule 11): ``manager_ref_fn`` only RESOLVES a
+    model ref — it makes no model call.  The single cost-gated call happens inside
+    ``ManagerAgent.chat`` when the trader actually invokes ``ask_manager`` (≤1/turn,
+    enforced on the AgentTrader).  ``research_run_fn`` likewise dispatches a single
+    cost-gated ``ResearchAgent.run`` pass; both are off any polling path.
+    """
+    from ..manager.agent import ManagerAgent, resolve_manager_ref
+    from ..manager.chat import ConversationStore
+    from ..notes import NotesStore
+
+    db: Database = app.state.db
+    settings = app.state.settings
+    registry = app.state.endpoints
+    research = getattr(app.state, "research", None)
+    memory = getattr(app.state, "memory", None)
+
+    notes_store = NotesStore(db)
+
+    # ask_manager: a read-only overseer chat over the same components the cockpit's
+    # /api/chat uses.  bench=snapshot provider, research/memory = optional context.
+    manager_agent = ManagerAgent(
+        registry,
+        settings,
+        ConversationStore(db),
+        bench=bench,
+        research=research,
+        memory=memory,
+    )
+
+    def manager_ref_fn() -> Any:
+        """Resolve the manager ModelRef for the current owner (no model call)."""
+        owner = getattr(app.state, "owner_user_id", None)
+        if not owner:
+            return None
+        try:
+            return resolve_manager_ref(settings, registry, owner)
+        except Exception:
+            return None  # no enabled endpoint → ask_manager degrades to unavailable
+
+    # request_research: a fire-and-forget single cheap-model pass.  Built only when
+    # the research store is present; resolved per call so a missing endpoint or
+    # owner degrades to unavailable on the tool side.
+    research_run_fn: Any = None
+    if research is not None:
+        from ..ingest.store import IngestStore
+        from ..manager.agent import resolve_reflection_ref
+        from ..research import ResearchAgent
+
+        ingest = IngestStore(db)
+        agent = ResearchAgent(ingest, research, registry, settings)
+
+        def research_run_fn(user_id: str, tickers: list[str]) -> None:  # type: ignore[misc]
+            ref = resolve_reflection_ref(settings, registry, user_id)
+            agent.run(user_id, tickers, ref)
+
+    return {
+        "notes_store": notes_store,
+        "manager_agent": manager_agent,
+        "manager_ref_fn": manager_ref_fn,
+        "research_run_fn": research_run_fn,
+    }
 
 
 def _attach_intelligence(
