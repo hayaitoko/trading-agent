@@ -265,13 +265,17 @@ class ListToolsTool(LookToolBase):
                 "description": (
                     "Forward 1σ price-cone forecast for a symbol over 5/10/30 day horizon "
                     "combining realized vol, options IV, and prediction-market implied move. "
-                    "Provider lands in WS-Situation Track C."
+                    "Anti-overconfidence: mid line is flat (no drift estimate). "
+                    "Returns disabled error when SITUATION_FORECAST flag is off."
                 ),
-                "args": {"symbol": "str", "horizon": "5 | 10 | 30"},
+                "args": {
+                    "symbol": "str (e.g. 'AAPL', 'SPY', 'BTC/USD')",
+                    "horizon": "5 | 10 | 30 (default 30)",
+                },
                 "latency": "medium",
                 "cost_class": "free",
-                "enabled": False,
-                "disabled_reason": "provider lands in WS-Situation+Forecast",
+                "enabled": True,
+                "disabled_reason": None,
             },
             {
                 "name": "watchlist",

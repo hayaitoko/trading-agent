@@ -46,6 +46,7 @@ from .routers import requests as requests_router
 from .routers import research as research_router
 from .routers import risk as risk_router
 from .routers import symbols as symbols_router
+from .routers import forecast as forecast_router
 from .routers import traces as traces_router
 
 if TYPE_CHECKING:
@@ -74,6 +75,7 @@ _COCKPIT_ROUTERS = (
     movers_router.router,
     quote_stream_router.router,
     traces_router.router,
+    forecast_router.router,
 )
 
 

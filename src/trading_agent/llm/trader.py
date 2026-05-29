@@ -1052,6 +1052,33 @@ class AgentTrader:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "forecast",
+                    "description": (
+                        "Forward 1σ price-cone forecast for a symbol over 5/10/30 day "
+                        "horizon. Combines realized vol, options IV, and prediction-market "
+                        "implied move. This is an *envelope*, not a point forecast — mid "
+                        "line is flat. Enable via SITUATION_FORECAST in settings."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Ticker or instrument (e.g. 'AAPL', 'SPY', 'BTC/USD').",
+                            },
+                            "horizon": {
+                                "type": "integer",
+                                "description": "Forward horizon in trading days: 5, 10, or 30. Default 30.",
+                                "enum": [5, 10, 30],
+                            },
+                        },
+                        "required": ["symbol"],
+                    },
+                },
+            },
         ]
 
         # A3 ACT catalog — only injected when broker is wired.
@@ -1192,6 +1219,11 @@ class AgentTrader:
                 return self._tool_options_iv(
                     symbol=str(tc.arguments.get("symbol", "")),
                     expiry=tc.arguments.get("expiry"),
+                )
+            if tc.name == "forecast":
+                return self._tool_forecast(
+                    symbol=str(tc.arguments.get("symbol", "")),
+                    horizon=int(tc.arguments.get("horizon", 30)),
                 )
             # A3 ACT tools (also terminals — loop exits after these)
             if tc.name == "trade":
@@ -1347,6 +1379,20 @@ class AgentTrader:
             spot_prices=dict(self._spot_prices),
         )
         return tool(symbol, expiry=expiry)
+
+    def _tool_forecast(self, symbol: str, horizon: int = 30) -> ToolResult:
+        """Dispatch the forecast LOOK tool (1σ price-cone)."""
+        from ..intel.tools.look.forecast import ForecastTool
+
+        tool = ForecastTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            settings_store=self.settings_store,
+            chain_provider=self._chain_provider,
+            pm_provider=self._pm_provider,
+            spot_prices=dict(self._spot_prices),
+        )
+        return tool(symbol, horizon=horizon)
 
     # --- A2 NOTE tool dispatchers -------------------------------------------
 

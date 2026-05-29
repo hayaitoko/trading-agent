@@ -3238,6 +3238,109 @@ async function attnLoad(body,o){
   }catch(e){ if(e.status===401&&booted)return signedOut(); wrap.innerHTML=`<div class="fin-empty">Attention unavailable${e.status?` (${e.status})`:""}.</div>`; }
 }
 
+/* ===================== FORECAST TILE (WS-Situation C1) =====================
+   forecastCone: 1σ price-cone for a symbol over 5/10/30 day horizon.
+   Reads /api/forecast?symbol=&horizon= and renders the cone on a lightweight-charts
+   price chart with lo/mid/hi area series.
+   Default-off (not in any default tab layout); operator enables via the tile palette.
+   MANAGER FRUGALITY: no LLM call — reads cached /api/forecast endpoint only. */
+
+TILES.forecastCone={ title:"Forecast cone", group:"Forecast", icon:"🔮", w:7, h:20,
+  refreshMs:300000, // 5-min refresh (forecast is slow-moving)
+  defaultOff: true, // default-off per agency-model memory
+  optFields:[{key:"symbol",label:"Symbol",placeholder:"AAPL"},{key:"horizon",label:"Horizon (5/10/30)",placeholder:"30"}],
+  async mount(body,o){ await fcLoad(body,o); },
+  async refresh(body,o){ await fcLoad(body,o); },
+};
+
+async function fcLoad(body,o){
+  if(!body) return;
+  const sym=(o&&o.symbol)||"SPY";
+  const horizon=parseInt((o&&o.horizon)||"30",10)||30;
+  body.innerHTML=`<div class="fin-empty" style="padding:8px">Loading forecast for ${esc(sym)}…</div>`;
+  try{
+    const d=await api(`/api/forecast?symbol=${encodeURIComponent(sym)}&horizon=${horizon}`);
+    body.innerHTML="";
+    // Header: components used + sigma summary
+    const sigmaStr=d.combined_sigma?`σ=${(d.combined_sigma*100).toFixed(1)}% ann.`:"vol unavailable";
+    const compsStr=(d.components_used||[]).join(", ")||"none";
+    const hdr=document.createElement("div"); hdr.className="fc-hdr";
+    hdr.innerHTML=`<span class="fc-sym">${esc(sym)}</span> <span class="fc-h">${horizon}D</span> `
+      +`<span class="fc-sig">${esc(sigmaStr)}</span> `
+      +`<span class="fc-comps">[${esc(compsStr)}]</span> `
+      +`<span class="fc-warn" title="This is an envelope, not a directional forecast. Mid line is flat (no drift).">⚠ envelope only</span>`;
+    body.appendChild(hdr);
+    // Horizon selector
+    const hSel=document.createElement("div"); hSel.className="fc-hsel";
+    [5,10,30].forEach(h=>{
+      const b=document.createElement("button");
+      b.textContent=h+"D"; b.className="btn ghost fc-hbtn"+(h===horizon?" on":"");
+      b.onclick=()=>{
+        const it=body.closest(".grid-stack-item"); if(!it) return;
+        const opts=JSON.parse(it.dataset.opts||"{}"); opts.horizon=String(h);
+        it.dataset.opts=JSON.stringify(opts);
+        fcLoad(body,opts);
+      };
+      hSel.appendChild(b);
+    });
+    body.appendChild(hSel);
+    // Chart
+    const pts=d.points||[];
+    if(!pts.length){
+      const emp=document.createElement("div"); emp.className="fin-empty";
+      emp.textContent="No cone data — enable SITUATION_FORECAST and ensure history service is wired.";
+      body.appendChild(emp); return;
+    }
+    const chartWrap=document.createElement("div"); chartWrap.className="fc-chart";
+    chartWrap.style.height="140px"; body.appendChild(chartWrap);
+    // Use lightweight-charts if available; fall back to SVG sparkline.
+    if(typeof LightweightCharts!=="undefined"){
+      const lc=LightweightCharts.createChart(chartWrap,{width:chartWrap.offsetWidth||320,height:140,
+        layout:{background:{color:"transparent"},textColor:"#aaa"},
+        grid:{vertLines:{color:"#2a2a2a"},horzLines:{color:"#2a2a2a"}},
+        timeScale:{timeVisible:false},
+        rightPriceScale:{borderColor:"#444"},
+      });
+      const tBase=Math.floor(Date.now()/1000);
+      const toT=i=>({day:i,time:tBase+i*86400}); // pseudo-time for day offsets
+      const mid=lc.addLineSeries({color:"#00b4d8",lineWidth:1,priceLineVisible:false});
+      const hi=lc.addAreaSeries({topColor:"rgba(0,180,80,0.15)",bottomColor:"rgba(0,180,80,0.02)",lineColor:"#00b450",lineWidth:1,priceLineVisible:false});
+      const lo=lc.addAreaSeries({topColor:"rgba(220,80,80,0.02)",bottomColor:"rgba(220,80,80,0.15)",lineColor:"#dc5050",lineWidth:1,priceLineVisible:false});
+      mid.setData(pts.map(p=>({time:tBase+p.t*86400,value:p.mid})));
+      hi.setData(pts.map(p=>({time:tBase+p.t*86400,value:p.hi})));
+      lo.setData(pts.map(p=>({time:tBase+p.t*86400,value:p.lo})));
+      lc.timeScale().fitContent();
+      chartWrap._lc=lc;
+      new ResizeObserver(()=>{ lc.applyOptions({width:chartWrap.offsetWidth}); lc.timeScale().fitContent(); }).observe(chartWrap);
+    } else {
+      // SVG sparkline fallback
+      const hiVals=pts.map(p=>p.hi), loVals=pts.map(p=>p.lo);
+      const maxV=Math.max(...hiVals), minV=Math.min(...loVals), rangeV=maxV-minV||1;
+      const W=320, H=120, N=pts.length;
+      const xS=(W-20)/(N-1||1);
+      const yS=(H-16)/(rangeV);
+      const py=v=>H-8-(v-minV)*yS;
+      const px=i=>10+i*xS;
+      const pathD=arr=>arr.map((v,i)=>`${i===0?"M":"L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
+      const areaD=(top,bot)=>`${pathD(top)} L${px(N-1)},${py(bot[N-1])} `+bot.map((v,i)=>i===0?`L${px(N-1-i)},${py(v)}`:`L${px(N-1-i)},${py(v)}`).reverse().join(" ")+" Z";
+      chartWrap.innerHTML=`<svg width="${W}" height="${H}" style="display:block">
+        <path d="${areaD(hiVals,pts.map(p=>p.mid))}" fill="rgba(0,180,80,0.1)" stroke="none"/>
+        <path d="${areaD(pts.map(p=>p.mid),loVals)}" fill="rgba(220,80,80,0.1)" stroke="none"/>
+        <path d="${pathD(pts.map(p=>p.mid))}" stroke="#00b4d8" stroke-width="1.5" fill="none"/>
+        <path d="${pathD(hiVals)}" stroke="#00b450" stroke-width="1" fill="none"/>
+        <path d="${pathD(loVals)}" stroke="#dc5050" stroke-width="1" fill="none"/>
+      </svg>`;
+    }
+    // Data footnote
+    const note=document.createElement("div"); note.className="fc-note";
+    note.textContent=`${esc(d.symbol)} · price ${d.current_price?d.current_price.toFixed(2):"?"} · components: ${esc(compsStr)} · anti-overconfidence: mid is flat`;
+    body.appendChild(note);
+  }catch(e){
+    if(e.status===401&&booted) return signedOut();
+    body.innerHTML=`<div class="fin-empty">Forecast unavailable${e.status?` (${e.status})`:""}. Enable SITUATION_FORECAST in settings.</div>`;
+  }
+}
+
 /* ---- Watchlist tile extension: per-trader overlay + sync button ---- */
 /* The existing TILES.watchlist is extended: after wlLoad resolves, this overlay
    fetches trader watchlists from /api/traces/attention (watchpoints have symbols)
@@ -3366,6 +3469,17 @@ TILES.approvals = Object.assign({}, _origApprTile, {
 /* -- pending trade lineage -- */
 .pts-lineage{margin-top:10px;border-top:1px solid var(--border);padding-top:6px}
 .pts-row{grid-template-columns:auto 1fr 1fr auto}
+/* -- forecast cone tile (C1) -- */
+.fc-hdr{display:flex;align-items:baseline;gap:8px;padding:6px 4px 2px;flex-wrap:wrap}
+.fc-sym{font-weight:700;font-size:14px;font-family:var(--mono)}
+.fc-h{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.fc-sig{font-family:var(--mono);font-size:11px;color:var(--accent)}
+.fc-comps{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.fc-warn{font-size:10px;color:var(--neg);margin-left:auto;cursor:help}
+.fc-hsel{display:flex;gap:4px;padding:4px 4px 0;flex-wrap:wrap}
+.fc-hbtn.on{background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent)}
+.fc-chart{overflow:hidden;border-radius:4px;margin:4px 0}
+.fc-note{font-size:10px;color:var(--muted);padding:4px 4px 2px;line-height:1.4;font-family:var(--mono)}
 `;
   document.head.appendChild(s);
 })();

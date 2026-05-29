@@ -163,16 +163,16 @@ def test_list_tools_contains_required_fields() -> None:
         assert "disabled_reason" in t
 
 
-def test_list_tools_includes_disabled_with_reason() -> None:
+def test_list_tools_has_no_permanently_disabled_tools() -> None:
+    """C1: all LOOK tools are now wired (enabled=True).  None should be permanently
+    disabled — world_events/prediction_market_odds/options_iv gate on SITUATION_*
+    flags and forecast gates on SITUATION_FORECAST; all return disabled error at
+    runtime when their flag is off, but are listed as enabled=True in the catalog
+    so the model knows to call them when the operator has enabled the flag."""
     result = ListToolsTool(trader_id="Alpha")()
     tools = result.data["tools"]
     disabled = [t for t in tools if not t["enabled"]]
-    # C0: world_events / prediction_market_odds / options_iv are now wired (enabled=True,
-    # return disabled error when flag off).  Only forecast remains a stub (Track C).
-    assert len(disabled) >= 1  # forecast stub
-    for t in disabled:
-        assert t["disabled_reason"] is not None
-        assert len(t["disabled_reason"]) > 0
+    assert len(disabled) == 0, f"unexpected disabled tools: {[t['name'] for t in disabled]}"
 
 
 def test_list_tools_includes_all_look_tools() -> None:
@@ -395,7 +395,7 @@ def test_situation_with_classifier() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Disabled tool stubs
+# Flag-gated tools — all return disabled when settings_store is absent
 # ---------------------------------------------------------------------------
 
 
@@ -406,18 +406,15 @@ def test_situation_with_classifier() -> None:
     (ForecastTool, {"symbol": "AAPL", "horizon": 10}),
 ])
 def test_disabled_tools_return_disabled_error(ToolCls: Any, args: dict[str, Any]) -> None:
-    """All four tools return kind="disabled" when no settings/provider is supplied.
+    """All four flag-gated tools return kind="disabled" when no settings/provider is given.
 
-    WorldEventsTool, PredictionMarketOddsTool, OptionsIVTool are wired (Track A)
-    but flag-gated — they return disabled when settings_store is None (default).
-    ForecastTool is still a stub (Track C) and returns the stub disabled message.
-    All four must return ok=False, error.kind="disabled".
+    All four are wired (Track A/C) and return ToolError(kind="disabled") when
+    settings_store is None (flag defaults to off) or their specific flag is off.
     """
     tool = ToolCls(trader_id="Alpha")
     result = tool(**args)
     _assert_tool_result_shape(result, expect_ok=False)
     assert result.error.kind == "disabled"
-    # Message is non-empty; exact wording varies between stub and wired tools
     assert result.error.message
 
 
