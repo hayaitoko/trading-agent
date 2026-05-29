@@ -184,8 +184,14 @@ def test_on_off_contexts_differ(tmp_path: Any) -> None:
 
 
 def test_bench_controller_per_trader_flags(tmp_path: Any) -> None:
-    """add_model with intelligence_flags={"research": False} disables research
-    for that specific trader even when owner-level research is enabled."""
+    """add_model with intelligence_flags={"memory": False} disables the private
+    memory layer for that specific trader even when the owner has memory wired.
+
+    Under the agent model `memory` is the context layer carried via the
+    AgentTrader constructor (the memory_search + reflect tools wrap it); the
+    legacy research/situation/pattern sub-flags are now tool-mediated and no
+    longer toggle a constructor attribute.
+    """
     from unittest.mock import MagicMock
 
     from trading_agent.bench.bench import Bench
@@ -198,19 +204,19 @@ def test_bench_controller_per_trader_flags(tmp_path: Any) -> None:
         bench,
         client,
         symbols=["AAPL"],
-        research=MagicMock(),  # owner has research enabled
+        memory=MagicMock(),  # owner has the private memory layer wired
     )
 
-    # Add model with research disabled at the per-trader level.
-    name = controller.add_model("test/model", "no-research",
-                                intelligence_flags={"research": False})
+    # Add model with the memory layer disabled at the per-trader level.
+    name = controller.add_model("test/model", "no-memory",
+                                intelligence_flags={"memory": False})
     competitor = bench._competitors.get(name)
     assert competitor is not None
-    assert competitor.trader.research is None  # overridden by flag
+    assert competitor.trader.memory is None  # overridden by flag
 
 
 def test_bench_controller_same_model_ab(tmp_path: Any) -> None:
-    """Same model added twice: one with full intelligence, one with none."""
+    """Same model added twice: one with the memory layer, one with none."""
     from unittest.mock import MagicMock
 
     from trading_agent.bench.bench import Bench
@@ -219,15 +225,13 @@ def test_bench_controller_same_model_ab(tmp_path: Any) -> None:
     client = MagicMock()
     bench = Bench(["NVDA"])
 
-    research = MagicMock()
-    research.search.return_value = []
-    research.recent.return_value = []
+    memory = MagicMock()
 
     controller = BenchController(
         bench,
         client,
         symbols=["NVDA"],
-        research=research,
+        memory=memory,
     )
 
     name_on = controller.add_model("test/model", "intel-on")
@@ -242,9 +246,9 @@ def test_bench_controller_same_model_ab(tmp_path: Any) -> None:
     comp_on = bench._competitors.get(name_on)
     comp_off = bench._competitors.get(name_off)
     assert comp_on is not None and comp_off is not None
-    # ON has research; OFF does not.
-    assert comp_on.trader.research is not None
-    assert comp_off.trader.research is None
+    # ON carries the private memory layer; OFF has it disabled by the per-trader flag.
+    assert comp_on.trader.memory is not None
+    assert comp_off.trader.memory is None
 
 
 # ---- Calibration router -----------------------------------------------------

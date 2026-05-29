@@ -404,37 +404,28 @@ def test_controller_threads_recall_k_from_settings(tmp_path: Path) -> None:
     db = Database(tmp_path / "c.db")
     user = create_user(db, "solo", "pw")
     settings = SettingsStore(db)
-    settings.set(user.id, "trader_research_k", 2)
     settings.set(user.id, "trader_memory_recall_k", 3)
-    research, memory = object(), object()
+    memory = object()
     bench = Bench(["AAPL"], initial_balance=100_000.0)
     controller = BenchController(
         bench, OpenRouterClient(api_key="k", transport=_mock_transport()),
-        symbols=["AAPL"], research=research, memory=memory, owner_user_id=user.id, db=db,
+        symbols=["AAPL"], memory=memory, owner_user_id=user.id, db=db,
     )
     controller.add_model("test/m", name="alpha")
     trader = _added_trader(bench, "alpha")
-    assert trader.research_k == 2 and trader.memory_k == 3
-    assert trader.research is research and trader.memory is memory
+    # Under the agent model the controller threads the private memory layer + its
+    # recall breadth + the owner into the AgentTrader; research/history context is
+    # tool-mediated, so research_k/research are no longer trader constructor args.
+    assert trader.memory_k == 3
+    assert trader.memory is memory
     assert trader.owner_user_id == user.id
 
 
-def test_controller_research_read_toggle_off(tmp_path: Path) -> None:
-    from trading_agent.config.settings_store import SettingsStore
-    from trading_agent.config.users import create_user
-
-    db = Database(tmp_path / "c.db")
-    user = create_user(db, "solo", "pw")
-    SettingsStore(db).set(user.id, "trader_research_read", False)
-    bench = Bench(["AAPL"], initial_balance=100_000.0)
-    controller = BenchController(
-        bench, OpenRouterClient(api_key="k", transport=_mock_transport()),
-        symbols=["AAPL"], research=object(), memory=object(), owner_user_id=user.id, db=db,
-    )
-    controller.add_model("test/m", name="alpha")
-    trader = _added_trader(bench, "alpha")
-    assert trader.research is None  # research reads disabled for this owner
-    assert trader.memory is not None  # memory recall unaffected by the research toggle
+# NOTE (WS-Bench-Migration): the former test_controller_research_read_toggle_off
+# exercised the owner-level `trader_research_read` → research=None constructor path
+# on the trader. The agent model removed that path (research is tool-mediated, not a
+# trader constructor arg), so the test was deleted rather than migrated. Memory
+# wiring — the layer that survives — stays covered by the recall-k test above.
 
 
 # --- WS-A P5: serve --owner + controller intelligence wiring ----------------
@@ -463,7 +454,9 @@ def test_build_cockpit_controller_carries_intelligence(tmp_path: Path) -> None:
         trader = app.state.bench._competitors["alpha"].trader  # type: ignore[attr-defined]
         assert trader.owner_user_id == user.id
         assert trader.memory is app.state.memory
-        assert trader.history is app.state.history
+        # `history` is no longer a trader constructor arg under the agent model
+        # (history context is tool-mediated); the controller still carries it.
+        assert controller.history is app.state.history
     finally:
         app.state.approvals.close()
 

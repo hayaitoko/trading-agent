@@ -29,14 +29,16 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..intel.cost_tracker import CostTracker
 from ..intel.tool_envelope import ToolError, ToolResult
 from ..intel.turn_context import TurnContext, TurnType, build_first_look
+from ..intel.turn_store import ToolCallRecord
 from .openrouter import OpenRouterError, ToolCall, ToolCallChatResult, parse_json_object
 
 if TYPE_CHECKING:
@@ -562,6 +564,9 @@ class AgentTrader:
         pm_provider: Any = None,
         chain_provider: Any = None,
         spot_prices: dict[str, float] | None = None,
+        # A5 observability: persistent turn-trace store (optional; None → no trace
+        # write, agent still runs).  Populated by the bench controller.
+        turn_store: Any = None,
     ) -> None:
         self.model = model
         self.client = client
@@ -590,6 +595,8 @@ class AgentTrader:
         self._pm_provider = pm_provider
         self._chain_provider = chain_provider
         self._spot_prices: dict[str, float] = dict(spot_prices or {})
+        # A5 observability: turn-trace store (None → trace writes are skipped).
+        self._turn_store = turn_store
         # Store original total so tutorial_extra_lines() can compute "turn N of M".
         self._tutorial_total: int = self.tutorial_remaining
         # Price bar buffer (same shape as LLMTrader for observe() compat)
@@ -616,6 +623,36 @@ class AgentTrader:
         # A4 done_for_day flag: set to True when done_for_day() terminal fires;
         # the scheduler reads this to update lifecycle state.
         self._done_for_day_this_turn: bool = False
+
+    # --- Execution binding (WS-Bench-Migration) ------------------------------
+
+    def bind_execution(
+        self,
+        *,
+        broker: Any,
+        risk_manager: Any = None,
+        pending_trade_queue: Any = None,
+        requires_approval: bool = False,
+    ) -> None:
+        """Attach the bench's per-competitor broker + risk + approval queue.
+
+        The bench owns broker creation (one isolated book per competitor), and a
+        competitor's broker only exists *after* ``Bench.add_competitor`` returns —
+        but the trader is constructed first.  The controller therefore builds the
+        AgentTrader, registers it, then calls this to wire the ACT toolkit into the
+        very book the leaderboard values (so trades land on the tracked book rather
+        than a detached broker).
+
+        Rebuilds the cached system prompt so the ACT terminals (``trade`` /
+        ``trade_batch`` / ``confirm_trade`` / ``abandon_trade``) are advertised in
+        the stable prefix.  Runs once, before the first ``decide()``, so the prefix
+        stays cacheable across every subsequent turn (Discipline #5).
+        """
+        self.broker = broker
+        self.risk_manager = risk_manager
+        self.pending_trade_queue = pending_trade_queue
+        self.requires_approval = requires_approval
+        self._stable_system_content = self._build_system_prompt()
 
     # --- Trader Protocol interface -------------------------------------------
 
@@ -664,6 +701,19 @@ class AgentTrader:
             previous_attempt_tools=recovery_tools if recovery_tools else None,
         )
         cost_tracker = CostTracker()
+
+        # A5: open a trace row so an interrupted turn is detectable and the
+        # cockpit/recent_turns can read it.  Every TurnStore write swallows its
+        # own errors — a trace failure never affects the decision.
+        tool_records: list[ToolCallRecord] = []
+        if self._turn_store is not None:
+            self._turn_store.open_turn(
+                self._current_turn_id,
+                self.name,
+                wake_reason_raw,
+                turn_type,
+                first_look_snapshot=asdict(ctx),
+            )
 
         # Build initial message list: stable system + variable first-look.
         # The system message gets cache_control for Anthropic-backend caching;
@@ -736,7 +786,19 @@ class AgentTrader:
                 hit_terminal = False
                 for tc in result.tool_calls:
                     tool_call_count += 1
+                    _t0 = time.monotonic()
                     tool_result = self._execute_tool(tc, cost_tracker)
+                    # A5: capture this call in the turn trace (name, args, result,
+                    # latency).  cost_usd stays 0.0 here — turn-level cost rollup
+                    # carries nested-LLM spend; per-tool attribution is future work.
+                    tool_records.append(
+                        ToolCallRecord(
+                            tool_name=tc.name,
+                            args=dict(tc.arguments) if isinstance(tc.arguments, dict) else {},
+                            result=tool_result.to_dict(),
+                            latency_ms=int((time.monotonic() - _t0) * 1000),
+                        )
+                    )
 
                     if tc.name in _TERMINALS:
                         terminal_action = tc.name
@@ -778,6 +840,8 @@ class AgentTrader:
                 self._maybe_trim_context(messages)
 
         except OpenRouterError as exc:
+            # A5: close the trace as an errored turn so it isn't left dangling.
+            self._record_turn_close(tool_records, "error", {"error": str(exc)}, cost_tracker)
             return DecisionResult(error=str(exc))
 
         # A6: tutorial bookkeeping — must happen before return so the next
@@ -789,8 +853,34 @@ class AgentTrader:
             else:
                 self.tutorial_remaining = max(0, self.tutorial_remaining - 1)
 
+        # A5: finalise the trace row with the terminal action + cost/token rollup.
+        self._record_turn_close(
+            tool_records,
+            terminal_action,
+            terminal_args if isinstance(terminal_args, dict) else {},
+            cost_tracker,
+        )
         return self._to_decision_result(
             terminal_action, terminal_args, cost_tracker
+        )
+
+    def _record_turn_close(
+        self,
+        tool_records: list[ToolCallRecord],
+        final_action: str,
+        final_action_args: dict[str, Any],
+        cost_tracker: CostTracker,
+    ) -> None:
+        """Finalise this turn's A5 trace row (no-op when no turn_store is wired)."""
+        if self._turn_store is None:
+            return
+        self._turn_store.close_turn(
+            self._current_turn_id,
+            tool_calls=tool_records,
+            final_action=final_action,
+            final_action_args=final_action_args,
+            total_cost_usd=cost_tracker.total_usd,
+            total_tokens=cost_tracker.token_totals(),
         )
 
     # --- System prompt (stable; built at construction time) ------------------

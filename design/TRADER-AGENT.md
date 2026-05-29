@@ -1,6 +1,7 @@
 # Trader Agent — Design Reference
 
-**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3 ✅ · A4 ✅ · A5 ✅ · A6 ✅ (complete)  
+**Status:** WS-Agent A0 ✅ · A1 ✅ · A2 ✅ · A3 ✅ · A4 ✅ · A5 ✅ · A6 ✅ (complete) ·
+Bench wiring ✅ (WS-Bench-Migration — `AgentTrader` is the bench's default trader)  
 **Branch:** `feat/engine-realism`  
 **Legend:** ✅ exists · 🟡 partial · 🔵 planned
 
@@ -33,6 +34,19 @@ That crystallised into three concrete requirements:
 
 See memory entry `[[trading-agent-trader-agency-model]]` for the full decision
 log.
+
+**Bench wiring (WS-Bench-Migration).** The reframe is now live end-to-end:
+`bench/controller.py::add_model()` instantiates `AgentTrader` (not the legacy
+structured-output trader), and `BenchController` threads the shared agent
+infrastructure — attention queue (NOTE tools), `PendingTradeQueue` (ACT approval
+flow), `TurnStore` (A5 trace), and the WS-Situation providers — into every trader
+it builds.  The bench mints each competitor's isolated `PaperBroker`;
+`AgentTrader.bind_execution()` then attaches that broker + risk + approval queue so
+the ACT tools settle trades on the very book the leaderboard values.  `serve.py`
+constructs one set of this infrastructure per controller and attaches the trace +
+pending-trade stores to `app.state` for the cockpit read routers.  The ET-anchored
+lifecycle scheduler is opt-in via `TRADING_AGENT_SCHEDULER=1` (default off keeps the
+bench on its plain cadence for any-time-of-day testing).
 
 ---
 

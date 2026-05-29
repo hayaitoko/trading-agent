@@ -30,15 +30,18 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..approval_queue import ApprovalQueue
+from ..approval_queue import ApprovalQueue, PendingTradeQueue
 from ..audit import AuditLogger
 from ..bench.bench import Bench
 from ..bench.controller import BenchController
+from ..bench.scheduler import MarketScheduler
 from ..config.db import Database
 from ..data_feed import MessageBus
 from ..db import DatabaseManager
 from ..enums import Mode
 from ..feeds import synthetic_mean_reverting_bars
+from ..intel.attention_queue import AttentionQueue
+from ..intel.turn_store import TurnStore
 from ..llm.openrouter import OpenRouterClient, OpenRouterError
 from ..paper_broker import PaperBroker
 from ..risk_manager import RiskLimits, RiskManager
@@ -305,6 +308,21 @@ def build_cockpit(
     app.state.risk = RiskManager(kill_switch_file=base_dir / ".kill_switch")
     app.state.approvals = ApprovalQueue(db_path=base_dir / "approvals.db", executor=_echo_executor)
 
+    # WS-Bench-Migration: shared agent infrastructure (one set per controller).
+    # Attached to app.state so the trace (/api/traces) and pending-trade
+    # (/api/pending-trades) read routers see them even without a controller, and
+    # threaded into every AgentTrader the controller builds below.
+    app.state.pending_trades = PendingTradeQueue(db_path=base_dir / "approvals.db")
+    app.state.turn_store = TurnStore(db_path=str(base_dir / "turns.db"))
+    attention_queue = AttentionQueue(db=app.state.db)
+    app.state.attention_queue = attention_queue
+    # A4 lifecycle scheduler: opt-in via TRADING_AGENT_SCHEDULER=1. Default off keeps
+    # the bench on its plain cadence so turns fire any time of day during testing;
+    # turning it on gates turns behind the ET-anchored market-hours window and
+    # classifies them SoD / regular / EoD (the calendar falls back to static hours
+    # when no Alpaca key is present).
+    scheduler = MarketScheduler(bench) if os.environ.get("TRADING_AGENT_SCHEDULER") else None
+
     # Real market data for the cockpit charts + fundamentals popup. Bars come
     # from the same Alpaca data key as the live books; fundamentals from whatever
     # provider has a key in the environment (real data only — no synthetic feed).
@@ -353,6 +371,11 @@ def build_cockpit(
             reflector=app.state.reflector,
             owner_user_id=owner_user_id,
             db=app.state.db,
+            # WS-Bench-Migration: agent infrastructure threaded into every AgentTrader.
+            attention_queue=attention_queue,
+            pending_trade_queue=app.state.pending_trades,
+            turn_store=app.state.turn_store,
+            scheduler=scheduler,
         )
     return app
 

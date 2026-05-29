@@ -109,3 +109,21 @@ class CostTracker:
             "model_calls": len(self._model_calls),
             "nested_llm_calls": len(self._nested_calls),
         }
+
+    def token_totals(self) -> dict[str, int]:
+        """Sum input/output/cached tokens across this turn's main-loop model calls.
+
+        Shaped for :meth:`~trading_agent.intel.turn_store.TurnStore.close_turn`'s
+        ``total_tokens`` argument (keys: ``input`` / ``output`` / ``cached``).
+        """
+        totals = {"input": 0, "output": 0, "cached": 0}
+        for call in self._model_calls:
+            for key, field_name in (
+                ("input", "input_tokens"),
+                ("output", "output_tokens"),
+                ("cached", "cached_tokens"),
+            ):
+                value = call.get(field_name, 0)
+                if isinstance(value, (int, float)):
+                    totals[key] += int(value)
+        return totals

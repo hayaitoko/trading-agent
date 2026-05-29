@@ -8,9 +8,15 @@ per-trader memory, a manager). Nothing here is built yet unless tagged ✅.
 
 ---
 
-## 0. Where we are today (the honest baseline)
+## 0. Where we started (historical baseline — superseded)
 
-Each "trader" is **one model, trading blind off a short price strip, alone.**
+> **Superseded by WS-Agent + WS-Bench-Migration.** The snapshot below describes the
+> original blind structured-output trader (`LLMTrader`). The bench now runs
+> `AgentTrader` — a ReAct tool-using agent with memory, the LOOK/NOTE/ACT toolkit,
+> and full turn-trace observability. See §1 (Target component map, now ✅) for the
+> live shape. This section is kept as the motivating "before" picture.
+
+Each "trader" *was* **one model, trading blind off a short price strip, alone.**
 
 - A **Competitor** = one `LLMTrader` (a single OpenRouter model) + its own `PaperBroker`
   ($100k isolated book) + its own `RiskManager`. ✅ (`bench/bench.py:56`)
@@ -365,9 +371,9 @@ Wire the read-only views (1) before the spend-y agents (2–4); keep every model
 
 ## Appendix — existing code inventory (✅ to build on)
 
-- `llm/trader.py` — `LLMTrader`/`StrategyTrader`, `TradeDecision`, `DecisionResult`, `_build_context` (30-close context, `lookback`)
+- `llm/trader.py` — `AgentTrader` (bench default, ReAct tool-loop), `StrategyTrader`, `TradeDecision`, `DecisionResult`, `Trader` protocol
 - `bench/bench.py` — `Bench`, `Competitor` (decisions deque 50, `last_comment`), `run_decisions`, `observe_bar/observe_quote`, `leaderboard`, `recent_decisions`, `snapshot`
-- `bench/controller.py` — `BenchController`: `add_model`, `set_cadence`, `start/stop`, `tick_now`, `available_models`, `status`
+- `bench/controller.py` — `BenchController`: `add_model` (builds `AgentTrader` + `bind_execution`), `set_cadence`, `start/stop`, `tick_now`, `available_models`, `status`
 - `paper_broker.py` — `PaperBroker`: `get_balance`, `get_positions`, `get_trade_history`, `get_account_value`
 - `risk_manager.py` — `RiskManager`: kill switch, `check_*`, limits, exposure
 - `approval_queue.py` — `ApprovalQueue`: add/approve/reject/pending/get (SQLite, thread-safe)

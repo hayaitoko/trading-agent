@@ -20,19 +20,39 @@ _MODELS = {
         {"id": "some/other-model", "name": "Other"},
     ]
 }
-_BUY = json.dumps({"decisions": [{"symbol": "AAPL", "action": "BUY", "quantity": 2}],
-                   "comment": "buying"})
+# Agent-model trade: the mocked model invokes the `trade` ACT tool (terminal),
+# which — with the bench's per-competitor broker bound into the AgentTrader —
+# fills on the very book the leaderboard values.  Replaces the legacy
+# structured-JSON BUY (the old LLMTrader decision shape).
+_TRADE_CALL = {
+    "model": "anthropic/claude-opus-4.7",
+    "choices": [
+        {
+            "message": {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_buy",
+                        "type": "function",
+                        "function": {
+                            "name": "trade",
+                            "arguments": json.dumps({"symbol": "AAPL", "side": "BUY", "qty": 2}),
+                        },
+                    }
+                ],
+            },
+            "finish_reason": "tool_calls",
+        }
+    ],
+    "usage": {"total_tokens": 20, "prompt_tokens": 10, "completion_tokens": 10},
+}
 
 
 def _transport() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/models"):
             return httpx.Response(200, json=_MODELS)
-        return httpx.Response(200, json={
-            "model": "anthropic/claude-opus-4.7",
-            "choices": [{"message": {"content": _BUY}}],
-            "usage": {"total_tokens": 20},
-        })
+        return httpx.Response(200, json=_TRADE_CALL)
     return httpx.MockTransport(handler)
 
 
@@ -95,9 +115,16 @@ def test_start_stop_status(client: Any) -> None:
 
 def test_tick_runs_a_decision_round(client: Any) -> None:
     client.post("/api/bench/competitors", json={"model": "anthropic/claude-opus-4.7"})
-    client.bench.observe_bar({"symbol": "AAPL", "close": 100.0})  # set a price so it can fill
+    client.bench.observe_bar({"symbol": "AAPL", "close": 100.0})  # price so the market order fills
     r = client.post("/api/bench/tick")
     assert r.status_code == 200
     snap = client.get("/api/bench").json()
-    assert snap["leaderboard"][0]["trades"] == 1  # the mocked BUY filled
-    assert snap["recent_decisions"][0]["status"] == "filled"
+    # The mocked model invoked the `trade` ACT tool; with the bench broker bound
+    # into the AgentTrader (M1), the BUY filled on the tracked book.
+    assert snap["leaderboard"][0]["trades"] == 1
+    # Under the agent model the trade settles via the ACT tool (the bench's
+    # decisions=[] path never re-executes), so the bench decision log stays empty —
+    # per-turn observability lives in the turn_store trace (A5).  The terminal
+    # comment records the action for the leaderboard/last-comment surface.
+    comp = client.bench._competitors["anthropic/claude-opus-4.7"]
+    assert "trade" in comp.last_comment.lower()

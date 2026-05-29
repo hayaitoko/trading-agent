@@ -26,7 +26,7 @@ import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from ..llm.trader import _MEMORY_RECALL_K, _RESEARCH_K, LLMTrader
+from ..llm.trader import _MEMORY_RECALL_K, AgentTrader
 
 if TYPE_CHECKING:
     from ..config.db import Database
@@ -90,13 +90,28 @@ class BenchController:
         # A4: market-hours scheduler (optional; None → lifecycle gating disabled,
         # bench runs unconditionally as before A4)
         scheduler: MarketScheduler | None = None,
+        # WS-Bench-Migration: shared agent infrastructure (one set per controller,
+        # threaded into every AgentTrader). All optional → trader degrades when None:
+        #   attention_queue   — NOTE tools (reflect/remind/watchpoint) persistence
+        #   pending_trade_queue — ACT approval-callback flow (A3)
+        #   turn_store        — A5 observability trace (open_turn/close_turn)
+        #   *_provider        — WS-Situation Track A LOOK tools (default-off feature flags)
+        attention_queue: Any = None,
+        pending_trade_queue: Any = None,
+        turn_store: Any = None,
+        gdelt_provider: Any = None,
+        pm_provider: Any = None,
+        chain_provider: Any = None,
     ) -> None:
         self.bench = bench
         self.client = client
         self.symbols = list(symbols)
         self.cadence_seconds = max(MIN_CADENCE, cadence_seconds)
-        # WS-A intelligence wiring threaded into every LLMTrader (all optional;
-        # None → that trader degrades exactly as the bench did before WS-A).
+        # WS-A intelligence (all optional; None → that trader degrades exactly as
+        # the bench did before WS-A). Under the agent model only `memory` is threaded
+        # into the AgentTrader constructor (memory_search + reflect tools); `history`
+        # and `research` are retained here for the reflection write path and for the
+        # LOOK toolkit to wrap once those tools are made callable (follow-up).
         self.history = history
         self.research = research
         self.memory = memory
@@ -121,6 +136,13 @@ class BenchController:
         self._last_wake: dict[str, datetime] = {}
         # A4: market-hours scheduler (None → no lifecycle gating, backward-compat).
         self.scheduler: MarketScheduler | None = scheduler
+        # WS-Bench-Migration: shared agent infrastructure passed into every AgentTrader.
+        self._attention_queue = attention_queue
+        self._pending_trade_queue = pending_trade_queue
+        self._turn_store = turn_store
+        self._gdelt_provider = gdelt_provider
+        self._pm_provider = pm_provider
+        self._chain_provider = chain_provider
 
     @property
     def owner_id(self) -> str | None:
@@ -170,51 +192,54 @@ class BenchController:
         extended_hours: bool = False,
     ) -> str:
         owner = self.owner_id
-        research, research_k, memory_k = self.research, _RESEARCH_K, _MEMORY_RECALL_K
+        memory_k = _MEMORY_RECALL_K
         settings = self._settings()
-
-        # Resolve per-owner settings first, then let per-trader flags override.
         if owner is not None and settings is not None:
-            # Per-owner knobs (WS-A): research read toggle + recall breadth.
-            if not settings.get(owner, "trader_research_read", True):
-                research = None
-            research_k = int(settings.get(owner, "trader_research_k", _RESEARCH_K) or _RESEARCH_K)
             memory_k = int(
                 settings.get(owner, "trader_memory_recall_k", _MEMORY_RECALL_K) or _MEMORY_RECALL_K
             )
 
-        # P6: per-trader flag overrides disable specific intelligence layers.
+        # P6 per-trader override. Under the agent model the private memory layer is
+        # the only context carried via the constructor (the memory_search + reflect
+        # tools wrap it); research / situation / pattern context is now tool-mediated
+        # (WS-Situation LOOK toolkit), so those legacy intelligence_flags sub-keys no
+        # longer toggle a constructor arg here. The memory flag still gives a clean
+        # A/B on the memory layer. The regime_classifier / social_aggregator /
+        # calendar_events / pattern_store params are accepted for signature
+        # compatibility but not forwarded — the AgentTrader has no such slots.
         flags = dict(intelligence_flags or {})
-        effective_research = research
-        effective_memory = self.memory
-        if flags.get("research") is False:
-            effective_research = None
-        if flags.get("memory") is False:
-            effective_memory = None
+        effective_memory = None if flags.get("memory") is False else self.memory
 
-        trader = LLMTrader(
+        trader = AgentTrader(
             model,
             self.client,
             symbols=self.symbols,
             name=name or model,
             style=style,
-            history=self.history,
-            research=effective_research,
+            cadence_minutes=cadence_minutes,
             memory=effective_memory,
             owner_user_id=owner,
-            research_k=research_k,
             memory_k=memory_k,
-            # P3: situation layer
-            regime_classifier=regime_classifier,
-            social_aggregator=social_aggregator,
-            calendar_events=calendar_events or [],
-            # P4: pattern KB
-            pattern_store=pattern_store,
-            # P6: pass the full flags dict so situation/pattern can also be gated
-            intelligence_flags=flags,
+            attention_queue=self._attention_queue,
+            settings_store=settings,
+            turn_store=self._turn_store,
+            gdelt_provider=self._gdelt_provider,
+            pm_provider=self._pm_provider,
+            chain_provider=self._chain_provider,
+            spot_prices=dict(self.bench._last_prices),
         )
-        self.bench.add_competitor(
+        # Register the competitor first (the bench mints its isolated paper book),
+        # then bind that very broker + risk into the trader's ACT toolkit so trades
+        # settle on the book the leaderboard values. The PendingTradeQueue is shared
+        # across the controller's traders for the approval-callback flow.
+        comp = self.bench.add_competitor(
             trader.name, trader, initial_balance=cash, style=style
+        )
+        trader.bind_execution(
+            broker=comp.broker,
+            risk_manager=comp.risk,
+            pending_trade_queue=self._pending_trade_queue,
+            requires_approval=False,
         )
         # A4: register with lifecycle scheduler if wired.
         if self.scheduler is not None:
