@@ -945,6 +945,52 @@ deliverable; A2 reuses the existing market-wake mechanism for immediacy.
 
 ---
 
+## 14. Bench Launch + Migration Verification (WS-Bench-Migration)
+
+The bench now boots end-to-end on `AgentTrader` through the real entry point
+(`scripts/serve.py::build_cockpit`, exposed as the `trading-agent-serve --cockpit`
+factory). On construction `build_cockpit` attaches the shared agent infrastructure
+to `app.state` (`turn_store`, `pending_trades`, `attention_queue`) and threads it +
+an opt-in `MarketScheduler` into the `BenchController`; `add_model()` then builds an
+`AgentTrader` and `bind_execution()` wires the bench's per-competitor `PaperBroker`
+into its ACT toolkit.
+
+**Verified (M3, mocked LLM + bench PaperBroker — no outbound network):**
+
+- One `AgentTrader` competitor instantiates through `build_cockpit` → `add_model`
+  without crash; its broker is the bench's tracked book.
+- SoD / regular / EoD turns fire through `MarketScheduler.fire_turns()` and each
+  writes a `TurnRecord` (+ `ToolCallRecord` rows) to the `TurnStore` with the
+  correct `turn_type` (`tests/test_bench_migration_e2e.py`).
+- Tool dispatch reaches the LOOK wrappers: with a provider wired + `SITUATION_*`
+  flag on, `world_events` returns `ok=True`; with no provider/flag it returns
+  `ToolError(kind="disabled")` — a structured "off", never a crash.
+- `cost_tracker` accumulates a nonzero per-turn cost into the trace, with the
+  input/output/cached token rollup.
+
+Live boot trace (regular turn, scripted `world_events` → `trade`):
+
+```
+wake_reason : cadence tick (smoke)
+turn_type   : regular
+tool_calls  : [('world_events', 'err:disabled'), ('trade', 'ok')]
+final_action: trade {'symbol': 'AAPL', 'side': 'BUY', 'qty': 1}
+total_cost  : $0.0038
+tokens      : {'input': 280, 'output': 70, 'cached': 128}
+book        : trades=1 cash=$99808.50
+```
+
+**Live runway (post-push, needs real credentials).** The M3 verification used a
+scripted `chat_with_tools` client and the bench's `PaperBroker`, so no real
+OpenRouter or Alpaca calls were made. To validate the live path, boot with
+`OPENROUTER_API_KEY` (ZDR) + `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` set and confirm:
+a real model drives a turn, the ACT `trade` fills against **paper Alpaca**, the
+`world_events`/`forecast` tools fire when `SITUATION_*` providers are wired, and
+`/api/traces` renders the turn. Set `TRADING_AGENT_SCHEDULER=1` to exercise the
+ET-anchored lifecycle (otherwise the bench runs its plain cadence).
+
+---
+
 ## Key Files (A0–A2)
 
 | File | Role |
