@@ -16,12 +16,11 @@ transcripts) plus per-ticker combined feeds for the default watchlist symbols.
 SA's per-ticker ``api/sa/combined/{TICKER}.xml`` carries a combined stream of
 news + analysis tagged to that symbol.
 
-**Gap documented:** there is currently no hook that auto-registers a new per-ticker
-SA source when a trader adds a symbol via ``watch_symbol``.  The five default
-symbols (SPY, AAPL, MSFT, NVDA, TSLA) are seeded here as a pragmatic workaround;
-operators can call :func:`seed_sa_ticker` directly for additional symbols.  The
-right long-term fix is a ``universe_listener`` in the ingest worker that calls
-:func:`seed_sa_ticker` whenever a symbol enters a trader's universe.
+**Auto-registration (C2):** :func:`seed_sa_ticker` is wired as the
+``universe_listener`` in the stock-requests router.  When an operator approves
+a symbol request, the per-ticker SA feed is registered automatically.  The five
+default symbols (SPY, AAPL, MSFT, NVDA, TSLA) are also seeded at startup via
+:func:`seed_finance_sources`.
 
 **Feature flag:** ``INGEST_SEEDS_ENABLED`` (default on).  Set to ``"0"`` to skip
 seeding entirely (e.g. in integration tests that want a clean DB).
@@ -406,13 +405,11 @@ def seed_sa_ticker(db: Database, user_id: str, ticker: str) -> bool:
         def on_symbol_allowed(user_id, trader_id, symbol):
             seed_sa_ticker(db, user_id, symbol)
 
-    Until a universe_listener is wired into the ingest worker, operators call
-    this directly or rely on the default-ticker seed in :func:`seed_finance_sources`.
-
-    **Gap note (B0):** the ingest worker currently has no ``universe_listener``
-    hook; the right long-term fix is to pass ``universe_listener=seed_sa_ticker``
-    into :class:`~trading_agent.requests.RequestService` when the worker starts.
-    This is tracked as a follow-up for Track C / WS-Agent integration.
+    Wired as the ``universe_listener`` in the stock-requests router (C2): when
+    an operator allows a symbol request via ``POST /api/requests/{id}/allow``,
+    :class:`~trading_agent.requests.RequestService` calls this function
+    automatically.  Operators can also call it directly or rely on the
+    default-ticker seed in :func:`seed_finance_sources`.
     """
     if not _SEEDS_ENABLED:
         return False

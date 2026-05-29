@@ -6,6 +6,11 @@ operator-facing list + decision endpoints from ``CONTRACTS.md §HTTP route table
 ``GET /api/requests``, ``POST /api/requests/{id}/allow|decline``. Allow adds the
 symbol to the trader's universe and marks the request fulfilled; decline leaves
 the universe unchanged.
+
+B0 universe_listener: when a symbol is allowed, :func:`seed_sa_ticker` is called
+idempotently so the per-ticker SeekingAlpha combined RSS feed is registered in the
+ingest pipeline for the user.  This wires the gap noted in B0 — operators no longer
+need to call seed_sa_ticker manually when approving a new symbol.
 """
 
 from __future__ import annotations
@@ -20,8 +25,22 @@ from ...requests import RequestError, RequestService
 router = APIRouter(tags=["requests"])
 
 
+def _universe_listener(db: Any):
+    """Return a universe_listener that seeds the SA per-ticker RSS on symbol-allow."""
+    from ...ingest.seed_sources import seed_sa_ticker
+
+    def _on_symbol_allowed(user_id: str, trader_id: str, symbol: str) -> None:
+        try:
+            seed_sa_ticker(db, user_id, symbol)
+        except Exception:  # noqa: BLE001
+            pass  # seed failures must never block the allow response
+
+    return _on_symbol_allowed
+
+
 def _service(request: Request) -> RequestService:
-    return RequestService(get_db(request))
+    db = get_db(request)
+    return RequestService(db, universe_listener=_universe_listener(db))
 
 
 @router.get("/api/requests")

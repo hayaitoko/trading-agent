@@ -21,6 +21,27 @@ operator sees the full tool-call trace per turn in the cockpit.  New traders rec
 three guided orientation turns via tutorial mode before operating freely.  See
 [`design/TRADER-AGENT.md`](design/TRADER-AGENT.md) for the full agent specification.
 
+## Situation + forecast surface
+
+Seven real-time data sources enrich trader decisions without stuffing raw text
+into prompts.  Each source is exposed as a callable LOOK tool, gated by a
+per-user feature flag (all default off):
+
+| Tool | Flag | Source |
+|---|---|---|
+| `world_events()` | `SITUATION_GDELT` | GDELT macro/geopolitical themes |
+| `prediction_market_odds()` | `SITUATION_PREDICTION_MARKETS` | Polymarket + Kalshi implied probabilities |
+| `options_iv()` | `SITUATION_OPTIONS_IV` | Alpaca options IV + Greeks |
+| `forecast()` | `SITUATION_FORECAST` | 1σ price-cone (realized vol + IV + PM) |
+
+News, research briefs, and social metrics (Substack/SeekingAlpha RSS, Bluesky
+list and author feeds) flow through the ingest pipeline into the `news()` and
+`situation()` LOOK tools automatically.  The forecast cone (`GET /api/forecast`)
+combines empirical realized vol, options IV, and prediction-market implied move
+into a ±1σ price envelope — never a directional point estimate.  See
+[`design/SITUATION-FORECAST.md`](design/SITUATION-FORECAST.md) for the full
+source map, feature-flag reference, and forecast cone math.
+
 ## Quickstart
 
 ```bash

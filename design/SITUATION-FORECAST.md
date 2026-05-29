@@ -1,6 +1,6 @@
 # Situation Enrichment + Forecast Surface
 
-**Status:** WS-Situation A0 ✅ · A1 ✅ · A2 ✅ · B0 ✅ · B1 ✅ · C0 🔵 · C1 🔵  
+**Status:** WS-Situation A0 ✅ · A1 ✅ · A2 ✅ · B0 ✅ · B1 ✅ · C0 ✅ · C1 ✅  
 **Branch:** `feat/engine-realism`  
 **Legend:** ✅ exists · 🟡 partial · 🔵 planned  
 **Plan reference:** `~/.claude/plans/helm-situation-forecast.md`
@@ -41,13 +41,13 @@ flag-off-during-failure path logged but never crashes the situation block.
 | **world_events LOOK tool** | `src/trading_agent/intel/tools/look/world_events.py` | ✅ A0+wiring |
 | **prediction_market_odds LOOK tool** | `src/trading_agent/intel/tools/look/prediction_market_odds.py` | ✅ A1+wiring |
 | **options_iv LOOK tool** | `src/trading_agent/intel/tools/look/options_iv.py` | ✅ A2+wiring |
-| **forecast LOOK tool** | `src/trading_agent/intel/tools/look/forecast.py` | 🔵 Track C |
+| **forecast LOOK tool** | `src/trading_agent/intel/tools/look/forecast.py` | ✅ C1 |
 | Substack + SA RSS seeds | `src/trading_agent/ingest/seed_sources.py` | ✅ B0 |
 | Bluesky list/author fetcher | `src/trading_agent/ingest/fetchers/bluesky.py` | ✅ B1 |
-| Situation layer integration | `src/trading_agent/intel/situation.py` | 🔵 Track C |
-| Forecast cone compute | `src/trading_agent/intel/forecast.py` | 🔵 Track C |
-| Forecast API router | `src/trading_agent/web/routers/forecast.py` | 🔵 Track C |
-| Cockpit forecast tile | `web/static/cockpit.html` | 🔵 Track C |
+| Universe listener (SA ticker auto-seed) | `src/trading_agent/web/routers/requests.py` | ✅ C2 |
+| Forecast cone compute | `src/trading_agent/intel/forecast.py` | ✅ C1 |
+| Forecast API router | `src/trading_agent/web/routers/forecast.py` | ✅ C1 |
+| Cockpit forecast tile | `web/static/cockpit.html` | ✅ C1 |
 
 ---
 
@@ -345,15 +345,21 @@ pack URL to obtain the backing list AT-URI.  Persist the resolved URI in the
 
 **Seeds — author handles (10):**
 
+> **Reconciliation note (C2):** doc previously listed `joeweisenthal.bsky.social`,
+> `arsorkin.bsky.social`, and `yahoofinance.bsky.social`.  Code (B1's seed list,
+> verified live 2026-05-28) uses `weisenthal.bsky.social`, `andrewrsorkin.bsky.social`,
+> and `markgurman.bsky.social` (Bloomberg tech reporter replacing Yahoo Finance).
+> Code is the source of truth; this table now matches code.
+
 | Handle | Signal |
 |---|---|
 | `carlquintanilla.bsky.social` | CNBC anchor, breaking market news |
-| `joeweisenthal.bsky.social` | Bloomberg markets, macro narrative |
-| `arsorkin.bsky.social` | NYT DealBook, M&A, tech finance |
+| `weisenthal.bsky.social` | Bloomberg Odd Lots — macro, yields, heterodox economics |
+| `andrewrsorkin.bsky.social` | NYT DealBook, M&A, tech finance |
 | `bencasselman.bsky.social` | NYT economics, jobs data, macro |
 | `heatherlong.bsky.social` | WaPo economics editor |
 | `cullenroche.bsky.social` | Pragmatic Capitalist, monetary realism |
-| `yahoofinance.bsky.social` | Yahoo Finance official feed |
+| `markgurman.bsky.social` | Bloomberg tech reporter — Apple, big tech, supply chain |
 | `conorsen.bsky.social` | BofA research, macro strategy |
 | `jasonfurman.bsky.social` | Harvard economist, fiscal policy |
 | `steveliesman.bsky.social` | CNBC Fed reporter, monetary policy |
@@ -380,6 +386,7 @@ call; the compact-metrics format carries only counts and float scores.
 | `SITUATION_GDELT` | bool | `False` | Enables `world_events` LOOK tool; `GDELTProvider` constructed once per turn | None |
 | `SITUATION_PREDICTION_MARKETS` | bool | `False` | Enables `prediction_market_odds` LOOK tool | None |
 | `SITUATION_OPTIONS_IV` | bool | `False` | Enables `options_iv` LOOK tool; requires `ALPACA_API_KEY` | Options chain provider |
+| `SITUATION_FORECAST` | bool | `False` | Enables `forecast` LOOK tool + `/api/forecast` endpoint | Requires `HistoryService`; degrades without IV/PM providers |
 | `INGEST_SEEDS_ENABLED` | env str | `"1"` (on) | When `"0"`, `seed_finance_sources` and `seed_sa_ticker` are no-ops | None; set to `"0"` in test environments |
 
 All flags live in `user_settings` (see `src/trading_agent/config/settings_store.py`).
@@ -399,33 +406,126 @@ cached data is leaked, no partial results.
 
 ---
 
-## 5. Forecast Cone (Track C — planned 🔵)
+## 5. Forecast Cone (✅ C1)
 
-_Section reserved for Track C.  The forecast cone combines:_
+**Implementation:** `src/trading_agent/intel/forecast.py` — `ForecastCone`,
+`ConePoint` dataclasses + `build_forecast()`.
 
-1. **Empirical realized vol** — from `HistoryService` 30-day normalized window
-   (σ computed from log returns on OHLCV bars).
-2. **Options IV** — annualized via `iv * sqrt(t / 252)` where `t` is the
-   forward horizon in days; taken from `OptionQuote.implied_vol` (A2).
-3. **Prediction-market implied move** — absolute fractional move implied by
-   any `EventOdds` event that references the ticker (A1).
+### 5a. Anti-overconfidence contract
 
-The cone is instrument-agnostic: for equity the full three-component blend
-applies; for crypto (no options chain), `iv_sigma` is `None` and the cone
-renders from empirical-σ plus any matching Polymarket BTC/ETH event.
+**This is an envelope, never a point estimate.**  The cone shows where price
+*could* be over a forward horizon at ±1σ of historical/implied vol.  The **mid
+line is flat** (current price repeated) — there is no drift estimate.  Callers
+and UI must present this framing explicitly.  The `forecast()` tool description
+and the cockpit tile both display an `⚠ envelope only` warning.
 
-_Anti-overconfidence note:_ the cone is an **envelope of historical outcomes
-at 1σ**, not a single-line prediction.  The horizon boundaries are statistical
-bands, not guarantees.  Track C ships explicit UI copy to this effect.
+### 5b. Sigma components
+
+Three optional inputs — all absent is valid (returns degenerate cone with no points):
+
+| Component | Source | Condition |
+|---|---|---|
+| `empirical_sigma` | `HistoryService.get_bars()` 30D log-return std × √252 | Always attempted; None if <5 bars |
+| `iv_sigma` | Mean near-money implied vol from `options_chain.get_chain()` | `SITUATION_OPTIONS_IV` flag on; None for crypto/no-options |
+| `pm_implied_move` | Probability-weighted distance from matched PM event | `SITUATION_PREDICTION_MARKETS` flag on; None if no matching event |
+
+**Combined sigma:** `max(available_sigmas)` — conservative; the widest cone wins.
+
+### 5c. Cone math (log-normal)
+
+```
+t_years = t / 252
+band(t) = combined_sigma * sqrt(t_years)
+hi(t)   = current_price * exp(+band)
+lo(t)   = current_price * exp(-band)
+mid(t)  = current_price  (flat — no drift)
+```
+
+Points are generated for `t ∈ [0, horizon_days]` (inclusive, 1 per day).
+
+### 5d. Instrument-agnostic degradation
+
+- **Crypto (BTC/USD, ETH/USD):** no options chain → `iv_sigma = None`.  Cone
+  renders from `empirical_sigma` + optional `pm_implied_move`.
+- **Thinly traded equities:** options chain may return no IV data → `iv_sigma = None`.
+- **No history data:** `empirical_sigma = None`, cone has `points = []`.
 
 ---
 
-## 6. API Reference (Track C — planned 🔵)
+## 6. API Reference
 
-_Reserved for `GET /api/forecast?symbol=…&horizon=5|10|30` endpoint spec._
+### `GET /api/forecast`
+
+**Auth:** current_user header (standard).  
+**File:** `src/trading_agent/web/routers/forecast.py`
+
+**Query parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `symbol` | string | yes | Ticker or instrument (e.g. `AAPL`, `SPY`, `BTC/USD`) |
+| `horizon` | int | no (default 30) | Forward horizon in trading days: `5`, `10`, or `30` |
+
+**Response:** `ForecastCone.to_dict()` JSON:
+
+```json
+{
+  "symbol": "AAPL",
+  "horizon_days": 30,
+  "current_price": 185.40,
+  "empirical_sigma": 0.18,
+  "iv_sigma": 0.21,
+  "pm_implied_move": null,
+  "combined_sigma": 0.21,
+  "components_used": ["empirical", "iv"],
+  "points": [
+    {"t": 0, "lo": 185.40, "mid": 185.40, "hi": 185.40},
+    {"t": 1, "lo": 184.93, "mid": 185.40, "hi": 185.87},
+    ...
+    {"t": 30, "lo": 171.49, "mid": 185.40, "hi": 200.41}
+  ]
+}
+```
+
+**Degenerate response** (no history, all flags off):
+
+```json
+{
+  "symbol": "XYZ",
+  "horizon_days": 30,
+  "current_price": null,
+  "empirical_sigma": null,
+  "iv_sigma": null,
+  "pm_implied_move": null,
+  "combined_sigma": null,
+  "components_used": [],
+  "points": []
+}
+```
 
 ---
 
-## 7. Cockpit Tile (Track C — planned 🔵)
+## 7. Cockpit Tile (✅ C1)
 
-_Reserved for the `forecastCone` tile type in the Forecast tile group._
+**Tile type:** `forecastCone`  
+**Group:** `Forecast` (new group — supports future crypto-aware and multi-symbol tiles)  
+**Default:** off (not in any default tab layout; operator adds via tile palette)
+
+**Options:**
+
+| Key | Type | Description |
+|---|---|---|
+| `symbol` | string | Symbol to forecast (e.g. `AAPL`). Default `SPY`. |
+| `horizon` | string | `"5"`, `"10"`, or `"30"`. Default `"30"`. |
+
+**Tile behavior:**
+
+- Calls `GET /api/forecast?symbol=…&horizon=…` on mount and every 5 min.
+- Renders a 5/10/30D horizon selector (no page reload on switch).
+- Displays `⚠ envelope only` tooltip — anti-overconfidence framing.
+- When `combined_sigma` is null (all data absent), shows an actionable message:
+  `"Enable SITUATION_FORECAST in settings."`.
+- Renders cone on a `lightweight-charts` line + area series (hi/lo fill + mid line).
+  Falls back to inline SVG sparkline when LightweightCharts is not loaded.
+
+**MANAGER FRUGALITY:** no LLM calls — tile reads cached `/api/forecast` only.

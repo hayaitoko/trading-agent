@@ -48,6 +48,12 @@ cockpit shows the org we *want*; this doc designs how to get there.
 | **Tutorial mode** | First N turns for new traders: tools → memory → watchpoints orientation | ✅ WS-Agent A6 `prompts/tutorial.py` |
 | **Notification center** | Stock-requests + alerts + fills to the operator | ✅ WS-H `web/routers/requests.py`, `web/notifications.py` |
 | **Bench controller** | Add/remove traders, cadence, start/stop, tick | ✅ `bench/controller.py` |
+| **GDELT macro feed** | Global event / geopolitical signal via `world_events()` LOOK tool | ✅ WS-Situation A0 `data/providers/gdelt.py` — gated `SITUATION_GDELT` |
+| **Prediction markets** | Polymarket + Kalshi implied probabilities via `prediction_market_odds()` | ✅ WS-Situation A1 `data/providers/prediction_markets.py` — gated `SITUATION_PREDICTION_MARKETS` |
+| **Options IV** | Alpaca options chain IV + Greeks via `options_iv()` LOOK tool | ✅ WS-Situation A2 `instruments/options_chain.py` — gated `SITUATION_OPTIONS_IV` |
+| **Substack / SA RSS ingest** | Finance newsletter + per-ticker SA feeds via ingest pipeline | ✅ WS-Situation B0 `ingest/fetchers/rss.py` + `ingest/seed_sources.py` |
+| **Bluesky discovery** | Curated list + author feeds from Bluesky via `bluesky_list` / `bluesky_author` | ✅ WS-Situation B1 `ingest/fetchers/bluesky.py` |
+| **Forecast cone** | 1σ price-envelope (empirical + IV + PM) via `forecast()` LOOK tool | ✅ WS-Situation C1 `intel/forecast.py` + `web/routers/forecast.py` — gated `SITUATION_FORECAST` |
 
 ---
 
@@ -79,7 +85,9 @@ at once, or do nothing — unconstrained by what the operator stuffed into the p
                  │                                                          │
                  │  tool loop (until terminal):                             │
                  │    LOOK tools: history, news, research_brief, situation, │
-                 │                account_state, memory_search, ask_manager │
+                 │                account_state, memory_search, ask_manager, │
+                 │                world_events, prediction_market_odds,      │
+                 │                options_iv, forecast (all flag-gated)      │
                  │    NOTE tools: reflect, remind_me, watchpoint,           │
                  │                watch_symbol / unwatch_symbol             │
                  │    ACT tools:  trade, trade_batch, confirm_trade,        │

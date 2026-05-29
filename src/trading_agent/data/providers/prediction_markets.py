@@ -35,7 +35,9 @@ Failure mode
 Fail-loud: ``PredictionMarketsProviderError`` (RuntimeError subclass) on any
 network error or HTTP non-2xx.  No silent stubs per WS-J discipline.
 429 responses trigger exponential backoff (up to 3 retries, ceiling 8 s).
-Events with ``restricted: true`` on Polymarket are skipped without crashing.
+Events with ``restricted: true`` on Polymarket are included in results with
+``restricted=True`` set on the ``EventOdds`` object — callers decide whether to
+skip them (not skipped here, for completeness and caller flexibility).
 
 Gating flag
 -----------
@@ -178,14 +180,14 @@ class PredictionMarketsProvider:
         list[EventOdds]
             Combined results from both venues, sorted by volume_24h descending.
             Both venues are attempted independently; a failure on one does NOT
-            suppress results from the other.  Empty list if both fail.
+            suppress results from the other.
 
         Raises
         ------
         PredictionMarketsProviderError
-            Only if BOTH venues fail.  If one succeeds, its results are
-            returned and the failure is silently swallowed (the caller's
-            LOOK-tool wrapper should log it).
+            Raised only when BOTH venues fail.  If exactly one succeeds, its
+            results are returned and the other venue's failure is silently
+            swallowed (the caller's LOOK-tool wrapper should log it).
         """
         cache_key = ("event_odds", category, query, min_liquidity)
         cached = self._get_cache(cache_key)
