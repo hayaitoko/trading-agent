@@ -64,7 +64,7 @@ class ConePoint:
     hi: float
 
 
-@dataclass
+@dataclass(frozen=True)
 class ForecastCone:
     """Forward 1σ price envelope for a symbol.
 

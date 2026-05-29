@@ -23,7 +23,6 @@ settings_store DEFAULTS include SITUATION_FORECAST (default False)
 
 from __future__ import annotations
 
-import math
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -32,13 +31,11 @@ import pytest
 
 from trading_agent.config.settings_store import DEFAULTS
 from trading_agent.intel.forecast import (
-    ConePoint,
     ForecastCone,
     _compute_empirical_sigma,
     build_forecast,
 )
 from trading_agent.intel.tools.look.forecast import ForecastTool
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,6 +60,7 @@ def _settings_on(flag: str) -> Any:
 
 def _chain_provider_with_iv(iv: float, symbol: str = "AAPL") -> Any:
     from datetime import date
+
     from trading_agent.instruments.options import OptionContract, OptionQuote, OptionRight
     c = OptionContract(symbol, date(2026, 6, 19), 150.0, OptionRight.CALL)
     q = OptionQuote(contract=c, bid=2.0, ask=2.4, last=2.2, implied_vol=iv)

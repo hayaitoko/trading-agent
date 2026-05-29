@@ -34,6 +34,7 @@ from .routers import approvals as approvals_router
 from .routers import bench as bench_router
 from .routers import calibration as calibration_router
 from .routers import config as config_router
+from .routers import forecast as forecast_router
 from .routers import manager as manager_router
 from .routers import market as market_router
 from .routers import movers as movers_router
@@ -46,7 +47,6 @@ from .routers import requests as requests_router
 from .routers import research as research_router
 from .routers import risk as risk_router
 from .routers import symbols as symbols_router
-from .routers import forecast as forecast_router
 from .routers import traces as traces_router
 
 if TYPE_CHECKING:

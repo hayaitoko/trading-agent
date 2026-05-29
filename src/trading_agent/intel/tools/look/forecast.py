@@ -24,7 +24,7 @@ No account-status strings ("paper", "sim", "demo") appear anywhere.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from ._base import LookToolBase
 
