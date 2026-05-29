@@ -48,6 +48,16 @@ pending-trade stores to `app.state` for the cockpit read routers.  The ET-anchor
 lifecycle scheduler is opt-in via `TRADING_AGENT_SCHEDULER=1` (default off keeps the
 bench on its plain cadence for any-time-of-day testing).
 
+**`LLMTrader` retired (WS-Bench-Migration M2).** The legacy structured-output
+trader is deleted from `llm/trader.py` (along with `_SYSTEM_PROMPT`). The A6
+prompt-scrub of `LLMTrader._SYSTEM_PROMPT` (commit `8c2b9a8`, "managing a paper
+account" → "managing a financial account") was a temporary bridge while the bench
+still constructed the legacy class; M2 completes the move, so that scrub is now
+moot — the class is gone and the bench builds `AgentTrader` exclusively.
+`StrategyTrader` (the deterministic baseline) and the `Trader` protocol remain.
+The only money-is-real-relevant prompt is now `AgentTrader._build_system_prompt()`,
+which never names paper/sim/demo/fake.
+
 ---
 
 ## 2. Always-On First-Look

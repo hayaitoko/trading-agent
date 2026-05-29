@@ -1,10 +1,10 @@
 """Historical bars + fundamentals service and the richer trader context block.
 
-WS-A. Today each bench trader sees only the last 30 *close* prices
-(``llm/trader.py`` ``_build_context``). :class:`HistoryService` gives agents real
-historical depth — a downsampled long view (e.g. ~1y daily) plus a dense recent
-window (intraday last N bars, full OHLCV) — and optional fundamentals, assembled
-into a single context block that drops in for the 30-close path.
+WS-A. The pre-agent bench trader saw only the last 30 *close* prices.
+:class:`HistoryService` gives agents real historical depth — a downsampled long
+view (e.g. ~1y daily) plus a dense recent window (intraday last N bars, full
+OHLCV) — and optional fundamentals, assembled into a single context block.  Under
+the agent model this block is surfaced through the ``history`` LOOK tool.
 
 Design notes:
 

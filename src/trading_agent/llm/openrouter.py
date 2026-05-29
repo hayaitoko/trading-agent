@@ -2,9 +2,9 @@
 
 Provides two call styles:
 
-* :meth:`OpenRouterClient.chat` — plain completion (JSON or free text), used
-  by the legacy :class:`~trading_agent.llm.trader.LLMTrader` structured-output
-  path and the manager agent.
+* :meth:`OpenRouterClient.chat` — plain completion (JSON or free text), used by
+  the manager agent (and retained for JSON-mode completions; the legacy
+  structured-output trader that also used it was retired in WS-Bench-Migration).
 
 * :meth:`OpenRouterClient.chat_with_tools` — OpenAI-compatible tool-calling,
   used by the new :class:`~trading_agent.llm.trader.AgentTrader` ReAct loop.

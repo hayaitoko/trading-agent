@@ -3,8 +3,8 @@
 Covers the HistoryService (typed bars + fundamentals, TTL caching, the
 budget-bounded context block), the provider adapters (Alpaca with an injected
 fake client; Finnhub/Polygon over ``httpx.MockTransport`` — no live calls), the
-``build_history_service`` resolution, and the optional injection into LLMTrader
-(richer block when present, 30-close fallback otherwise).
+``build_history_service`` resolution, and the rendered context block (formerly
+asserted via LLMTrader injection; now exercised on HistoryService directly).
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from trading_agent.data.providers.alpaca import AlpacaBarProvider
 from trading_agent.data.providers.finnhub import FinnhubProvider
 from trading_agent.data.providers.polygon import PolygonProvider
 from trading_agent.llm.openrouter import ChatResult
-from trading_agent.llm.trader import LLMTrader
 
 # --- fakes -------------------------------------------------------------------
 
@@ -194,44 +193,16 @@ def test_resolve_depth_variants() -> None:
     assert resolve_depth(PRESETS["off"]) is PRESETS["off"]
 
 
-# --- LLMTrader injection -----------------------------------------------------
+# --- HistoryService context block --------------------------------------------
+# (The retired LLMTrader history-injection tests previously asserted these
+#  through the trader; the agent model makes history a tool, so HistoryService
+#  is exercised directly here — preserving the rendering coverage.)
 
 
-class _SentinelHistory:
-    def context_block(
-        self, symbols: Any, account: dict[str, Any], *, include_trailer: bool = True
-    ) -> str:
-        # The trader composes around this block (research/memory then a single
-        # trailer of its own), so it asks for the body without the trailer.
-        assert include_trailer is False
-        return "RICH-CONTEXT-BLOCK"
-
-
-def test_trader_uses_history_when_injected() -> None:
-    client = FakeChatClient()
-    trader = LLMTrader("m", client, symbols=["AAPL"], history=_SentinelHistory())  # type: ignore[arg-type]
-    trader.decide({"cash": 1000, "positions": []})
-    content = client.messages[1]["content"]
-    assert content == "RICH-CONTEXT-BLOCK\n\nReturn your JSON decision now."
-
-
-def test_trader_falls_back_to_closes_without_history() -> None:
-    client = FakeChatClient()
-    trader = LLMTrader("m", client, symbols=["AAPL"], lookback=5)
-    for px in (100, 101, 102):
-        trader.observe({"symbol": "AAPL", "close": px})
-    trader.decide({"cash": 1000, "positions": []})
-    user_msg = client.messages[1]["content"]
-    assert "close prices" in user_msg and "102" in user_msg
-    assert "RICH-CONTEXT-BLOCK" not in user_msg
-
-
-def test_trader_uses_real_history_service_end_to_end() -> None:
-    client = FakeChatClient()
+def test_history_service_context_block_renders_long_view() -> None:
     svc = HistoryService(FakeBarProvider(), depth="shallow")
-    trader = LLMTrader("m", client, symbols=["AAPL"], history=svc)
-    trader.decide(ACCOUNT)
-    assert "Long view" in client.messages[1]["content"]
+    block = svc.context_block(["AAPL"], ACCOUNT)
+    assert "Long view" in block
 
 
 # --- Alpaca adapter (offline, injected fake client) --------------------------

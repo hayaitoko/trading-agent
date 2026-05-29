@@ -6,8 +6,8 @@ same real market data on isolated paper books and compares P&L.
 
 from .openrouter import ChatResult, OpenRouterClient, OpenRouterError
 from .trader import (
+    AgentTrader,
     DecisionResult,
-    LLMTrader,
     StrategyTrader,
     TradeDecision,
     Trader,
@@ -15,9 +15,9 @@ from .trader import (
 )
 
 __all__ = [
+    "AgentTrader",
     "ChatResult",
     "DecisionResult",
-    "LLMTrader",
     "OpenRouterClient",
     "OpenRouterError",
     "StrategyTrader",

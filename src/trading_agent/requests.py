@@ -1,7 +1,7 @@
 """Stock-requests + per-trader universe (WS-H).
 
 A trader may only trade the symbols in its **universe** (the tradable-symbols set
-``LLMTrader.symbols`` reads). When a trader wants a symbol outside that set it
+the trader's ``symbols`` list holds). When a trader wants a symbol outside that set it
 emits a :class:`StockRequest`; the request surfaces in the notification center
 and the operator **allows** (→ symbol joins that trader's universe, request
 marked fulfilled) or **declines** (→ universe unchanged, request marked declined).

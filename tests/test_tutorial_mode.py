@@ -457,15 +457,3 @@ def test_normal_first_look_after_tutorial_exhausted() -> None:
     assert "Turn type:        regular" in first_look
     assert "Tutorial" not in first_look
     assert "Context hint:" not in first_look
-
-
-# ---------------------------------------------------------------------------
-# Carry-over: LLMTrader._SYSTEM_PROMPT no longer contains "paper account"
-# ---------------------------------------------------------------------------
-
-
-def test_llm_trader_system_prompt_no_paper_string() -> None:
-    """Verify the carry-over scrub: 'paper account' removed from LLMTrader._SYSTEM_PROMPT."""
-    from trading_agent.llm.trader import _SYSTEM_PROMPT
-    assert "paper account" not in _SYSTEM_PROMPT.lower()
-    assert "financial account" in _SYSTEM_PROMPT.lower()

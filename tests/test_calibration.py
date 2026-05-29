@@ -1,10 +1,12 @@
-"""P6 tests: per-trader intelligence flags, A/B decision distinction, calibration
-router, and calibration metric from fixture.
+"""P6 tests: per-trader intelligence flag (memory) override, calibration router,
+and the calibration metric from a fixture.
 
-Tests that:
-- A flag-off trader sees no research/memory/pattern/situation blocks in its prompt.
-- The same model added twice with on vs off produces distinct _build_context output.
-- Calibration endpoint returns expected structure.
+Note (WS-Bench-Migration M2): the legacy `_build_context` A/B tests (research /
+memory / pattern / situation prompt-block toggles) were retired alongside
+`LLMTrader` — under the agent model that context is tool-mediated, not assembled
+into a single prompt block, so there is no `_build_context` to diff. The
+surviving per-trader knob is the `memory` flag, exercised through the controller
+below.
 """
 
 from __future__ import annotations
@@ -15,170 +17,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trading_agent.config.db import Database
-from trading_agent.memory import FakeEmbedder, MemoryStore
+from trading_agent.memory import FakeEmbedder
 from trading_agent.memory.vector.sqlite_vec import SqliteVecStore
 from trading_agent.patterns.store import PatternEpisode, PatternStore
-from trading_agent.situation.regime import RegimeClassifier
-
-# ---- helpers ----------------------------------------------------------------
-
-
-def _make_trader(
-    model: str = "test/model",
-    name: str = "alpha",
-    *,
-    intelligence_flags: dict[str, bool] | None = None,
-    research: Any = None,
-    memory: Any = None,
-    pattern_store: Any = None,
-    regime_classifier: Any = None,
-    social_aggregator: Any = None,
-) -> Any:
-    """Build a minimal LLMTrader with a stub client (no real HTTP)."""
-    from unittest.mock import MagicMock
-
-    from trading_agent.llm.trader import LLMTrader
-
-    client = MagicMock()
-    return LLMTrader(
-        model,
-        client,
-        symbols=["AAPL"],
-        name=name,
-        intelligence_flags=intelligence_flags,
-        research=research,
-        memory=memory,
-        owner_user_id="u1",
-        pattern_store=pattern_store,
-        regime_classifier=regime_classifier,
-        social_aggregator=social_aggregator,
-    )
-
-
-def _account() -> dict[str, Any]:
-    return {"cash": 10_000.0, "positions": []}
-
-
-# ---- Flag-off trader sees no intelligence blocks ---------------------------
-
-
-def test_flag_off_research_omitted() -> None:
-    """research=False flag causes the research block to be empty."""
-    from unittest.mock import MagicMock
-
-    research = MagicMock()
-    research.search.return_value = [MagicMock(summary="great alpha!", ticker="AAPL")]
-    research.recent.return_value = []
-
-    trader_on = _make_trader("test/model", "on", research=research)
-    trader_off = _make_trader("test/model", "off", research=research,
-                              intelligence_flags={"research": False})
-
-    # Inject a bar so the fallback body builds.
-    bar = {"symbol": "AAPL", "close": 100.0}
-    trader_on.observe(bar)
-    trader_off.observe(bar)
-
-    trader_on._build_context(_account())
-    ctx_off = trader_off._build_context(_account())
-
-    # The flag-off trader should not call research at all.
-    assert "Research" not in ctx_off
-
-
-def test_flag_off_memory_omitted(tmp_path: Any) -> None:
-    """memory=False flag causes the memory block to be empty."""
-    vec = SqliteVecStore(str(tmp_path / "mem.db"))
-    memory = MemoryStore(vec, FakeEmbedder())
-    memory.remember("u1", "on-trader", "Always check volume before entry.")
-
-    trader_on = _make_trader("t", "on-trader", memory=memory)
-    trader_off = _make_trader("t", "off-trader", memory=memory,
-                              intelligence_flags={"memory": False})
-
-    bar = {"symbol": "AAPL", "close": 100.0}
-    trader_on.observe(bar)
-    trader_off.observe(bar)
-
-    ctx_off = trader_off._build_context(_account())
-    # Flag-off trader must not surface any memory block.
-    assert "Always check volume" not in ctx_off
-
-    # ON trader would call memory.recall — we verify the flag doesn't gate it.
-    # (The lesson may or may not appear depending on embed distance; the key
-    # invariant is that ctx_off definitely has NO memory block.)
-    assert "Your past lessons" not in ctx_off
-
-
-def test_flag_off_patterns_omitted(tmp_path: Any) -> None:
-    """patterns=False flag suppresses the pattern KB block."""
-    db = Database(str(tmp_path / "db.db"))
-    db.connect()
-    vec = SqliteVecStore(str(tmp_path / "pvec.db"))
-    ps = PatternStore(db, vector=vec, embedder=FakeEmbedder())
-    ps.add(PatternEpisode(symbol="AAPL", label="gap-up-no-news", event_date="2026-05-01",
-                          regime="calm", realized_hit=1, outcome=0.03))
-
-    trader_on = _make_trader("t", "on", pattern_store=ps)
-    trader_off = _make_trader("t", "off", pattern_store=ps,
-                              intelligence_flags={"patterns": False})
-
-    bar = {"symbol": "AAPL", "close": 100.0}
-    trader_on.observe(bar)
-    trader_off.observe(bar)
-
-    ctx_on = trader_on._build_context(_account())
-    ctx_off = trader_off._build_context(_account())
-
-    assert "Pattern KB" in ctx_on
-    assert "Pattern KB" not in ctx_off
-
-
-def test_flag_off_situation_omitted() -> None:
-    """situation=False flag suppresses the situation/regime block."""
-    closes = [100.0 + i * 0.5 for i in range(30)]
-    clf = RegimeClassifier()
-
-    trader_on = _make_trader("t", "on", regime_classifier=clf)
-    trader_off = _make_trader("t", "off", regime_classifier=clf,
-                              intelligence_flags={"situation": False})
-
-    for _i, price in enumerate(closes):
-        bar = {"symbol": "AAPL", "close": price, "open": price}
-        trader_on.observe(bar)
-        trader_off.observe(bar)
-
-    ctx_on = trader_on._build_context(_account())
-    ctx_off = trader_off._build_context(_account())
-
-    assert "Situation" in ctx_on
-    assert "Situation" not in ctx_off
-
-
-# ---- Same model on/off produces distinct contexts --------------------------
-
-
-def test_on_off_contexts_differ(tmp_path: Any) -> None:
-    """Adding the same model with on vs off flags yields distinct build_context()."""
-    db = Database(str(tmp_path / "db2.db"))
-    db.connect()
-    vec_m = SqliteVecStore(str(tmp_path / "m.db"))
-    memory = MemoryStore(vec_m, FakeEmbedder())
-    memory.remember("u1", "on-trader", "Volume precedes breakouts; wait for the bar close.")
-
-    trader_on = _make_trader("test/model", "on-trader", memory=memory)
-    trader_off = _make_trader("test/model", "off-trader", memory=memory,
-                              intelligence_flags={"memory": False})
-
-    bar = {"symbol": "AAPL", "close": 100.0}
-    trader_on.observe(bar)
-    trader_off.observe(bar)
-
-    ctx_on = trader_on._build_context(_account())
-    ctx_off = trader_off._build_context(_account())
-
-    assert ctx_on != ctx_off
-
 
 # ---- BenchController per-trader flag override ------------------------------
 

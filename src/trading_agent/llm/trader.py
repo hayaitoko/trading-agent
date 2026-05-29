@@ -1,26 +1,26 @@
-"""Bench competitors: a uniform ``Trader`` interface with three implementations.
+"""Bench competitors: a uniform ``Trader`` interface with two implementations.
 
-* :class:`LLMTrader` — prompts an OpenRouter model with recent price context +
-  the current portfolio and parses a structured BUY/SELL/HOLD decision.
-  Legacy structured-output path; kept for bench backward-compat.
+* :class:`AgentTrader` — the bench's default trader: a ReAct-style tool-calling
+  agent (WS-Agent A0–A6).  Runs a multi-step decision loop: build first-look
+  context → call model with tools → execute tools → repeat until a terminal
+  action or runaway guard.
+  Terminals: ``hold(reason)``, ``pass()``, ``done_for_day(reason)``.
+  NOTE tools: ``reflect``, ``remind_me``, ``watchpoint``,
+  ``watch_symbol``, ``unwatch_symbol``.
+  ACT tools (when a broker is bound): ``trade``, ``trade_batch``,
+  ``update_protective_order``, ``confirm_trade``, ``abandon_trade``.
 
 * :class:`StrategyTrader` — wraps any deterministic :class:`Strategy` (e.g.
   mean-reversion) so it can compete in the same bench as a baseline.
 
-* :class:`AgentTrader` — ReAct-style tool-calling agent (WS-Agent A0–A3).
-  Runs a multi-step decision loop: build first-look context → call model with
-  tools → execute tools → repeat until terminal action or runaway guard.
-  A0 terminals: ``hold(reason)``, ``pass()``.
-  A2 NOTE tools: ``reflect``, ``remind_me``, ``watchpoint``,
-  ``watch_symbol``, ``unwatch_symbol``.
-  A3 ACT tools: ``trade``, ``trade_batch``, ``update_protective_order``.
-  A3 END terminals added: ``trade``, ``trade_batch``, ``confirm_trade``,
-  ``abandon_trade``, ``done_for_day``.
+Both expose ``observe(bar)`` and ``decide(account) -> DecisionResult`` so they
+are drop-in substitutes from the bench/controller's perspective.
 
-All three expose ``observe(bar)`` and ``decide(account) -> DecisionResult`` so
-they are drop-in substitutes from the bench/controller's perspective.
+The legacy structured-output ``LLMTrader`` was retired in WS-Bench-Migration M2
+(the A6 prompt-scrub was a temporary bridge; this migration completed the move).
+The bench now instantiates ``AgentTrader`` exclusively — see
+``design/TRADER-AGENT.md`` §1.
 
-Backward compat: :class:`ManagerAgent.chat()` return shape unchanged.
 ``DecisionResult.decisions`` stays an empty list for AgentTrader — the ACT tools
 interact with the broker directly, so the bench controller does not re-execute.
 """
@@ -39,24 +39,14 @@ from ..intel.cost_tracker import CostTracker
 from ..intel.tool_envelope import ToolError, ToolResult
 from ..intel.turn_context import TurnContext, TurnType, build_first_look
 from ..intel.turn_store import ToolCallRecord
-from .openrouter import OpenRouterError, ToolCall, ToolCallChatResult, parse_json_object
+from .openrouter import OpenRouterError, ToolCall, ToolCallChatResult
 
 if TYPE_CHECKING:
-    from ..data.history import HistoryService
-    from ..situation.regime import RegimeClassifier
-    from ..situation.social import SocialAggregator, SocialItem
     from ..strategy import Strategy
-    from .openrouter import OpenRouterClient
 
-_VALID_ACTIONS = {"BUY", "SELL", "HOLD"}
-
-# WS-A defaults: how many research briefs / memory lessons to pull into a single
-# decision. Kept small — recall embeds the query per trader per round.
-_RESEARCH_K = 5
+# WS-A default: how many private memory lessons to recall per decision (the
+# memory_search tool's default k). Kept small — recall embeds the query per turn.
 _MEMORY_RECALL_K = 5
-
-# P3: how many pattern KB matches to inject per decision.
-_PATTERN_K = 3
 
 
 @dataclass
@@ -97,325 +87,6 @@ def decision_to_signal(d: TradeDecision) -> dict[str, Any] | None:
         "amount": float(d.quantity),
         "reason": d.reason,
     }
-
-
-# --- LLM trader -------------------------------------------------------------
-
-_SYSTEM_PROMPT = (
-    "You are an autonomous trading agent managing a financial account of US equities. "
-    "Given recent price bars and your current portfolio, decide what to trade to "
-    "maximize risk-adjusted return. You may only trade the listed symbols, in whole "
-    "shares, and must not spend more than your available cash. Respond with ONLY a "
-    "JSON object of this exact shape:\n"
-    '{"decisions": [{"symbol": "AAPL", "action": "BUY|SELL|HOLD", '
-    '"quantity": <int>, "reason": "<short>"}], "comment": "<one line>"}\n'
-    "Use HOLD with quantity 0 when you want no change for a symbol. Be decisive but "
-    "manage risk. Do not include any text outside the JSON object."
-)
-
-
-def _system_prompt(style: str | None) -> str:
-    """Base trading prompt, optionally given a mandated trading style."""
-    if not style or not style.strip():
-        return _SYSTEM_PROMPT
-    return (
-        f"{_SYSTEM_PROMPT}\n\nYour mandated trading style is: {style.strip()}. "
-        "Let this style shape which symbols you trade, your position sizing, and how "
-        "often you turn the book over — while still respecting your cash and the risk rules."
-    )
-
-
-class LLMTrader:
-    """A model that trades by reasoning over recent bars + its portfolio."""
-
-    def __init__(
-        self,
-        model: str,
-        client: OpenRouterClient,
-        *,
-        symbols: list[str],
-        name: str | None = None,
-        lookback: int = 30,
-        temperature: float = 0.3,
-        max_tokens: int = 800,
-        history: HistoryService | None = None,
-        research: Any = None,
-        memory: Any = None,
-        owner_user_id: str | None = None,
-        research_k: int = _RESEARCH_K,
-        memory_k: int = _MEMORY_RECALL_K,
-        style: str | None = None,
-        # P3: situation layer (all optional; absent → block omitted gracefully)
-        regime_classifier: RegimeClassifier | None = None,
-        social_aggregator: SocialAggregator | None = None,
-        social_items: list[SocialItem] | None = None,
-        calendar_events: list[dict[str, Any]] | None = None,
-        # P4: pattern KB (optional; absent → block omitted)
-        pattern_store: Any = None,
-        pattern_k: int = _PATTERN_K,
-        # P6: per-trader intelligence override flags (None = use owner defaults)
-        intelligence_flags: dict[str, bool] | None = None,
-    ) -> None:
-        self.model = model
-        self.client = client
-        self.symbols = list(symbols)
-        self.name = name or model
-        self.lookback = lookback
-        self.temperature = temperature
-        self.max_tokens = max_tokens
-        # An optional mandated trading style (from the add-trader wizard) folded
-        # into the system prompt once at construction.
-        self.style = style
-        self.system_prompt = _system_prompt(style)
-        # WS-A: when injected, the trader sees a richer historical + fundamentals
-        # context block instead of just the last `lookback` closes. Optional so
-        # the bench/back-compat path (no history) is unchanged.
-        self.history = history
-        # WS-A intelligence (all duck-typed so there's no import cycle): the
-        # shared research store, the trader's private memory, and the owner the
-        # two are namespaced by. Any of them None → that block is simply omitted
-        # and the decision is still made — the manager's defensive pattern.
-        self.research = research
-        self.memory = memory
-        self.owner_user_id = owner_user_id
-        self.research_k = research_k
-        self.memory_k = memory_k
-        # P3: situation layer
-        self.regime_classifier = regime_classifier
-        self.social_aggregator = social_aggregator
-        self.social_items: list[SocialItem] = list(social_items or [])
-        self.calendar_events: list[dict[str, Any]] = list(calendar_events or [])
-        # P4: pattern KB
-        self.pattern_store = pattern_store
-        self.pattern_k = pattern_k
-        # P6: per-trader intelligence flags (override owner-level settings)
-        self._intel_flags: dict[str, bool] = dict(intelligence_flags or {})
-        self._bars: dict[str, deque[dict[str, Any]]] = {
-            s: deque(maxlen=lookback) for s in self.symbols
-        }
-
-    def observe(self, bar: dict[str, Any]) -> None:
-        symbol = bar.get("symbol")
-        if symbol in self._bars:
-            self._bars[symbol].append(bar)
-
-    def decide(self, account: dict[str, Any]) -> DecisionResult:
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": self._build_context(account)},
-        ]
-        try:
-            res = self.client.chat(
-                self.model,
-                messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                json_mode=True,
-            )
-        except OpenRouterError as exc:
-            return DecisionResult(error=str(exc))
-
-        try:
-            payload = parse_json_object(res.content)
-        except ValueError as exc:
-            return DecisionResult(raw=res.content, usage=res.usage, error=f"parse: {exc}")
-
-        return DecisionResult(
-            decisions=self._coerce_decisions(payload.get("decisions", [])),
-            comment=str(payload.get("comment", ""))[:200],
-            raw=res.content,
-            usage=res.usage,
-        )
-
-    # --- internals ----------------------------------------------------------
-
-    def _build_context(self, account: dict[str, Any]) -> str:
-        """Layered, gracefully-degrading context.
-
-        Body (rich history if injected, else the last-``lookback`` closes) +
-        situation/regime block (P3) + pattern KB (P4) + research briefs +
-        the trader's own past lessons; each block dropped if its source is
-        absent or errors. A single JSON-decision trailer closes the context.
-        """
-        body = (
-            self.history.context_block(self.symbols, account, include_trailer=False)
-            if self.history is not None
-            else self._fallback_body(account)
-        )
-        parts = [
-            body,
-            self._situation_block(),   # P3
-            self._pattern_block(),     # P4
-            self._research_block(),
-            self._memory_block(),
-        ]
-        return "\n\n".join(p for p in parts if p) + "\n\nReturn your JSON decision now."
-
-    def _fallback_body(self, account: dict[str, Any]) -> str:
-        """The original cash/positions + last-``lookback`` closes body (no trailer)."""
-        lines = [
-            f"Cash available: {account.get('cash', 0):,.2f}",
-            f"Positions: {account.get('positions', [])}",
-            f"Tradable symbols: {', '.join(self.symbols)}",
-            "",
-            "Recent bars (oldest first) — close prices:",
-        ]
-        for symbol, bars in self._bars.items():
-            closes = [round(float(b["close"]), 2) for b in bars if b.get("close") is not None]
-            lines.append(f"  {symbol}: {closes[-self.lookback:]}")
-        return "\n".join(lines)
-
-    # --- P3: situation / regime block ----------------------------------------
-
-    def _intel_enabled(self, flag: str) -> bool:
-        """Check a per-trader intelligence flag (P6). Defaults True if unset."""
-        return self._intel_flags.get(flag, True)
-
-    def _situation_block(self) -> str:
-        """Regime + social situation block (~10 lines). Omitted if no classifier."""
-        if not self._intel_enabled("situation"):
-            return ""
-        clf = self.regime_classifier
-        if clf is None:
-            return ""
-        try:
-            # Build a closes list from observed bars (all symbols, latest close).
-            closes: list[float] = []
-            for bars in self._bars.values():
-                for b in bars:
-                    c = b.get("close")
-                    if c is not None:
-                        closes.append(float(c))
-            if len(closes) < 2:
-                return ""
-            regime = clf.classify(closes, events=self.calendar_events)
-            lines = ["## Situation"]
-            lines.extend(ln for ln in regime.to_context_lines() if ln)
-            # Social metrics per symbol
-            agg = self.social_aggregator
-            if agg is not None and self.social_items:
-                for symbol in self.symbols:
-                    metrics = agg.aggregate(self.social_items, ticker=symbol)
-                    lines.extend(metrics.to_context_lines())
-            return "\n".join(lines)
-        except Exception:
-            return ""
-
-    # --- P4: pattern KB block ------------------------------------------------
-
-    def _pattern_block(self) -> str:
-        """Recent matching patterns with regime-conditioned outcome stats."""
-        if not self._intel_enabled("patterns"):
-            return ""
-        store = self.pattern_store
-        if store is None:
-            return ""
-        try:
-            query = self._recall_query()
-            matches = store.recall(query, k=self.pattern_k)
-            if not matches:
-                return ""
-            lines = ["## Pattern KB (similar past setups)"]
-            for m in matches:
-                lines.append(self._format_pattern(m))
-            return "\n".join(lines)
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _format_pattern(match: Any) -> str:
-        label = getattr(match, "label", "?")
-        regime = getattr(match, "regime", "?")
-        stats = getattr(match, "stats", {}) or {}
-        hit = stats.get("hit_rate")
-        n = stats.get("n", 0)
-        hit_str = f"{hit:.0%}" if hit is not None else "?"
-        return f"  {label} (regime={regime}, n={n}, forward-hit={hit_str})"
-
-    # -------------------------------------------------------------------------
-
-    def _recall_query(self) -> str:
-        """The semantic query for research/memory recall: this round's universe."""
-        return f"trading decision for {', '.join(self.symbols)}"
-
-    def _research_block(self) -> str:
-        """Shared per-user briefs relevant to this round (semantic → per-symbol →
-        recent). Omitted when there's no owner/store or anything errors."""
-        if not self._intel_enabled("research"):
-            return ""
-        research = self.research
-        if research is None or self.owner_user_id is None:
-            return ""
-        owner, k = self.owner_user_id, self.research_k
-        try:
-            briefs = list(research.search(owner, self._recall_query(), k))
-            if not briefs:
-                briefs = self._briefs_by_symbol(research, k)
-            if not briefs:
-                briefs = list(research.recent(owner, k))
-        except Exception:
-            return ""
-        # Lazy import breaks the config.endpoints → llm → research import cycle.
-        from ..research.format import format_briefs
-
-        return format_briefs(briefs, header="## Research briefs (most relevant)")
-
-    def _briefs_by_symbol(self, research: Any, k: int) -> list[Any]:
-        """Structured per-ticker briefs (the no-embedder fallback), deduped to ``k``."""
-        out: list[Any] = []
-        seen: set[str] = set()
-        for symbol in self.symbols:
-            for brief in research.get(self.owner_user_id, symbol):
-                bid = str(getattr(brief, "id", "") or id(brief))
-                if bid in seen:
-                    continue
-                seen.add(bid)
-                out.append(brief)
-                if len(out) >= k:
-                    return out
-        return out
-
-    def _memory_block(self) -> str:
-        """This trader's own past lessons (recalled under ``self.name``). Omitted
-        on no owner/store, or when embeddings are unavailable (EmbedError)."""
-        if not self._intel_enabled("memory"):
-            return ""
-        memory = self.memory
-        if memory is None or self.owner_user_id is None:
-            return ""
-        try:
-            lessons = memory.recall(self.owner_user_id, self.name, self._recall_query(), self.memory_k)
-        except Exception:
-            # No local embed endpoint (EmbedError) or a flaky store: still decide.
-            return ""
-        from ..memory.format import format_lessons  # lazy: avoid import cycle
-
-        return format_lessons(lessons, header="## Your past lessons", show_trader=False)
-
-    def _coerce_decisions(self, raw: Any) -> list[TradeDecision]:
-        out: list[TradeDecision] = []
-        if not isinstance(raw, list):
-            return out
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            symbol = str(item.get("symbol", "")).strip()
-            action = str(item.get("action", "HOLD")).strip().upper()
-            if symbol not in self.symbols or action not in _VALID_ACTIONS:
-                continue
-            try:
-                qty = max(0.0, float(item.get("quantity", 0) or 0))
-            except (TypeError, ValueError):
-                qty = 0.0
-            out.append(
-                TradeDecision(
-                    symbol=symbol,
-                    action=action,
-                    quantity=qty,
-                    reason=str(item.get("reason", ""))[:200],
-                )
-            )
-        return out
 
 
 # --- Strategy baseline trader ----------------------------------------------
@@ -599,7 +270,7 @@ class AgentTrader:
         self._turn_store = turn_store
         # Store original total so tutorial_extra_lines() can compute "turn N of M".
         self._tutorial_total: int = self.tutorial_remaining
-        # Price bar buffer (same shape as LLMTrader for observe() compat)
+        # Price bar buffer (rolling per-symbol window fed by observe())
         self._bars: dict[str, deque[dict[str, Any]]] = {
             s: deque(maxlen=30) for s in self.symbols
         }

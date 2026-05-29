@@ -802,7 +802,7 @@ def test_scan_attention_fires_elapsed_reminder(tmp_path: Path) -> None:
     )
     # Use a duck-typed stub for the OpenRouterClient parameter.
     ctrl = BenchController(bench, no_call_client, symbols=["AAPL"])
-    # Add trader manually (bypassing LLMTrader creation).
+    # Add a pre-built AgentTrader directly (bypassing controller.add_model).
     bench.add_competitor("ScanTrader", trader)
 
     # Run the scan.
