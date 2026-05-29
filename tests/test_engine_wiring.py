@@ -174,6 +174,46 @@ def test_activity_maps_decisions(client: TestClient) -> None:
     assert row["ts"] == "09:59:00"  # iso timestamp formatted to a clock
 
 
+def test_activity_reads_from_turn_store(tmp_path: Path) -> None:
+    """Gap B (WS-LOOKTOOL-WIRING): /api/activity surfaces agent turns from the turn store.
+
+    Under the agent model the bench decision log stays empty (trades settle via ACT
+    tools), so the feed must read the turn store instead — preserving the cockpit's
+    {lv, text, ts} row contract.
+    """
+    from trading_agent.intel.turn_store import TurnStore
+
+    app = create_cockpit_app(Database(tmp_path / "c.db"), transport=_mock_transport())
+    app.state.bench = _live_bench()  # has its own (legacy) decision; must be overridden
+    store = TurnStore(db_path=str(tmp_path / "turns.db"))
+    store.open_turn("tt1", "opus", "scheduled", "regular", {"trader_name": "opus"})
+    store.close_turn(
+        "tt1",
+        tool_calls=[],
+        final_action="trade",
+        final_action_args={"symbol": "NVDA", "side": "BUY", "qty": 4},
+        total_cost_usd=0.02,
+        total_tokens={"input": 10, "output": 2, "cached": 0},
+    )
+    app.state.turn_store = store
+    c = TestClient(app)
+    c.post("/api/auth/signup", json={"username": "lukas", "password": "pw"})
+
+    log = c.get("/api/activity").json()
+    assert log, "expected agent turn activity from the turn store"
+    # Each row keeps the cockpit contract exactly.
+    for row in log:
+        assert set(row.keys()) == {"lv", "text", "ts"}
+    top = log[0]
+    assert top["lv"] == "trade"  # trade terminal -> filled -> trade level
+    assert "opus" in top["text"] and "NVDA" in top["text"]
+    # MONEY IS REAL: nothing in the payload discloses paper/sim/book_type.
+    import json as _json
+
+    blob = _json.dumps(log).lower()
+    assert not any(w in blob for w in ("paper", "sim", "demo", "fake", "book_type"))
+
+
 # --- bench: add-trader create ------------------------------------------------
 
 

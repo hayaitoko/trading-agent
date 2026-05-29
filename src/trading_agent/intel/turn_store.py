@@ -443,6 +443,29 @@ class TurnStore:
         except Exception:
             return []
 
+    def recent_all(self, limit: int = 30) -> list[TurnRecord]:
+        """Return the N most recent completed turns across ALL traders, newest first.
+
+        Operator-facing: backs the cockpit ``/api/activity`` feed (Gap B —
+        WS-LOOKTOOL-WIRING).  Under the agent model, trades settle via ACT tools so
+        the legacy ``Bench.recent_decisions()`` log stays empty; agent turn activity
+        lives here instead.  Returns completed turns only (``ended_at IS NOT NULL``).
+        """
+        if self._conn is None:
+            return []
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM turn_records
+                WHERE ended_at IS NOT NULL
+                ORDER BY started_at DESC LIMIT ?
+                """,
+                (max(1, min(int(limit), 200)),),
+            ).fetchall()
+            return [self._row_to_record(r) for r in rows]
+        except Exception:
+            return []
+
     def summaries(
         self,
         trader_id: str,

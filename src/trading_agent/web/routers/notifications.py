@@ -225,7 +225,11 @@ def _current_items(request: Request, user_id: str) -> list[dict[str, Any]]:
     db = get_db(request)
     watch, bench = _sources(request)
     moves = list(watch.recent()) if watch is not None else None
-    decisions = bench.recent_decisions() if bench is not None else None
+    # Gap B (WS-LOOKTOOL-WIRING): the fill/block notifications draw from the agent
+    # turn store (where ACT-tool trades land) when one is wired, falling back to the
+    # legacy bench decision log. Same decision-row shape either way, so build_items
+    # is unchanged.
+    decisions = _decisions_for_feed(request, bench)
     return build_items(
         user_id,
         request_store=RequestStore(db),
@@ -233,6 +237,21 @@ def _current_items(request: Request, user_id: str) -> list[dict[str, Any]]:
         decisions=decisions,
         read_ids=NotificationReadStore(db).read_ids(user_id),
     )
+
+
+def _decisions_for_feed(request: Request, bench: Bench | None) -> list[dict[str, Any]] | None:
+    """Recent decision rows: agent turn store first, then the bench decision log."""
+    store = getattr(request.app.state, "turn_store", None)
+    if store is not None:
+        try:
+            turns = store.recent_all(limit=30)
+        except Exception:
+            turns = []
+        if turns:
+            from .bench import turns_to_decision_rows
+
+            return turns_to_decision_rows(turns)
+    return bench.recent_decisions() if bench is not None else None
 
 
 @router.get("/api/notifications")

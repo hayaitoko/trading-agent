@@ -813,10 +813,35 @@ class ToolCallRecord:
 | `open_turn(...)` | AgentTrader at turn start — writes interrupted row for crash recovery |
 | `close_turn(turn_id, ...)` | AgentTrader at turn end — finalises the row |
 | `recent(trader_id, n)` | A1 `RecentTurnsTool` — returns `list[TurnRecord]` newest-first |
+| `recent_all(limit)` | `/api/activity` feed — cross-trader completed turns, newest-first (Gap B) |
 | `summaries(trader_id, limit)` | `GET /api/traces` router — operator summary list |
 | `get(turn_id)` | `GET /api/traces/{id}` router — full record |
 | `cost_rollup(trader_id)` | `GET /api/traces/cost` router — today/week/lifetime USD |
 | `orphaned_turns()` | A4 crash-recovery scanner — `ended_at IS NULL` rows >5min old |
+
+### `/api/activity` reads from the turn store (Gap B — WS-LOOKTOOL-WIRING)
+
+Under the agent model trades settle via the ACT tools, so the legacy
+`Bench.recent_decisions()` decision log stays empty — the cockpit activity tile
+would go quiet.  `/api/activity` (and the fill/block half of the notification feed,
+`notifications._current_items`) therefore read from the turn store first:
+
+1. `TurnStore.recent_all(limit=30)` → most recent completed turns across all traders.
+2. `web/routers/bench.turns_to_decision_rows()` adapts each `TurnRecord` onto the
+   **unchanged** legacy decision-row shape — `{timestamp, competitor, symbol,
+   action, quantity, status, reason, detail}`.  `trade` / `confirm_trade` →
+   `BUY`/`SELL` filled rows (one per item for `trade_batch`); `hold` / `pass` /
+   `done_for_day` → a `status="hold"` housekeeping row carrying the turn's reason +
+   wake.
+3. `_activity_row()` maps that to the cockpit's `{lv, text, ts}` contract exactly as
+   before, so **the activity tile keeps rendering with no front-end change**.
+4. When no turn store is wired (legacy / unit tests), both feeds fall back to
+   `Bench.recent_decisions()`.
+
+MONEY IS REAL: the adapter touches only `TurnRecord`'s trader-safe fields — never
+`book_type` — so no paper/sim status leaks into the activity payload.  This is a
+**pure data read**: zero LLM calls on the `/api/activity` or notification path
+(MANAGER FRUGALITY / Rule 11).
 
 ### Replay flow
 

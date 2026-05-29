@@ -720,6 +720,20 @@ def test_looktool_wiring_unwired_tools_degrade_not_stub() -> None:
     assert call("advisor_notes", scope="trader").ok is True
 
 
+def test_looktool_wiring_fresh_spot_prices_reflect_mid_session_move() -> None:
+    """WS-LOOKTOOL-WIRING W2 (Concern #2): _fresh_spot_prices() is per-call, not a snapshot.
+
+    options_iv()/forecast()/account_state() must see a mid-session price move the
+    same turn, not a snapshot frozen at construction.  The spot_prices_fn closure
+    reads a mutable source; mutating it between calls changes the result.
+    """
+    live: dict[str, float] = {"AAPL": 200.0}
+    trader = _make_trader(spot_prices={"AAPL": 100.0}, spot_prices_fn=lambda: dict(live))
+    assert trader._fresh_spot_prices()["AAPL"] == 200.0  # fn beats static snapshot
+    live["AAPL"] = 215.5  # mid-session move
+    assert trader._fresh_spot_prices()["AAPL"] == 215.5  # reflected immediately
+
+
 def test_looktool_wiring_ask_manager_gate_one_per_turn() -> None:
     """WS-LOOKTOOL-WIRING W1: ask_manager is rate-limited to ≤1/turn at the trader level."""
     from trading_agent.intel.cost_tracker import CostTracker

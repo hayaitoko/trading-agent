@@ -62,6 +62,10 @@ def _controller(request: Request) -> BenchController | None:
     return getattr(request.app.state, "bench_controller", None)
 
 
+def _turn_store(request: Request) -> Any:
+    return getattr(request.app.state, "turn_store", None)
+
+
 # --- shaping helpers ---------------------------------------------------------
 
 
@@ -199,6 +203,89 @@ def _activity_row(entry: dict[str, Any]) -> dict[str, Any]:
     return {"lv": _ACTIVITY_LEVEL.get(status, "info"), "text": text, "ts": _clock(str(entry.get("timestamp", "")))}
 
 
+# --- turn-store → decision-row adapter (Gap B, WS-LOOKTOOL-WIRING) -----------
+
+# Terminal actions that represent a real fill (vs. a hold/pass housekeeping turn).
+_TRADE_TERMINALS = {"trade", "trade_batch", "confirm_trade"}
+
+
+def turns_to_decision_rows(turns: list[Any]) -> list[dict[str, Any]]:
+    """Adapt agent ``TurnRecord``s into the legacy decision-row dicts.
+
+    Under the agent model, trades settle via ACT tools so ``Bench.recent_decisions()``
+    stays empty.  Agent activity lives in the turn store instead.  This maps each
+    completed turn's terminal action onto the exact dict shape both ``/api/activity``
+    (``_activity_row``) and the notification feed (``notifications.build_items``)
+    already consume — ``{timestamp, competitor, symbol, action, quantity, status,
+    reason, detail}`` — so neither contract changes.
+
+    Mapping:
+      - ``trade`` / ``confirm_trade`` → action=BUY/SELL (from args.side), symbol +
+        quantity from args, status="filled".
+      - ``trade_batch`` → one row per item (each with its own symbol/side/qty).
+      - ``hold`` / ``pass`` / ``done_for_day`` → action label, status="hold".
+
+    MONEY IS REAL: uses ``TurnRecord``'s trader-safe fields only (no ``book_type``);
+    nothing here discloses paper/sim status.
+    """
+    rows: list[dict[str, Any]] = []
+    for rec in turns:
+        ts = _rec_ts(rec)
+        who = str(getattr(rec, "trader_id", ""))
+        action = str(getattr(rec, "final_action", "") or "")
+        args = getattr(rec, "final_action_args", {}) or {}
+        wake = str(getattr(rec, "wake_reason", "") or "")
+        if action == "trade_batch":
+            for item in args.get("trades", []) or []:
+                rows.append(_trade_row(ts, who, item, wake))
+        elif action in ("trade", "confirm_trade"):
+            rows.append(_trade_row(ts, who, args, wake))
+        else:
+            # hold / pass / done_for_day / abandon_trade / interrupted → housekeeping.
+            reason = str(args.get("reason", "") or "")
+            rows.append(
+                {
+                    "timestamp": ts,
+                    "competitor": who,
+                    "symbol": "",
+                    "action": action or "hold",
+                    "quantity": 0,
+                    "status": "hold",
+                    "reason": reason,
+                    "detail": wake,
+                }
+            )
+    return rows
+
+
+def _trade_row(ts: str, who: str, args: dict[str, Any], wake: str) -> dict[str, Any]:
+    side = str(args.get("side", "") or "").upper()
+    action = "BUY" if side == "BUY" else ("SELL" if side == "SELL" else side or "TRADE")
+    try:
+        qty = float(args.get("qty", 0) or 0)
+    except (TypeError, ValueError):
+        qty = 0.0
+    return {
+        "timestamp": ts,
+        "competitor": who,
+        "symbol": str(args.get("symbol", "") or ""),
+        "action": action,
+        "quantity": qty,
+        "status": "filled",
+        "reason": "",
+        "detail": wake,
+    }
+
+
+def _rec_ts(rec: Any) -> str:
+    """ISO timestamp string from a TurnRecord (ended_at preferred, else started_at)."""
+    dt = getattr(rec, "ended_at", None) or getattr(rec, "started_at", None)
+    try:
+        return dt.isoformat() if dt is not None else ""
+    except Exception:
+        return str(dt) if dt is not None else ""
+
+
 # --- routes ------------------------------------------------------------------
 
 
@@ -249,8 +336,35 @@ def positions(request: Request, user_id: str = Depends(current_user)) -> list[di
 
 @router.get("/api/activity")
 def activity(request: Request, user_id: str = Depends(current_user)) -> list[dict[str, Any]]:
-    """Merged decision log across all competitors, newest first. Empty -> mock."""
+    """Merged activity log across all competitors, newest first. Empty -> mock.
+
+    Gap B (WS-LOOKTOOL-WIRING): under the agent model trades settle via ACT tools,
+    so ``Bench.recent_decisions()`` stays empty.  Agent turn activity lives in the
+    turn store, so the feed reads the most recent turns (terminal action + symbol/qty
+    for trade* terminals, hold/pass/done_for_day otherwise) and adapts them onto the
+    unchanged ``{lv, text, ts}`` row contract the cockpit activity tile renders.
+    Falls back to ``recent_decisions()`` when the turn store is absent (legacy / tests).
+    """
+    decisions = _activity_decisions(request)
+    return [_activity_row(entry) for entry in decisions]
+
+
+def _activity_decisions(request: Request) -> list[dict[str, Any]]:
+    """Decision rows for the activity/notification feeds: turn store first, then bench.
+
+    Returns the legacy decision-row dict shape either way.  Prefers agent turn
+    activity (the live source under the agent model); falls back to the bench's
+    decision log when no turn store is wired or it holds no completed turns yet.
+    """
+    store = _turn_store(request)
+    if store is not None:
+        try:
+            turns = store.recent_all(limit=30)
+        except Exception:
+            turns = []
+        if turns:
+            return turns_to_decision_rows(turns)
     bench = _bench(request)
     if bench is None:
         return []
-    return [_activity_row(entry) for entry in bench.recent_decisions()]
+    return list(bench.recent_decisions())
