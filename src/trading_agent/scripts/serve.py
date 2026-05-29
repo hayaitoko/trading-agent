@@ -619,8 +619,60 @@ def cockpit_main(argv: list[str] | None = None) -> int:
                 stop.wait(args.bar_interval)
             seed += len(symbols)
 
+    def run_live_bars() -> None:
+        """Poll AlpacaBarProvider for each symbol during US market hours.
+
+        On every tick:
+          1. Gate on ``is_us_equity_market_open()`` — skip when outside RTH.
+             The multi-tenant time rule mandates US/Eastern for US equity markets;
+             ``is_us_equity_market_open()`` uses ZoneInfo("America/New_York")
+             internally so no TZ logic is duplicated here.
+          2. Fetch the last 2 bars per symbol (``timeframe="1Min"`` → intraday)
+             and take the *last* one so a mid-session poll always gets the most
+             recent completed bar.
+          3. Convert the ``Bar`` dataclass to the ``dict[str, Any]`` shape that
+             ``bench.observe_bar`` expects: ``{symbol, close, open, high, low,
+             volume, timestamp}``.
+        Falls back silently on any provider error (network / auth / rate-limit)
+        so a transient Alpaca outage never kills the feed loop.
+        """
+        from ..data.providers.alpaca import AlpacaBarProvider
+        from ..market_hours import is_us_equity_market_open
+
+        bar_provider = AlpacaBarProvider()
+        while not stop.is_set():
+            if is_us_equity_market_open():
+                for symbol in symbols:
+                    if stop.is_set():
+                        return
+                    try:
+                        bars = bar_provider.get_bars(symbol, "1Min", 2)
+                        if bars:
+                            raw = bars[-1]  # most recent completed bar
+                            bar_dict = {
+                                "symbol": symbol,
+                                "timestamp": raw.timestamp,
+                                "open": raw.open,
+                                "high": raw.high,
+                                "low": raw.low,
+                                "close": raw.close,
+                                "volume": raw.volume,
+                            }
+                            bench.observe_bar(bar_dict)
+                            watch.observe(symbol, raw.close)
+                    except Exception:
+                        pass  # transient provider failure: skip, keep polling
+            stop.wait(args.bar_interval)
+
     if not args.no_feed:
-        threading.Thread(target=run_synthetic, name="cockpit-feed", daemon=True).start()
+        # WS-COCKPIT-REAL-DATA R1: use real Alpaca bars when ALPACA_API_KEY is
+        # set; fall back to the synthetic mean-reverting feed otherwise.
+        if os.environ.get("ALPACA_API_KEY"):
+            print("feed: live Alpaca bars (1-min, US RTH only)")
+            threading.Thread(target=run_live_bars, name="cockpit-feed", daemon=True).start()
+        else:
+            print("feed: synthetic mean-reversion (no ALPACA_API_KEY)")
+            threading.Thread(target=run_synthetic, name="cockpit-feed", daemon=True).start()
 
     print("=== trading-agent cockpit (multi-user) ===")
     print(f"open  http://{args.host}:{args.port}/   (Ctrl-C to stop)")

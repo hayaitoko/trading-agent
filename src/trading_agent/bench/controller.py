@@ -355,6 +355,31 @@ class BenchController:
         self._maybe_reflect()
         self._scan_attention()
 
+    def fire_trader(self, name: str) -> None:
+        """Trigger one decide() cycle for a single named competitor (dev path).
+
+        Looks up the competitor in the bench roster by name and calls
+        ``bench._run_one`` directly so only the named trader fires (not the full
+        cadence round).  Falls back to ``tick_now()`` when the name is not
+        found so the endpoint is always responsive.
+
+        Intended for ``POST /api/dev/fire-turn?trader=<name>`` — useful for
+        smoke-testing a turn outside the cadence window without waiting for the
+        scheduler.  Auth-gated and env-gated at the HTTP layer; this method
+        carries no additional restrictions.
+        """
+        # Access the bench's competitor map; the bench's public .names() gives
+        # the keys but we need the Competitor object for _run_one.
+        with self.bench._lock:
+            comp = self.bench._competitors.get(name)
+        if comp is None:
+            # Trader not found — fire all traders so the endpoint still succeeds.
+            self.tick_now()
+            return
+        self.bench._run_one(comp)
+        self._maybe_reflect()
+        self._scan_attention()
+
     # --- Reflection (WS-A write path) ---------------------------------------
 
     def _maybe_reflect(self) -> None:

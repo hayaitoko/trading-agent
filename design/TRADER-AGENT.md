@@ -1056,6 +1056,75 @@ ET-anchored lifecycle (otherwise the bench runs its plain cadence).
 
 ---
 
+## 15. Real-Data Boot — WS-COCKPIT-REAL-DATA
+
+After WS-COCKPIT-REAL-DATA the cockpit boots against real Alpaca bars and has all
+SITUATION providers wired.
+
+### Environment variables
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `ALPACA_API_KEY` | for live bars + options | — | Alpaca market data key; also gates `AlpacaOptionChainProvider` construction |
+| `ALPACA_SECRET_KEY` | for live bars + options | — | Alpaca market data secret |
+| `OPENROUTER_API_KEY` | for traders | — | ZDR OpenRouter key; without it the cockpit boots read-only (add-trader 503) |
+| `TRADING_AGENT_SCHEDULER` | optional | off | Set to `1` to enable ET-anchored lifecycle gating (SoD/EoD turns, market-hours guard) |
+| `TRADING_AGENT_DEV_TRIGGER` | optional | off | Set to `1` to register `POST /api/dev/fire-turn` (see below) |
+| `SITUATION_GDELT` | per-user in user_settings | false | Enable `world_events` LOOK tool (GDELT DOC 2.0, no key required) |
+| `SITUATION_PREDICTION_MARKETS` | per-user in user_settings | false | Enable `prediction_market_odds` LOOK tool (Polymarket + Kalshi, no key required) |
+| `SITUATION_OPTIONS_IV` | per-user in user_settings | false | Enable `options_iv` LOOK tool (requires `ALPACA_API_KEY`) |
+| `SITUATION_FORECAST` | per-user in user_settings | false | Enable `forecast` LOOK tool |
+
+### Sample boot command (real Alpaca bars + all SITUATION providers)
+
+```bash
+ALPACA_API_KEY=<key> \
+ALPACA_SECRET_KEY=<secret> \
+OPENROUTER_API_KEY=<key> \
+TRADING_AGENT_SCHEDULER=1 \
+  uv run python -m trading_agent.scripts.serve --cockpit \
+    --host 0.0.0.0 --port 8000 \
+    --symbols AAPL,MSFT,NVDA,TSLA,AMD,META \
+    --cadence 300 \
+    --bar-interval 30
+```
+
+When `ALPACA_API_KEY` is set the cockpit prints:
+```
+feed: live Alpaca bars (1-min, US RTH only)
+```
+and polls Alpaca's 1-min bars every `--bar-interval` seconds during US regular
+trading hours (09:30–16:00 ET, Mon–Fri). Outside RTH the feed sleeps — synthetic
+data is not mixed in. When `ALPACA_API_KEY` is absent:
+```
+feed: synthetic mean-reversion (no ALPACA_API_KEY)
+```
+
+### Dev trigger endpoint
+
+`POST /api/dev/fire-turn` is **only registered** when `TRADING_AGENT_DEV_TRIGGER=1`
+at process start. When the env var is absent the route simply does not exist (404).
+
+```bash
+# Fire all traders immediately (no --trader specified)
+curl -X POST http://localhost:8000/api/dev/fire-turn \
+  -H "Cookie: session=<session-cookie>"
+
+# Fire a single named trader
+curl -X POST "http://localhost:8000/api/dev/fire-turn?trader=my-trader" \
+  -H "Cookie: session=<session-cookie>"
+```
+
+Response on success:
+```json
+{"fired": "my-trader", "mode": "single"}
+```
+or `{"fired": "__all__", "mode": "all"}` when no trader name is given.
+503 when the bench engine is not running. Auth-required (same `current_user`
+session dependency as every cockpit route).
+
+---
+
 ## Key Files (A0–A2)
 
 | File | Role |

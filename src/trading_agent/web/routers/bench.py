@@ -23,6 +23,7 @@ the bench's realized-P&L ledger.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -368,3 +369,52 @@ def _activity_decisions(request: Request) -> list[dict[str, Any]]:
     if bench is None:
         return []
     return list(bench.recent_decisions())
+
+
+# --- Dev-only endpoint (WS-COCKPIT-REAL-DATA R1) ----------------------------
+# Only registered at HTTP-routing time if TRADING_AGENT_DEV_TRIGGER=1.
+# When the env var is absent the route does not exist — 404 naturally.
+# Registration happens at module import: build_cockpit calls create_cockpit_app
+# which calls app.include_router(bench_router.router); the conditional below
+# attaches (or not) the route onto `router` before include_router runs.
+# Re-import after the env changes would not retroactively add the route, which
+# is the intended behaviour (server restarts pick up the new env).
+
+if os.environ.get("TRADING_AGENT_DEV_TRIGGER"):
+
+    class _FireTurnBody(BaseModel):
+        trader: str | None = None
+
+    @router.post("/api/dev/fire-turn")
+    def dev_fire_turn(
+        request: Request,
+        trader: str | None = None,
+        body: _FireTurnBody | None = None,
+        user_id: str = Depends(current_user),
+    ) -> dict[str, Any]:
+        """Dev-only: manually fire one decide() cycle for a named trader.
+
+        Gated by ``TRADING_AGENT_DEV_TRIGGER=1`` env var at process start.
+        Auth-required: same ``current_user`` dependency as every cockpit route.
+        Useful for smoke-testing trader turns outside the cadence/schedule window.
+
+        ``trader`` name comes from the query string or JSON body.  When the
+        named trader is not found the full cadence round fires (all traders).
+        503 when the bench engine is not running.
+        """
+        controller = _controller(request)
+        if controller is None:
+            raise HTTPException(status_code=503, detail="bench engine not running")
+
+        # Prefer query-string trader; fall back to JSON body.
+        name = trader or (body.trader if body else None)
+
+        try:
+            if name:
+                controller.fire_trader(name)
+                return {"fired": name, "mode": "single"}
+            else:
+                controller.tick_now()
+                return {"fired": "__all__", "mode": "all"}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"fire-turn failed: {exc}") from exc
