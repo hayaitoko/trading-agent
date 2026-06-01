@@ -34,9 +34,11 @@ from .routers import approvals as approvals_router
 from .routers import bench as bench_router
 from .routers import calibration as calibration_router
 from .routers import config as config_router
+from .routers import customer as customer_router
 from .routers import forecast as forecast_router
 from .routers import manager as manager_router
 from .routers import market as market_router
+from .routers import memory as memory_router
 from .routers import movers as movers_router
 from .routers import news as news_router
 from .routers import notes as notes_router
@@ -76,6 +78,9 @@ _COCKPIT_ROUTERS = (
     quote_stream_router.router,
     traces_router.router,
     forecast_router.router,
+    # Customer product UI + memory API (mounted on every cockpit app).
+    memory_router.router,
+    customer_router.router,
 )
 
 

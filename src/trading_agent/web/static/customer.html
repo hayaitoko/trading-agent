@@ -1,0 +1,1692 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HELM — Portfolio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ================================================================
+   HELM Customer UI — Design System (mirrors cockpit tokens)
+   ================================================================ */
+:root {
+  --serif: 'Fraunces', Georgia, serif;
+  --sans:  'Hanken Grotesk', system-ui, sans-serif;
+  --mono:  'IBM Plex Mono', 'Fira Mono', monospace;
+
+  /* teal theme (default — matches cockpit) */
+  --bg:        #0c1117;
+  --panel:     #131b24;
+  --panel-hi:  #1a2535;
+  --border:    #1f2d3d;
+  --text:      #d4e3f0;
+  --muted:     #5a7a94;
+  --accent:    #0ea5e9;
+  --on-accent: #fff;
+  --pos:       #22c55e;
+  --neg:       #f43f5e;
+  --warn:      #f59e0b;
+  --radius:    12px;
+  --radius-sm: 8px;
+  --shadow:    0 4px 24px rgba(0,0,0,.35);
+  --chat-w:    360px;
+}
+
+/* ---- Reset ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column; overflow: hidden; }
+
+/* ================================================================
+   TOP BAR
+   ================================================================ */
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; height: 52px; flex: none;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  z-index: 40;
+}
+.topbar .brand {
+  font-family: var(--serif); font-size: 22px; font-weight: 600;
+  color: var(--text); letter-spacing: -.02em; margin-right: 8px;
+  text-decoration: none;
+}
+.topbar .brand span { color: var(--accent); }
+
+.nav { display: flex; gap: 2px; flex: 1; }
+.nav-btn {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 14px; border-radius: var(--radius-sm);
+  border: none; background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: 13.5px; font-weight: 500; color: var(--muted);
+  transition: color .14s, background .14s;
+}
+.nav-btn:hover { color: var(--text); background: var(--panel-hi); }
+.nav-btn.active { color: var(--text); background: var(--panel-hi); }
+.nav-btn .nb-ic { font-size: 15px; }
+
+.topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.btn { display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: transparent; cursor: pointer; font-size: 13px; font-family: var(--sans);
+  font-weight: 500; color: var(--text); transition: .14s; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn-accent { background: var(--accent); border-color: var(--accent);
+  color: var(--on-accent); }
+.btn-accent:hover { background: color-mix(in srgb,var(--accent) 85%, white);
+  border-color: color-mix(in srgb,var(--accent) 85%, white); color: var(--on-accent); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+
+.user-chip { display: flex; align-items: center; gap: 8px;
+  padding: 4px 10px 4px 4px; border-radius: 999px;
+  background: var(--panel-hi); border: 1px solid var(--border); cursor: pointer; }
+.user-avatar { width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; font-family: var(--mono); }
+.user-name { font-size: 13px; font-weight: 500; color: var(--text); }
+
+/* ================================================================
+   MAIN LAYOUT — left content + right chat dock
+   ================================================================ */
+.layout { display: flex; flex: 1; overflow: hidden; }
+
+.content-area {
+  flex: 1; overflow-y: auto; padding: 28px;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+
+/* ================================================================
+   AUTH WALL
+   ================================================================ */
+#auth-wall {
+  position: fixed; inset: 0; z-index: 200;
+  background: var(--bg); display: flex; align-items: center; justify-content: center;
+}
+.auth-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 36px 32px; width: 360px; box-shadow: var(--shadow);
+}
+.auth-title { font-family: var(--serif); font-size: 26px; font-weight: 600;
+  margin-bottom: 4px; }
+.auth-sub { color: var(--muted); font-size: 13.5px; margin-bottom: 24px; }
+.form-row { margin-bottom: 16px; }
+.form-row label { display: block; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+  margin-bottom: 6px; }
+.form-row input, .form-row select, .form-row textarea {
+  width: 100%; padding: 9px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--panel-hi);
+  color: var(--text); font-family: var(--sans); font-size: 14px; outline: none;
+  transition: border-color .14s;
+}
+.form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+  border-color: var(--accent); }
+.auth-switch { margin-top: 18px; text-align: center; font-size: 13px; color: var(--muted); }
+.auth-switch a { color: var(--accent); cursor: pointer; text-decoration: none; }
+.auth-switch a:hover { text-decoration: underline; }
+.auth-err { color: var(--neg); font-size: 12.5px; margin-top: 8px; min-height: 18px; }
+
+/* ================================================================
+   PAGE HEADER
+   ================================================================ */
+.page-head { margin-bottom: 24px; }
+.page-head h1 { font-family: var(--serif); font-size: 28px; font-weight: 600;
+  letter-spacing: -.02em; }
+.page-head p { color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+/* ================================================================
+   SECTION TITLES & PANELS
+   ================================================================ */
+.section-title {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.section-title::after { content:''; flex:1; height:1px; background:var(--border); }
+
+.panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.panel-header {
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.panel-header h3 { font-size: 14px; font-weight: 600; flex: 1; }
+.panel-body { padding: 18px; }
+
+/* ================================================================
+   STAT CHIPS
+   ================================================================ */
+.stats-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+.stat-chip {
+  flex: 1; min-width: 120px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.stat-chip .sc-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .09em; color: var(--muted); margin-bottom: 6px; }
+.stat-chip .sc-val { font-family: var(--mono); font-size: 22px; font-weight: 600;
+  color: var(--text); }
+.stat-chip .sc-val.pos { color: var(--pos); }
+.stat-chip .sc-val.neg { color: var(--neg); }
+.stat-chip .sc-sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+
+/* ================================================================
+   TRADER CARDS (Accounts page)
+   ================================================================ */
+.traders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px; }
+.trader-card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
+  transition: border-color .16s;
+}
+.trader-card:hover { border-color: color-mix(in srgb,var(--accent) 40%,var(--border)); }
+.tc-head {
+  padding: 14px 16px 12px; display: flex; align-items: flex-start; gap: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.tc-avatar {
+  width: 36px; height: 36px; border-radius: 10px; flex: none;
+  background: color-mix(in srgb,var(--accent) 18%, var(--panel-hi));
+  border: 1px solid color-mix(in srgb,var(--accent) 30%,var(--border));
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--accent);
+}
+.tc-info { flex: 1; min-width: 0; }
+.tc-name { font-size: 14px; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.tc-model { font-family: var(--mono); font-size: 11px; color: var(--muted);
+  margin-top: 2px; }
+.tc-status { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  font-weight: 600; font-family: var(--mono); }
+.tc-status.running { background: color-mix(in srgb,var(--pos) 15%,transparent);
+  color: var(--pos); border: 1px solid color-mix(in srgb,var(--pos) 30%,transparent); }
+.tc-status.idle { background: color-mix(in srgb,var(--muted) 12%,transparent);
+  color: var(--muted); border: 1px solid var(--border); }
+.tc-status.paper { background: color-mix(in srgb,var(--warn) 15%,transparent);
+  color: var(--warn); border: 1px solid color-mix(in srgb,var(--warn) 30%,transparent); }
+
+.tc-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px;
+  background: var(--border); }
+.tc-stat { background: var(--panel-hi); padding: 10px 14px; }
+.tc-stat .tcs-l { font-size: 10px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .08em; }
+.tc-stat .tcs-v { font-family: var(--mono); font-size: 14px; font-weight: 600;
+  margin-top: 3px; }
+.tcs-v.pos { color: var(--pos); }
+.tcs-v.neg { color: var(--neg); }
+
+.tc-positions { padding: 12px 16px; }
+.tc-pos-title { font-size: 11px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .08em; margin-bottom: 8px; }
+.pos-row { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+  border-bottom: 1px solid var(--border); font-size: 13px; }
+.pos-row:last-child { border-bottom: none; }
+.pos-sym { font-family: var(--mono); font-weight: 600; width: 50px; }
+.pos-qty { color: var(--muted); flex: 1; }
+.pos-pnl { font-family: var(--mono); font-size: 12px; }
+.pos-pnl.pos { color: var(--pos); }
+.pos-pnl.neg { color: var(--neg); }
+
+.tc-actions { padding: 12px 16px; border-top: 1px solid var(--border);
+  display: flex; gap: 8px; }
+
+/* ================================================================
+   PENDING APPROVALS BANNER
+   ================================================================ */
+.approvals-banner {
+  background: color-mix(in srgb, var(--warn) 10%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border));
+  border-radius: var(--radius); padding: 16px 20px; margin-bottom: 24px;
+  display: flex; align-items: center; gap: 14px;
+}
+.approvals-banner .ab-icon { font-size: 22px; flex: none; }
+.approvals-banner .ab-text { flex: 1; }
+.approvals-banner .ab-title { font-weight: 600; font-size: 14px; }
+.approvals-banner .ab-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+.approval-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+.approval-item {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+  display: flex; align-items: flex-start; gap: 12px;
+}
+.ap-body { flex: 1; }
+.ap-title { font-size: 14px; font-weight: 600; }
+.ap-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.ap-from { font-family: var(--mono); font-size: 11px; color: var(--accent);
+  margin-top: 4px; }
+.ap-actions { display: flex; gap: 8px; margin-top: 10px; }
+.btn-approve { background: color-mix(in srgb,var(--pos) 15%,transparent);
+  border-color: color-mix(in srgb,var(--pos) 40%,var(--border)); color: var(--pos); }
+.btn-approve:hover { background: color-mix(in srgb,var(--pos) 22%,transparent); }
+.btn-deny { background: color-mix(in srgb,var(--neg) 10%,transparent);
+  border-color: color-mix(in srgb,var(--neg) 30%,var(--border)); color: var(--neg); }
+.btn-deny:hover { background: color-mix(in srgb,var(--neg) 18%,transparent); }
+
+/* ================================================================
+   TABLES (News, Sources)
+   ================================================================ */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.data-table th {
+  text-align: left; padding: 10px 14px;
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--muted); border-bottom: 1px solid var(--border);
+}
+.data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border);
+  vertical-align: middle; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--panel-hi); }
+.badge {
+  display: inline-flex; align-items: center; padding: 2px 9px;
+  border-radius: 999px; font-size: 11px; font-weight: 600; font-family: var(--mono);
+}
+.badge-on { background: color-mix(in srgb,var(--pos) 15%,transparent);
+  color: var(--pos); border: 1px solid color-mix(in srgb,var(--pos) 30%,transparent); }
+.badge-off { background: color-mix(in srgb,var(--muted) 10%,transparent);
+  color: var(--muted); border: 1px solid var(--border); }
+.badge-rss { background: color-mix(in srgb,var(--warn) 15%,transparent);
+  color: var(--warn); border: 1px solid color-mix(in srgb,var(--warn) 30%,transparent); }
+.badge-reddit { background: color-mix(in srgb,#ff4500 15%,transparent);
+  color: #ff7e4a; border: 1px solid color-mix(in srgb,#ff4500 30%,transparent); }
+.badge-bluesky { background: color-mix(in srgb,#0085ff 15%,transparent);
+  color: #4da8ff; border: 1px solid color-mix(in srgb,#0085ff 30%,transparent); }
+
+.tag { display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-family: var(--mono);
+  background: var(--panel-hi); border: 1px solid var(--border); color: var(--muted);
+  margin: 2px; }
+
+/* ================================================================
+   MEMORY PAGE
+   ================================================================ */
+.memory-filters {
+  display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;
+}
+.search-box {
+  flex: 1; min-width: 200px;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 12px; transition: border-color .14s;
+}
+.search-box:focus-within { border-color: var(--accent); }
+.search-box input { flex: 1; border: none; background: transparent; color: var(--text);
+  font-size: 13.5px; font-family: var(--sans); outline: none; }
+.search-box .sb-icon { color: var(--muted); font-size: 15px; }
+.filter-select { padding: 8px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--panel);
+  color: var(--text); font-family: var(--sans); font-size: 13.5px; outline: none;
+  cursor: pointer; }
+
+.memory-list { display: flex; flex-direction: column; gap: 10px; }
+.memory-item {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+  transition: border-color .14s;
+}
+.memory-item:hover { border-color: color-mix(in srgb,var(--accent) 35%,var(--border)); }
+.mi-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.mi-trader { font-family: var(--mono); font-size: 11px; font-weight: 600;
+  color: var(--accent); }
+.mi-ts { font-family: var(--mono); font-size: 11px; color: var(--muted);
+  margin-left: auto; }
+.mi-text { font-size: 13.5px; line-height: 1.55; color: var(--text); }
+.mi-tags { margin-top: 8px; }
+.mi-score { font-family: var(--mono); font-size: 10px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px;
+  margin-left: 4px; }
+
+/* ================================================================
+   SETTINGS PAGE
+   ================================================================ */
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 700px) { .settings-grid { grid-template-columns: 1fr; } }
+.settings-section { background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; }
+.settings-section .ss-head { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.settings-section .ss-head h3 { font-size: 14px; font-weight: 600; }
+.settings-section .ss-head p { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.settings-section .ss-body { padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+.setting-row { display: flex; align-items: flex-start; gap: 12px; }
+.setting-row .sr-text { flex: 1; }
+.setting-row .sr-label { font-size: 13.5px; font-weight: 500; }
+.setting-row .sr-desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.toggle {
+  position: relative; width: 40px; height: 22px; flex: none; cursor: pointer;
+}
+.toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-track {
+  position: absolute; inset: 0; border-radius: 999px; background: var(--border);
+  transition: background .2s; border: 1px solid var(--border);
+}
+.toggle input:checked + .toggle-track { background: var(--accent); border-color: var(--accent); }
+.toggle-knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--text); transition: transform .2s;
+}
+.toggle input:checked ~ .toggle-knob { transform: translateX(18px); }
+
+.settings-select { width: 100%; }
+
+/* ================================================================
+   CHAT DOCK (right side)
+   ================================================================ */
+.chat-dock {
+  width: var(--chat-w); flex: none;
+  background: var(--panel); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; position: relative;
+  transition: width .22s cubic-bezier(.4,.0,.2,1);
+}
+.chat-dock.collapsed { width: 48px; }
+
+.chat-toggle {
+  position: absolute; top: 50%; left: -13px; transform: translateY(-50%);
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--panel); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 10; font-size: 11px; color: var(--muted);
+  transition: color .14s, border-color .14s;
+}
+.chat-toggle:hover { color: var(--text); border-color: var(--accent); }
+
+.chat-head {
+  padding: 14px 16px 12px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; flex: none;
+}
+.chat-head h3 { font-family: var(--serif); font-size: 17px; font-weight: 600; flex: 1;
+  white-space: nowrap; overflow: hidden; }
+.chat-dock.collapsed .chat-head h3,
+.chat-dock.collapsed .chat-head .btn { display: none; }
+.chat-dock.collapsed .chat-head { justify-content: center; padding: 14px 0; }
+
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 14px 14px 0;
+  display: flex; flex-direction: column; gap: 12px;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.chat-dock.collapsed .chat-messages, .chat-dock.collapsed .chat-input-row { display: none; }
+.chat-dock.collapsed .chat-empty { display: none; }
+
+.msg { max-width: 100%; display: flex; flex-direction: column; gap: 3px; }
+.msg-user { align-items: flex-end; }
+.msg-assistant { align-items: flex-start; }
+.msg-bubble {
+  padding: 9px 12px; border-radius: var(--radius-sm); font-size: 13.5px;
+  line-height: 1.5; max-width: 94%;
+}
+.msg-user .msg-bubble {
+  background: var(--accent); color: var(--on-accent); border-radius: var(--radius-sm) var(--radius-sm) 2px var(--radius-sm);
+}
+.msg-assistant .msg-bubble {
+  background: var(--panel-hi); color: var(--text);
+  border: 1px solid var(--border); border-radius: 2px var(--radius-sm) var(--radius-sm) var(--radius-sm);
+}
+.msg-ts { font-family: var(--mono); font-size: 10px; color: var(--muted); padding: 0 4px; }
+.msg-thinking { font-style: italic; color: var(--muted); font-size: 13px; }
+
+.chat-empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted); padding: 20px;
+}
+.chat-empty .ce-icon { font-size: 32px; opacity: .5; }
+.chat-empty .ce-title { font-family: var(--serif); font-size: 16px; color: var(--text); }
+.chat-empty .ce-sub { font-size: 12.5px; text-align: center; line-height: 1.5; }
+
+.chat-input-row {
+  padding: 12px 14px; border-top: 1px solid var(--border); flex: none;
+  display: flex; gap: 8px; align-items: flex-end;
+}
+.chat-textarea {
+  flex: 1; background: var(--panel-hi); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 9px 12px;
+  color: var(--text); font-family: var(--sans); font-size: 13.5px;
+  resize: none; outline: none; max-height: 120px; overflow-y: auto;
+  scrollbar-width: none; transition: border-color .14s;
+  line-height: 1.45;
+}
+.chat-textarea:focus { border-color: var(--accent); }
+.chat-send {
+  width: 36px; height: 36px; flex: none;
+  border-radius: var(--radius-sm); background: var(--accent);
+  border: none; cursor: pointer; display: flex; align-items: center;
+  justify-content: center; font-size: 16px; color: var(--on-accent);
+  transition: background .14s; flex-shrink: 0;
+}
+.chat-send:hover { background: color-mix(in srgb,var(--accent) 82%,white); }
+.chat-send:disabled { opacity: .45; cursor: not-allowed; }
+
+.conv-actions { display: flex; gap: 6px; }
+
+/* ================================================================
+   SAVED CHATS POPOVER
+   ================================================================ */
+.saved-list { max-height: 300px; overflow-y: auto; }
+.saved-item {
+  padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer;
+  display: flex; align-items: center; gap: 8px; transition: background .12s;
+}
+.saved-item:hover { background: var(--panel-hi); }
+.saved-item .si-title { flex: 1; font-size: 13px; }
+.saved-item .si-del { color: var(--muted); font-size: 14px; border: none;
+  background: transparent; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.saved-item .si-del:hover { color: var(--neg); background: color-mix(in srgb,var(--neg) 12%,transparent); }
+
+/* ================================================================
+   MODAL
+   ================================================================ */
+.modal-bg {
+  position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.55);
+  display: none; align-items: center; justify-content: center;
+}
+.modal-bg.open { display: flex; }
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 28px; width: 420px; max-width: 95vw; box-shadow: var(--shadow);
+}
+.modal h3 { font-family: var(--serif); font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.modal p { color: var(--muted); font-size: 13.5px; margin-bottom: 20px; }
+.modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+
+/* ================================================================
+   EMPTY & LOADING STATES
+   ================================================================ */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 48px 24px; color: var(--muted); text-align: center;
+}
+.empty-state .es-icon { font-size: 40px; opacity: .4; }
+.empty-state .es-title { font-family: var(--serif); font-size: 18px; color: var(--text); }
+.empty-state .es-sub { font-size: 13.5px; max-width: 280px; line-height: 1.55; }
+.spinner {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-row { display: flex; justify-content: center; padding: 32px; }
+
+/* ================================================================
+   SOURCE ADD FORM
+   ================================================================ */
+.add-source-form {
+  background: var(--panel-hi); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px; margin-bottom: 20px;
+  display: none;
+}
+.add-source-form.open { display: block; }
+.form-row-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* ================================================================
+   TOAST
+   ================================================================ */
+#toast-area {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  z-index: 999; display: flex; flex-direction: column; gap: 8px; align-items: center;
+  pointer-events: none;
+}
+.toast {
+  background: var(--panel-hi); border: 1px solid var(--border); border-radius: 999px;
+  padding: 9px 18px; font-size: 13px; box-shadow: var(--shadow);
+  animation: toastIn .2s ease;
+  pointer-events: all;
+}
+.toast.ok { border-color: color-mix(in srgb,var(--pos) 40%,var(--border)); color: var(--pos); }
+.toast.err { border-color: color-mix(in srgb,var(--neg) 40%,var(--border)); color: var(--neg); }
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+
+/* ================================================================
+   COLLAPSIBLE SIDE SECTIONS
+   ================================================================ */
+.mb-24 { margin-bottom: 24px; }
+.mt-20 { margin-top: 20px; }
+.flex-row { display: flex; gap: 10px; align-items: center; }
+
+/* ================================================================
+   PAGE VISIBILITY
+   ================================================================ */
+.page { display: none; }
+.page.active { display: block; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     AUTH WALL
+     ============================================================ -->
+<div id="auth-wall">
+  <div class="auth-card" id="auth-card">
+    <div class="auth-title">HELM Portfolio</div>
+    <div class="auth-sub" id="auth-sub">Sign in to your account.</div>
+
+    <div id="auth-signup-fields" style="display:none">
+      <div class="form-row">
+        <label>Username</label>
+        <input id="su-user" type="text" placeholder="pick a username" autocomplete="username" />
+      </div>
+      <div class="form-row">
+        <label>Password</label>
+        <input id="su-pass" type="password" placeholder="choose a password" autocomplete="new-password" />
+      </div>
+      <button class="btn btn-accent" style="width:100%;justify-content:center" onclick="doSignup()">Create account</button>
+    </div>
+
+    <div id="auth-login-fields">
+      <div class="form-row">
+        <label>Username</label>
+        <input id="li-user" type="text" placeholder="username" autocomplete="username" />
+      </div>
+      <div class="form-row">
+        <label>Password</label>
+        <input id="li-pass" type="password" placeholder="password" autocomplete="current-password" />
+      </div>
+      <button class="btn btn-accent" style="width:100%;justify-content:center" onclick="doLogin()">Sign in</button>
+    </div>
+
+    <div class="auth-err" id="auth-err"></div>
+    <div class="auth-switch">
+      <span id="auth-switch-text">No account?</span>
+      <a id="auth-switch-link" onclick="toggleAuthMode()">Create one</a>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     TOP BAR
+     ============================================================ -->
+<div class="topbar">
+  <a class="brand" href="/app"><span>H</span>ELM</a>
+
+  <nav class="nav" id="main-nav">
+    <button class="nav-btn active" data-page="accounts" onclick="showPage('accounts',this)">
+      <span class="nb-ic">◈</span> Accounts
+    </button>
+    <button class="nav-btn" data-page="sources" onclick="showPage('sources',this)">
+      <span class="nb-ic">⊞</span> News Sources
+    </button>
+    <button class="nav-btn" data-page="memory" onclick="showPage('memory',this)">
+      <span class="nb-ic">◎</span> Memory
+    </button>
+    <button class="nav-btn" data-page="settings" onclick="showPage('settings',this)">
+      <span class="nb-ic">⊙</span> Settings
+    </button>
+  </nav>
+
+  <div class="topbar-right">
+    <div class="user-chip" id="user-chip">
+      <div class="user-avatar" id="user-avatar">?</div>
+      <span class="user-name" id="user-name">Loading…</span>
+    </div>
+    <button class="btn btn-sm" onclick="doLogout()">Sign out</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     MAIN LAYOUT
+     ============================================================ -->
+<div class="layout">
+
+  <!-- Left: page content -->
+  <div class="content-area">
+
+    <!-- ACCOUNTS PAGE -->
+    <div class="page active" id="page-accounts">
+      <div class="page-head">
+        <h1>Accounts</h1>
+        <p>Live trader performance, positions, and pending trade approvals.</p>
+      </div>
+
+      <!-- Stats row -->
+      <div class="stats-row" id="acct-stats">
+        <div class="stat-chip">
+          <div class="sc-label">Total Value</div>
+          <div class="sc-val" id="stat-value">—</div>
+          <div class="sc-sub">across all accounts</div>
+        </div>
+        <div class="stat-chip">
+          <div class="sc-label">Total P&amp;L</div>
+          <div class="sc-val" id="stat-pnl">—</div>
+          <div class="sc-sub">unrealized</div>
+        </div>
+        <div class="stat-chip">
+          <div class="sc-label">Active Traders</div>
+          <div class="sc-val" id="stat-traders">—</div>
+          <div class="sc-sub">running live</div>
+        </div>
+        <div class="stat-chip">
+          <div class="sc-label">Pending Approvals</div>
+          <div class="sc-val" id="stat-pending" style="color:var(--warn)">—</div>
+          <div class="sc-sub">awaiting decision</div>
+        </div>
+      </div>
+
+      <!-- Pending trades -->
+      <div id="pending-section"></div>
+
+      <!-- Traders grid -->
+      <div class="section-title">Traders</div>
+      <div class="traders-grid" id="traders-grid">
+        <div class="loading-row"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <!-- NEWS SOURCES PAGE -->
+    <div class="page" id="page-sources">
+      <div class="page-head">
+        <h1>News Sources</h1>
+        <p>Configure the data sources HELM ingests and view recent headlines.</p>
+      </div>
+
+      <!-- Add source form -->
+      <div class="flex-row mb-24">
+        <div class="section-title" style="flex:1;margin-bottom:0">Sources</div>
+        <button class="btn btn-sm btn-accent" onclick="toggleAddSource()">＋ Add Source</button>
+      </div>
+
+      <div class="add-source-form" id="add-source-form">
+        <div class="form-row-inline">
+          <div class="form-row">
+            <label>Kind</label>
+            <select id="src-kind" class="settings-select">
+              <option value="rss">RSS</option>
+              <option value="reddit">Reddit</option>
+              <option value="bluesky">Bluesky</option>
+              <option value="stocktwits">StockTwits</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Name</label>
+            <input id="src-name" type="text" placeholder="e.g. WSJ Markets RSS" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>URL / Config (JSON or URL string)</label>
+          <input id="src-url" type="text" placeholder='https://... or {"subreddit":"wallstreetbets"}' />
+        </div>
+        <div class="flex-row" style="gap:10px">
+          <button class="btn btn-sm btn-accent" onclick="addSource()">Add</button>
+          <button class="btn btn-sm" onclick="toggleAddSource()">Cancel</button>
+        </div>
+      </div>
+
+      <div class="panel mb-24">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Kind</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="sources-tbody">
+            <tr><td colspan="4" class="loading-row"><div class="spinner"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Recent News feed -->
+      <div class="section-title mt-20">Recent News</div>
+      <div class="panel">
+        <table class="data-table" id="news-table">
+          <thead>
+            <tr>
+              <th style="width:55%">Headline</th>
+              <th>Ticker</th>
+              <th>Source</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody id="news-tbody">
+            <tr><td colspan="4" class="loading-row"><div class="spinner"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- MEMORY PAGE -->
+    <div class="page" id="page-memory">
+      <div class="page-head">
+        <h1>Memory</h1>
+        <p>Lessons learned by each trader — the RAG store that informs every trade.</p>
+      </div>
+
+      <div class="memory-filters">
+        <div class="search-box">
+          <span class="sb-icon">⌕</span>
+          <input id="memory-q" type="text" placeholder="Search lessons…"
+            oninput="scheduleMemorySearch()" />
+        </div>
+        <select class="filter-select" id="memory-trader" onchange="loadMemory()">
+          <option value="">All traders</option>
+        </select>
+        <button class="btn btn-sm" onclick="loadMemory()">Refresh</button>
+      </div>
+
+      <div id="memory-count" style="font-size:12.5px;color:var(--muted);margin-bottom:14px"></div>
+      <div class="memory-list" id="memory-list">
+        <div class="loading-row"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS PAGE -->
+    <div class="page" id="page-settings">
+      <div class="page-head">
+        <h1>Settings</h1>
+        <p>Configure your AI model, risk posture, and trade approval preferences.</p>
+      </div>
+
+      <div class="settings-grid">
+        <!-- Model settings -->
+        <div class="settings-section">
+          <div class="ss-head">
+            <h3>AI Model</h3>
+            <p>Default model used by the manager agent and research.</p>
+          </div>
+          <div class="ss-body">
+            <div class="form-row">
+              <label>Research model</label>
+              <input id="set-research-model" type="text"
+                placeholder="e.g. anthropic/claude-haiku-4-5" />
+            </div>
+            <div class="form-row">
+              <label>Research cadence</label>
+              <select id="set-research-cadence" class="settings-select">
+                <option value="off">Off (manual only)</option>
+                <option value="15m">Every 15 minutes</option>
+                <option value="1h">Every hour</option>
+                <option value="4h">Every 4 hours</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Daily spend ceiling ($)</label>
+              <input id="set-daily-ceiling" type="number" min="0" step="0.5"
+                placeholder="5.00" />
+            </div>
+            <button class="btn btn-sm btn-accent" onclick="saveModelSettings()">Save</button>
+          </div>
+        </div>
+
+        <!-- Risk posture -->
+        <div class="settings-section">
+          <div class="ss-head">
+            <h3>Risk Posture</h3>
+            <p>Hard limits and automatic safety gates.</p>
+          </div>
+          <div class="ss-body">
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">Enable situation layer</div>
+                <div class="sr-desc">Inject market regime + social signals into trader context.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="set-situation" onchange="saveSituationToggle(this)" />
+                <div class="toggle-track"></div>
+                <div class="toggle-knob"></div>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">Pattern knowledge base</div>
+                <div class="sr-desc">Recall similar historical patterns before each decision.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="set-pattern-kb" onchange="savePatternKbToggle(this)" />
+                <div class="toggle-track"></div>
+                <div class="toggle-knob"></div>
+              </label>
+            </div>
+            <div class="form-row">
+              <label>Hard floor (max-loss % before auto-flatten)</label>
+              <input id="set-hard-floor" type="number" min="0" max="100" step="1"
+                placeholder="e.g. 20 (disabled if empty)" />
+            </div>
+            <button class="btn btn-sm btn-accent" onclick="saveRiskSettings()">Save</button>
+          </div>
+        </div>
+
+        <!-- Autonomy -->
+        <div class="settings-section">
+          <div class="ss-head">
+            <h3>Autonomy</h3>
+            <p>Control whether traders execute trades automatically or wait for approval.</p>
+          </div>
+          <div class="ss-body">
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">Require trade approval</div>
+                <div class="sr-desc">When enabled, every trade waits on the Accounts page for your OK.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="set-approval-mode" onchange="saveApprovalMode(this)" />
+                <div class="toggle-track"></div>
+                <div class="toggle-knob"></div>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">Trader memory recall</div>
+                <div class="sr-desc">Allow traders to read their own lesson memory before deciding.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="set-trader-memory" onchange="saveTraderMemory(this)" />
+                <div class="toggle-track"></div>
+                <div class="toggle-knob"></div>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="sr-text">
+                <div class="sr-label">Trader research access</div>
+                <div class="sr-desc">Allow traders to read shared research briefs before deciding.</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="set-trader-research" onchange="saveTraderResearch(this)" />
+                <div class="toggle-track"></div>
+                <div class="toggle-knob"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Embedding / storage -->
+        <div class="settings-section">
+          <div class="ss-head">
+            <h3>Storage &amp; Embeddings</h3>
+            <p>Vector store and local embedding model configuration.</p>
+          </div>
+          <div class="ss-body">
+            <div class="form-row">
+              <label>Vector store</label>
+              <select id="set-vstore" class="settings-select">
+                <option value="sqlite-vec">sqlite-vec (on-device)</option>
+                <option value="qdrant">Qdrant</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Embedding model</label>
+              <select id="set-embed-model" class="settings-select">
+                <option value="bge-small-en-v1.5">bge-small-en-v1.5 (fast, local)</option>
+                <option value="mxbai-embed-large">mxbai-embed-large (quality)</option>
+              </select>
+            </div>
+            <button class="btn btn-sm btn-accent" onclick="saveStorageSettings()">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content-area -->
+
+  <!-- Right: Chat dock -->
+  <div class="chat-dock" id="chat-dock">
+    <div class="chat-toggle" id="chat-toggle" onclick="toggleChat()" title="Toggle chat">‹</div>
+
+    <div class="chat-head">
+      <h3>Manager Chat</h3>
+      <div class="conv-actions">
+        <button class="btn btn-sm" title="Saved chats" onclick="toggleSavedChats()">⊞</button>
+        <button class="btn btn-sm" title="New conversation" onclick="newConversation()">＋</button>
+      </div>
+    </div>
+
+    <!-- Saved chats list (hidden by default) -->
+    <div id="saved-chats-panel" style="display:none;border-bottom:1px solid var(--border)">
+      <div class="saved-list" id="saved-chats-list">
+        <div class="loading-row"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-empty" id="chat-empty">
+        <div class="ce-icon">◎</div>
+        <div class="ce-title">Manager agent</div>
+        <div class="ce-sub">Ask about your portfolio, request research, or direct the traders.</div>
+      </div>
+    </div>
+
+    <div class="chat-input-row">
+      <textarea class="chat-textarea" id="chat-input" rows="1"
+        placeholder="Ask the manager…"
+        onkeydown="chatKeydown(event)" oninput="autoResize(this)"></textarea>
+      <button class="chat-send" id="chat-send" onclick="sendChat()" title="Send">↑</button>
+    </div>
+  </div>
+
+</div><!-- /layout -->
+
+<!-- ============================================================
+     DENY CONFIRMATION MODAL
+     ============================================================ -->
+<div class="modal-bg" id="deny-modal">
+  <div class="modal">
+    <h3>Deny Trade</h3>
+    <p>Add an optional note for the trader's record, then confirm denial.</p>
+    <div class="form-row">
+      <label>Note (optional)</label>
+      <input id="deny-note" type="text" placeholder="Reason for denial…" />
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeDenyModal()">Cancel</button>
+      <button class="btn btn-deny" onclick="confirmDeny()">Deny</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     TOAST AREA
+     ============================================================ -->
+<div id="toast-area"></div>
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+/* =============================================================
+   STATE
+   ============================================================= */
+let _user = null;
+let _convId = null;
+let _pendingDenyId = null;
+let _authMode = 'login'; // 'login' | 'signup'
+let _chatOpen = true;
+let _memSearchTimer = null;
+let _accountsData = [];
+let _tradersFromBench = [];
+
+/* =============================================================
+   BOOTSTRAP
+   ============================================================= */
+document.addEventListener('DOMContentLoaded', () => {
+  checkSession();
+});
+
+async function checkSession() {
+  try {
+    const r = await fetch('/api/me');
+    if (r.ok) {
+      _user = await r.json();
+      bootApp();
+    } else {
+      showAuthWall();
+    }
+  } catch {
+    showAuthWall();
+  }
+}
+
+function showAuthWall() {
+  document.getElementById('auth-wall').style.display = 'flex';
+}
+
+function hideAuthWall() {
+  document.getElementById('auth-wall').style.display = 'none';
+}
+
+function bootApp() {
+  hideAuthWall();
+  const av = document.getElementById('user-avatar');
+  const un = document.getElementById('user-name');
+  av.textContent = (_user.username || '?')[0].toUpperCase();
+  un.textContent = _user.username || _user.user_id;
+  loadPage('accounts');
+  loadSavedChats();
+}
+
+/* =============================================================
+   AUTH
+   ============================================================= */
+function toggleAuthMode() {
+  _authMode = _authMode === 'login' ? 'signup' : 'login';
+  const isSignup = _authMode === 'signup';
+  document.getElementById('auth-sub').textContent = isSignup
+    ? 'Create a new account.' : 'Sign in to your account.';
+  document.getElementById('auth-signup-fields').style.display = isSignup ? 'block' : 'none';
+  document.getElementById('auth-login-fields').style.display = isSignup ? 'none' : 'block';
+  document.getElementById('auth-switch-text').textContent = isSignup ? 'Have an account?' : 'No account?';
+  document.getElementById('auth-switch-link').textContent = isSignup ? 'Sign in' : 'Create one';
+  document.getElementById('auth-err').textContent = '';
+}
+
+async function doLogin() {
+  const username = document.getElementById('li-user').value.trim();
+  const password = document.getElementById('li-pass').value;
+  if (!username || !password) { authErr('Username and password required.'); return; }
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    if (!r.ok) { const d = await r.json(); authErr(d.detail || 'Login failed.'); return; }
+    _user = await r.json();
+    bootApp();
+  } catch { authErr('Network error.'); }
+}
+
+async function doSignup() {
+  const username = document.getElementById('su-user').value.trim();
+  const password = document.getElementById('su-pass').value;
+  if (!username || !password) { authErr('Username and password required.'); return; }
+  if (password.length < 6) { authErr('Password must be at least 6 characters.'); return; }
+  try {
+    const r = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    if (!r.ok) { const d = await r.json(); authErr(d.detail || 'Signup failed.'); return; }
+    _user = await r.json();
+    bootApp();
+  } catch { authErr('Network error.'); }
+}
+
+async function doLogout() {
+  await fetch('/api/auth/logout', {method:'POST'});
+  _user = null; _convId = null;
+  showAuthWall();
+}
+
+function authErr(msg) {
+  document.getElementById('auth-err').textContent = msg;
+}
+
+/* =============================================================
+   NAV / PAGES
+   ============================================================= */
+function showPage(name, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  if (btn) btn.classList.add('active');
+  loadPage(name);
+}
+
+function loadPage(name) {
+  if (name === 'accounts') loadAccounts();
+  else if (name === 'sources') { loadSources(); loadNews(); }
+  else if (name === 'memory') loadMemory();
+  else if (name === 'settings') loadSettings();
+}
+
+/* =============================================================
+   ACCOUNTS PAGE
+   ============================================================= */
+async function loadAccounts() {
+  const [accts, positions, pending] = await Promise.all([
+    apiFetch('/api/accounts').catch(() => []),
+    apiFetch('/api/positions').catch(() => []),
+    apiFetch('/api/pending-trades').catch(() => []),
+  ]);
+
+  _tradersFromBench = accts;
+
+  // Build positions map keyed by trader name
+  const posByTrader = {};
+  for (const p of positions) {
+    const owner = p.name || p.holder || '';
+    if (!posByTrader[owner]) posByTrader[owner] = [];
+    posByTrader[owner].push(p);
+  }
+
+  // Stats
+  let totalValue = 0, totalPnl = 0, activeCount = 0;
+  for (const a of accts) {
+    totalValue += Number(a.value || 0);
+    totalPnl += Number(a.ret || 0);
+    if (a.status === 'running') activeCount++;
+  }
+
+  document.getElementById('stat-value').textContent = accts.length
+    ? '$' + totalValue.toLocaleString('en-US', {minimumFractionDigits:0}) : '—';
+  const pnlEl = document.getElementById('stat-pnl');
+  pnlEl.textContent = accts.length
+    ? (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toLocaleString() : '—';
+  pnlEl.className = 'sc-val ' + (totalPnl >= 0 ? 'pos' : 'neg');
+  document.getElementById('stat-traders').textContent = activeCount || accts.length || '—';
+  const pendingEl = document.getElementById('stat-pending');
+  pendingEl.textContent = pending.length || '0';
+  pendingEl.style.color = pending.length ? 'var(--warn)' : 'var(--pos)';
+
+  // Pending approvals
+  renderPendingTrades(pending);
+
+  // Trader cards
+  const grid = document.getElementById('traders-grid');
+  if (!accts.length) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
+      <div class="es-icon">◈</div>
+      <div class="es-title">No traders yet</div>
+      <div class="es-sub">Start the bench to see your live traders here.</div>
+    </div>`;
+    return;
+  }
+
+  grid.innerHTML = accts.map(a => {
+    const initials = (a.name||'?').split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const statusClass = a.status === 'running' ? 'running' : a.status === 'paper' ? 'paper' : 'idle';
+    const retStr = formatRet(a.ret);
+    const retCls = Number(a.ret||0) >= 0 ? 'pos' : 'neg';
+    const posList = (posByTrader[a.name] || []).slice(0, 4);
+    const posHtml = posList.length
+      ? posList.map(p => `<div class="pos-row">
+          <span class="pos-sym">${esc(p.sym||p.symbol||'?')}</span>
+          <span class="pos-qty">${p.qty||''} shares</span>
+          <span class="pos-pnl ${Number(p.pnl||p.chg||0)>=0?'pos':'neg'}">${formatPnl(p.pnl||p.chg)}</span>
+        </div>`).join('')
+      : '<div style="color:var(--muted);font-size:13px;padding:4px 0">No open positions</div>';
+
+    return `<div class="trader-card">
+      <div class="tc-head">
+        <div class="tc-avatar">${esc(initials)}</div>
+        <div class="tc-info">
+          <div class="tc-name">${esc(a.name||a.m||'Trader')}</div>
+          <div class="tc-model">${esc(providerOf(a.prov||''))}</div>
+        </div>
+        <div class="tc-status ${statusClass}">${esc(a.status||'idle')}</div>
+      </div>
+      <div class="tc-stats">
+        <div class="tc-stat">
+          <div class="tcs-l">Value</div>
+          <div class="tcs-v">$${numFmt(a.value||0)}</div>
+        </div>
+        <div class="tc-stat">
+          <div class="tcs-l">Return</div>
+          <div class="tcs-v ${retCls}">${retStr}</div>
+        </div>
+        <div class="tc-stat">
+          <div class="tcs-l">Trades</div>
+          <div class="tcs-v">${a.trades||0}</div>
+        </div>
+      </div>
+      <div class="tc-positions">
+        <div class="tc-pos-title">Positions</div>
+        ${posHtml}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Update memory trader filter
+  const traderSel = document.getElementById('memory-trader');
+  const current = traderSel.value;
+  traderSel.innerHTML = '<option value="">All traders</option>' +
+    accts.map(a => `<option value="${esc(a.name)}"${a.name===current?' selected':''}>${esc(a.name)}</option>`).join('');
+}
+
+function renderPendingTrades(pending) {
+  const section = document.getElementById('pending-section');
+  if (!pending.length) { section.innerHTML = ''; return; }
+
+  section.innerHTML = `
+    <div class="approvals-banner">
+      <div class="ab-icon">⚠</div>
+      <div class="ab-text">
+        <div class="ab-title">${pending.length} trade${pending.length>1?'s':''} awaiting approval</div>
+        <div class="ab-sub">Review and approve or deny each proposed trade below.</div>
+      </div>
+    </div>
+    <div class="approval-list">
+      ${pending.map(pt => `<div class="approval-item" id="ap-${esc(pt.id)}">
+        <div class="ap-body">
+          <div class="ap-title">${esc(pt.t||pt.title||'Trade request')}</div>
+          <div class="ap-meta">${esc(pt.meta||pt.status||'')}</div>
+          <div class="ap-from">from ${esc(pt.m||pt.trader_id||'trader')}</div>
+          <div class="ap-actions">
+            <button class="btn btn-sm btn-approve" onclick="approveTrade('${esc(pt.id)}')">✓ Approve</button>
+            <button class="btn btn-sm btn-deny" onclick="openDenyModal('${esc(pt.id)}')">✗ Deny</button>
+          </div>
+        </div>
+      </div>`).join('')}
+    </div>
+    <div class="section-title" style="margin-top:8px"></div>
+  `;
+}
+
+async function approveTrade(id) {
+  const el = document.getElementById('ap-'+id);
+  if (el) el.style.opacity = '.5';
+  try {
+    const r = await fetch(`/api/pending-trades/${id}/approve`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'});
+    if (r.ok) { toast('Trade approved', 'ok'); loadAccounts(); }
+    else { const d = await r.json(); toast(d.detail||'Approve failed', 'err'); if(el) el.style.opacity='1'; }
+  } catch { toast('Network error', 'err'); if(el) el.style.opacity='1'; }
+}
+
+function openDenyModal(id) {
+  _pendingDenyId = id;
+  document.getElementById('deny-note').value = '';
+  document.getElementById('deny-modal').classList.add('open');
+}
+function closeDenyModal() {
+  _pendingDenyId = null;
+  document.getElementById('deny-modal').classList.remove('open');
+}
+async function confirmDeny() {
+  if (!_pendingDenyId) return;
+  const note = document.getElementById('deny-note').value.trim();
+  const id = _pendingDenyId;
+  closeDenyModal();
+  const el = document.getElementById('ap-'+id);
+  if (el) el.style.opacity = '.5';
+  try {
+    const r = await fetch(`/api/pending-trades/${id}/deny`, {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({note: note||null})});
+    if (r.ok) { toast('Trade denied', 'ok'); loadAccounts(); }
+    else { const d = await r.json(); toast(d.detail||'Deny failed', 'err'); if(el) el.style.opacity='1'; }
+  } catch { toast('Network error', 'err'); if(el) el.style.opacity='1'; }
+}
+
+/* =============================================================
+   NEWS SOURCES PAGE
+   ============================================================= */
+let _addSourceOpen = false;
+function toggleAddSource() {
+  _addSourceOpen = !_addSourceOpen;
+  document.getElementById('add-source-form').classList.toggle('open', _addSourceOpen);
+}
+
+async function loadSources() {
+  const sources = await apiFetch('/api/sources').catch(() => []);
+  const tbody = document.getElementById('sources-tbody');
+  if (!sources.length) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state" style="padding:24px">
+      <div class="es-icon" style="font-size:28px">⊞</div>
+      <div class="es-title" style="font-size:15px">No sources configured</div>
+      <div class="es-sub">Add an RSS feed, subreddit, or StockTwits source above.</div>
+    </div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = sources.map(s => `<tr>
+    <td><strong>${esc(s.name)}</strong></td>
+    <td><span class="badge badge-${s.kind}">${esc(s.kind)}</span></td>
+    <td><span class="badge ${s.enabled?'badge-on':'badge-off'}">${s.enabled?'Active':'Paused'}</span></td>
+    <td style="text-align:right">
+      <button class="btn btn-sm" onclick="toggleSource('${esc(s.id)}',${!s.enabled})"
+        style="margin-right:6px">${s.enabled?'Pause':'Enable'}</button>
+      <button class="btn btn-sm" onclick="deleteSource('${esc(s.id)}')"
+        style="border-color:color-mix(in srgb,var(--neg) 30%,var(--border));color:var(--neg)">Remove</button>
+    </td>
+  </tr>`).join('');
+}
+
+async function addSource() {
+  const kind = document.getElementById('src-kind').value;
+  const name = document.getElementById('src-name').value.trim();
+  const rawUrl = document.getElementById('src-url').value.trim();
+  if (!name) { toast('Name is required', 'err'); return; }
+  let config = {};
+  if (rawUrl) {
+    try { config = JSON.parse(rawUrl); }
+    catch { config = {url: rawUrl}; }
+  }
+  const r = await fetch('/api/sources', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({kind, name, config, enabled: true})
+  });
+  if (r.ok) {
+    toast('Source added', 'ok');
+    document.getElementById('src-name').value = '';
+    document.getElementById('src-url').value = '';
+    toggleAddSource();
+    loadSources();
+  } else { const d = await r.json(); toast(d.detail||'Failed', 'err'); }
+}
+
+async function toggleSource(id, enabled) {
+  const sources = await apiFetch('/api/sources').catch(() => []);
+  const src = sources.find(s => s.id === id);
+  if (!src) return;
+  await fetch('/api/sources', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({id, kind:src.kind, name:src.name, config:src.config, enabled})
+  });
+  loadSources();
+}
+
+async function deleteSource(id) {
+  if (!confirm('Remove this source?')) return;
+  const r = await fetch(`/api/sources/${id}`, {method:'DELETE'});
+  if (r.ok) { toast('Source removed', 'ok'); loadSources(); }
+  else toast('Failed to remove', 'err');
+}
+
+async function loadNews() {
+  const data = await apiFetch('/api/news?limit=30').catch(() => ({items:[]}));
+  const tbody = document.getElementById('news-tbody');
+  const items = data.items || [];
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state" style="padding:24px">
+      <div class="es-icon" style="font-size:28px">⊞</div>
+      <div class="es-title" style="font-size:15px">No news yet</div>
+      <div class="es-sub">Add a source and wait for the ingest worker to run.</div>
+    </div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items.map(item => `<tr>
+    <td>
+      ${item.url
+        ? `<a href="${esc(item.url)}" target="_blank" rel="noopener"
+            style="color:var(--text);text-decoration:none;hover:color:var(--accent)"
+            title="${esc(item.title)}">${esc(truncate(item.title||'',90))}</a>`
+        : esc(truncate(item.title||'',90))}
+    </td>
+    <td>${item.ticker ? `<span class="tag">${esc(item.ticker)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+    <td><code style="font-size:11px;color:var(--muted)">${esc(item.source||'')}</code></td>
+    <td style="color:var(--muted);font-size:12px;white-space:nowrap">${relTime(item.ts)}</td>
+  </tr>`).join('');
+}
+
+/* =============================================================
+   MEMORY PAGE
+   ============================================================= */
+function scheduleMemorySearch() {
+  clearTimeout(_memSearchTimer);
+  _memSearchTimer = setTimeout(loadMemory, 350);
+}
+
+async function loadMemory() {
+  const q = (document.getElementById('memory-q').value || '').trim();
+  const traderId = document.getElementById('memory-trader').value;
+  const list = document.getElementById('memory-list');
+  const countEl = document.getElementById('memory-count');
+  list.innerHTML = '<div class="loading-row"><div class="spinner"></div></div>';
+
+  const params = new URLSearchParams({k:'40'});
+  if (q) params.set('q', q);
+  if (traderId) params.set('trader_id', traderId);
+
+  const data = await apiFetch('/api/memory?' + params).catch(() => ({lessons:[], total:0, source:'empty'}));
+  const lessons = data.lessons || [];
+
+  countEl.textContent = data.source === 'empty'
+    ? 'Memory store not running (engine not started).'
+    : `${data.total} lesson${data.total !== 1 ? 's' : ''} ${q ? '(search results)' : ''}`;
+
+  if (!lessons.length) {
+    list.innerHTML = `<div class="empty-state">
+      <div class="es-icon">◎</div>
+      <div class="es-title">${data.source === 'empty' ? 'Memory store offline' : 'No lessons yet'}</div>
+      <div class="es-sub">${data.source === 'empty'
+        ? 'Start the trading engine with memory enabled to see lessons here.'
+        : q ? 'No lessons match your search.' : 'Traders will accumulate lessons as they trade.'}</div>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = lessons.map(l => {
+    const scoreBadge = l.score != null
+      ? `<span class="mi-score">score ${l.score.toFixed(3)}</span>` : '';
+    const tagsHtml = (l.tags||[]).length
+      ? '<div class="mi-tags">' + l.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('') + '</div>'
+      : '';
+    return `<div class="memory-item">
+      <div class="mi-head">
+        <span class="mi-trader">◈ ${esc(l.trader_id||'unknown')}</span>
+        ${scoreBadge}
+        <span class="mi-ts">${relTime(l.updated_at)}</span>
+      </div>
+      <div class="mi-text">${esc(l.text)}</div>
+      ${tagsHtml}
+    </div>`;
+  }).join('');
+}
+
+/* =============================================================
+   SETTINGS PAGE
+   ============================================================= */
+async function loadSettings() {
+  const settings = await apiFetch('/api/settings').catch(() => ({}));
+  setVal('set-research-model', settings.research_model || '');
+  setVal('set-research-cadence', settings.research_cadence || 'off');
+  setVal('set-daily-ceiling', settings.daily_usd_ceiling ?? 5);
+  setVal('set-vstore', settings.vstore || 'sqlite-vec');
+  setVal('set-embed-model', settings.embed_model || 'bge-small-en-v1.5');
+  setVal('set-hard-floor', settings.hard_floor_pct ?? '');
+  setChecked('set-situation', !!settings.situation_enabled);
+  setChecked('set-pattern-kb', !!settings.pattern_kb_enabled);
+  setChecked('set-approval-mode', !!settings.require_approval);
+  setChecked('set-trader-memory', settings.trader_memory_recall_k > 0);
+  setChecked('set-trader-research', !!settings.trader_research_read);
+}
+
+async function putSettings(patch) {
+  const r = await fetch('/api/settings', {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(patch)
+  });
+  if (r.ok) toast('Settings saved', 'ok');
+  else { const d = await r.json(); toast(d.detail||'Save failed', 'err'); }
+}
+
+function saveModelSettings() {
+  putSettings({
+    research_model: getVal('set-research-model') || null,
+    research_cadence: getVal('set-research-cadence'),
+    daily_usd_ceiling: parseFloat(getVal('set-daily-ceiling')) || 5.0,
+  });
+}
+function saveRiskSettings() {
+  const hf = getVal('set-hard-floor');
+  putSettings({ hard_floor_pct: hf ? parseFloat(hf) : null });
+}
+function saveSituationToggle(el) { putSettings({situation_enabled: el.checked}); }
+function savePatternKbToggle(el) { putSettings({pattern_kb_enabled: el.checked}); }
+function saveApprovalMode(el) { putSettings({require_approval: el.checked}); }
+function saveTraderMemory(el) { putSettings({trader_memory_recall_k: el.checked ? 5 : 0}); }
+function saveTraderResearch(el) { putSettings({trader_research_read: el.checked}); }
+function saveStorageSettings() {
+  putSettings({
+    vstore: getVal('set-vstore'),
+    embed_model: getVal('set-embed-model'),
+  });
+}
+
+/* =============================================================
+   CHAT DOCK
+   ============================================================= */
+function toggleChat() {
+  _chatOpen = !_chatOpen;
+  const dock = document.getElementById('chat-dock');
+  const toggle = document.getElementById('chat-toggle');
+  dock.classList.toggle('collapsed', !_chatOpen);
+  toggle.textContent = _chatOpen ? '›' : '‹';
+  toggle.style.transform = _chatOpen ? 'translateY(-50%)' : 'translateY(-50%) scaleX(-1)';
+}
+
+function newConversation() {
+  _convId = null;
+  document.getElementById('chat-messages').innerHTML =
+    document.querySelector('.chat-empty').outerHTML;
+  document.getElementById('saved-chats-panel').style.display = 'none';
+  toast('New conversation started', 'ok');
+}
+
+function toggleSavedChats() {
+  const p = document.getElementById('saved-chats-panel');
+  if (p.style.display === 'none') {
+    p.style.display = 'block';
+    loadSavedChats();
+  } else {
+    p.style.display = 'none';
+  }
+}
+
+async function loadSavedChats() {
+  const list = document.getElementById('saved-chats-list');
+  const chats = await apiFetch('/api/chats').catch(() => []);
+  if (!chats.length) {
+    list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">No saved conversations</div>';
+    return;
+  }
+  list.innerHTML = chats.map(c => `<div class="saved-item" onclick="loadConversation('${esc(c.id)}','${esc(c.title||'Untitled')}')">
+    <span class="si-title">${esc(c.title||'Untitled')}</span>
+    <button class="si-del" title="Delete" onclick="event.stopPropagation();deleteChat('${esc(c.id)}')">✕</button>
+  </div>`).join('');
+}
+
+async function deleteChat(id) {
+  await fetch(`/api/chats/${id}`, {method:'DELETE'});
+  loadSavedChats();
+}
+
+function loadConversation(id, title) {
+  _convId = id;
+  document.getElementById('saved-chats-panel').style.display = 'none';
+  const msgs = document.getElementById('chat-messages');
+  msgs.innerHTML = `<div style="padding:8px 0;text-align:center;font-size:12px;color:var(--muted)">${esc(title)}</div>`;
+  toast('Conversation loaded', 'ok');
+}
+
+function chatKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+async function sendChat() {
+  const ta = document.getElementById('chat-input');
+  const msg = ta.value.trim();
+  if (!msg) return;
+
+  const sendBtn = document.getElementById('chat-send');
+  sendBtn.disabled = true;
+  ta.value = '';
+  ta.style.height = '';
+
+  const msgs = document.getElementById('chat-messages');
+  const empty = msgs.querySelector('.chat-empty');
+  if (empty) empty.remove();
+
+  appendMsg('user', msg);
+  const thinking = appendMsg('assistant', '…', 'msg-thinking');
+
+  try {
+    const r = await fetch('/api/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message: msg, conversation_id: _convId || null})
+    });
+    const data = await r.json();
+    thinking.remove();
+    if (r.ok) {
+      _convId = data.conversation_id;
+      appendMsg('assistant', data.reply);
+    } else {
+      appendMsg('assistant', '⚠ ' + (data.detail || 'Error'));
+    }
+  } catch {
+    thinking.remove();
+    appendMsg('assistant', '⚠ Network error');
+  } finally {
+    sendBtn.disabled = false;
+    ta.focus();
+  }
+}
+
+function appendMsg(role, text, extraClass) {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg msg-' + role;
+  const now = new Date().toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
+  div.innerHTML = `<div class="msg-bubble${extraClass?' '+extraClass:''}">${escHtml(text)}</div>
+    <div class="msg-ts">${now}</div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+/* =============================================================
+   UTILITIES
+   ============================================================= */
+async function apiFetch(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+function esc(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function escHtml(str) {
+  return esc(str).replace(/\n/g,'<br>');
+}
+
+function truncate(str, n) {
+  return str.length > n ? str.slice(0, n) + '…' : str;
+}
+
+function numFmt(n) {
+  const v = Number(n);
+  if (isNaN(v)) return '—';
+  if (v >= 1e6) return (v/1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v/1e3).toFixed(1) + 'K';
+  return v.toLocaleString('en-US', {minimumFractionDigits:0,maximumFractionDigits:2});
+}
+
+function formatRet(ret) {
+  const v = Number(ret||0);
+  if (isNaN(v)) return '—';
+  const sign = v >= 0 ? '+' : '';
+  return sign + '$' + Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:0});
+}
+
+function formatPnl(n) {
+  const v = Number(n||0);
+  if (isNaN(v)) return '—';
+  return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2);
+}
+
+function providerOf(model) {
+  if (!model) return '';
+  return model.includes('/') ? model.split('/')[0] : model;
+}
+
+function relTime(ts) {
+  if (!ts) return '';
+  // Accept unix timestamp (float) or ISO string
+  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+  if (isNaN(d)) return String(ts);
+  const diff = Date.now() - d.getTime();
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff/3600000) + 'h ago';
+  return d.toLocaleDateString();
+}
+
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val;
+}
+function getVal(id) {
+  const el = document.getElementById(id);
+  return el ? el.value : '';
+}
+function setChecked(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.checked = !!val;
+}
+
+function toast(msg, type='ok') {
+  const area = document.getElementById('toast-area');
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  area.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+</script>
+</body>
+</html>
