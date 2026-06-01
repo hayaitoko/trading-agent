@@ -45,12 +45,18 @@ router = APIRouter(tags=["bench"])
 
 class CreateTrader(BaseModel):
     """Add-trader wizard payload. ``cash`` sets the competitor's starting paper
-    balance and ``style`` is folded into its trader prompt (both honored)."""
+    balance and ``style`` is folded into its trader prompt (both honored).
+
+    ``digest_mode`` (optional bool, default False): when True the trader is
+    created in DIGEST mode (analyst-digest tier); when False/absent the trader
+    runs in PULL mode (current default behaviour, unchanged).
+    """
 
     model: str
     name: str | None = None
     cash: float | None = None
     style: str | None = None
+    digest_mode: bool = False
 
 
 # --- app.state plumbing ------------------------------------------------------
@@ -318,8 +324,17 @@ def create_account(
         resolved = get_persona_mandate(style.strip())
         if resolved is not None:
             style = resolved
+    # Build intelligence_flags from the request: digest_mode goes in as an
+    # explicit per-trader override (resolution order: this flag → per-user
+    # setting → default False, handled inside controller.add_model).
+    intelligence_flags: dict[str, bool] | None = None
+    if body.digest_mode:
+        intelligence_flags = {"digest_mode": True}
     try:
-        name = controller.add_model(model, body.name, cash=body.cash, style=style)
+        name = controller.add_model(
+            model, body.name, cash=body.cash, style=style,
+            intelligence_flags=intelligence_flags,
+        )
     except ValueError as exc:  # duplicate competitor name
         raise HTTPException(status_code=409, detail=str(exc))
 

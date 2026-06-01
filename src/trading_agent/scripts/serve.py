@@ -380,6 +380,21 @@ def build_cockpit(
     # and the trader decision path.
     _attach_intelligence(app, base_dir, owner_user_id, transport)
 
+    # WS-Digest: build a shared DigestStore and attach it to app.state so the
+    # BenchController (and subsequently add-trader) can activate digest mode on
+    # a per-trader basis. The store reuses the same vector DB + embedder that
+    # _attach_intelligence wired for research / memory, so no second connection
+    # is opened.  Digest mode defaults OFF globally; the daemon running digests
+    # is harmless when no trader has digest_mode=True.
+    from ..digest.store import DigestStore
+
+    _digest_store = DigestStore(
+        app.state.db,
+        vector=getattr(app.state, "vstore", None),
+        embedder=getattr(app.state, "embedder", None),
+    )
+    app.state.digest_store = _digest_store
+
     client = openrouter_client
     if client is None:
         try:
@@ -423,6 +438,8 @@ def build_cockpit(
             manager_agent=look_deps["manager_agent"],
             manager_ref_fn=look_deps["manager_ref_fn"],
             research_run_fn=look_deps["research_run_fn"],
+            # WS-Digest: shared digest store (None → digest mode always off).
+            digest_store=_digest_store,
         )
     return app
 
@@ -537,6 +554,11 @@ def _attach_intelligence(
     app.state.reflector = (
         Reflector(memory, settings=settings, registry=registry) if memory is not None else None
     )
+    # Expose the shared vector store + embedder on app.state so downstream
+    # components (e.g. DigestStore in build_cockpit) can reuse the same vector DB
+    # without opening a second connection.
+    app.state.vstore = vstore
+    app.state.embedder = embedder
     return owner
 
 
@@ -714,12 +736,30 @@ def cockpit_main(argv: list[str] | None = None) -> int:
     else:
         print("research: autonomous daemon not started (no sources or endpoints configured)")
 
+    # WS-Digest: analyst-digest daemon — compiles digests every 15 min and fires
+    # an off-cadence wake when a material event is detected.  Piggybacks on the
+    # research bombshell hook in the BenchController.  Gracefully absent when
+    # app.state.digest_store is not set (e.g. plain create_cockpit_app path).
+    from ..digest.daemon import build_digest_daemon
+
+    _digest_controller = getattr(app.state, "bench_controller", None)
+    digest_daemon = build_digest_daemon(app.state)
+    if digest_daemon is not None:
+        if _digest_controller is not None:
+            digest_daemon.set_bombshell_callback(_digest_controller.on_research_bombshell)
+        digest_daemon.start()
+        print("digest: analyst-digest daemon started (15-min cadence, event-wake wired)")
+    else:
+        print("digest: daemon not started (digest_store absent or prerequisites missing)")
+
     print("=== trading-agent cockpit (multi-user) ===")
     print(f"open  http://{args.host}:{args.port}/   (Ctrl-C to stop)")
     try:
         uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     finally:
         stop.set()
+        if digest_daemon is not None:
+            digest_daemon.stop()
         if research_daemon is not None:
             research_daemon.stop()
         if controller is not None:
