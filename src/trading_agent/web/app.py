@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from ..config.db import Database
 from ..config.endpoints import EndpointRegistry
 from ..config.settings_store import SettingsStore
+from .routers import admin as admin_router
 from .routers import approvals as approvals_router
 from .routers import bench as bench_router
 from .routers import calibration as calibration_router
@@ -78,9 +79,11 @@ _COCKPIT_ROUTERS = (
     quote_stream_router.router,
     traces_router.router,
     forecast_router.router,
-    # Customer product UI + memory API (mounted on every cockpit app).
+    # Customer product UI + memory API + sysadmin admin console (mounted on
+    # every cockpit app).
     memory_router.router,
     customer_router.router,
+    admin_router.router,
 )
 
 

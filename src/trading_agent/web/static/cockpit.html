@@ -823,6 +823,18 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 .ep-rm{ background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; border-radius:5px; padding:2px 6px; }
 .ep-rm:hover{ color:var(--neg); background:color-mix(in srgb,var(--neg) 14%,transparent); }
 
+/* admin console */
+.admin-sys{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:6px; margin-bottom:14px; }
+.admin-kv{ background:var(--panel-hi); border:1px solid var(--border); border-radius:8px; padding:8px 11px; display:flex; flex-direction:column; gap:2px; }
+.admin-k{ font-family:var(--mono); font-size:10px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); }
+.admin-v{ font-family:var(--mono); font-size:14px; font-weight:600; color:var(--text); }
+.admin-table{ width:100%; border-collapse:collapse; font-size:12.5px; margin-top:4px; }
+.admin-table th{ text-align:left; padding:6px 8px; font-family:var(--mono); font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--border); }
+.admin-table td{ padding:8px 8px; border-bottom:1px solid color-mix(in srgb,var(--border) 50%,transparent); vertical-align:middle; }
+.admin-table tr:last-child td{ border-bottom:none; }
+.admin-table tr:hover td{ background:var(--panel-hi); }
+.ok-txt{ color:var(--pos) !important; } .muted-txt{ color:var(--muted) !important; }
+
 /* palette popover */
 .fab-theme{ position:fixed; bottom:22px; right:22px; z-index:90; width:46px; height:46px; border-radius:50%;
   background:var(--panel); border:var(--hair); color:var(--text); cursor:pointer; font-size:18px;
@@ -1676,7 +1688,8 @@ async function loadSettings(){
 }
 function loadForTab(tab){
   ({ accounts:loadAccounts, positions:loadPositions, leaderboard:loadLeaderboard,
-     approvals:loadApprovals, audit:loadActivity, risk:loadRisk, settings:loadEndpoints,
+     approvals:loadApprovals, audit:loadActivity, risk:loadRisk,
+     settings:()=>{ loadEndpoints(); adminLoad(); },
      research:loadResearch
    }[tab] || (()=>{}))();
 }
@@ -1911,6 +1924,7 @@ const VIEWS = {
           <div class="collapse"><div class="collapse-head" onclick="toggleCollapse(this)">Recent activity · ${net.length} <span class="chev">▶</span></div>
             <div class="collapse-body" style="padding:6px 4px">${net.map(r=>`<div class="log"><span class="lv ${r[0]}">${r[0]==="err"?"retry":"ok"}</span><span class="mono">${r[1]}</span><span>${r[2]}</span><span class="ts">${r[4]} · ${r[5]}</span></div>`).join("")}</div></div></div>
         ${faqPcardHTML()}
+        ${adminConsolePcardHTML()}
         <div class="pcard"><h3>Reset</h3><div class="desc">Clears your notes, custom limits and theme from this browser. Your accounts aren't touched.</div>
           <div class="frow"><button class="btn danger" onclick="clearLocal()">Reset saved preferences</button></div></div>
       </div>`;
@@ -1920,7 +1934,7 @@ function head(kick,title,sub){ return `<div class="vhead"><div class="kick">${ki
 const FAQ=[
   ["How do I customize my dashboard?",`Click the ◑ button (bottom-right) → <b>Customize tabs</b>. Drag tiles to rearrange, resize from the edges, double-click a tile title to rename, and hit <b>+ Add tile</b> to drop in anything from the catalog. Hold <b>⇧ Shift</b> while dragging to free-place (leave gaps); otherwise tiles snap to align with their neighbours.`],
   ["How do windows work?",`Clicking a card (account, position, ticker) opens it as a floating window. Each window has three controls top-right: <b>–</b> minimize to the dock at the bottom, <b>⤢</b> fullscreen (charts get an in-depth Yahoo-style page), <b>×</b> close. You can open many at once and drag them anywhere to compare side-by-side. The dock keeps minimized windows alive — re-opening the same one just pops it back up.`],
-  ["How do I send a chat?",`Type in the manager box on the left rail. <b>Enter</b> sends, <b>Shift + Enter</b> for a new line. Ask things like “show me how Apple is doing” — the manager has tools that open charts and surface info on your dashboard.`],
+  ["How do I send a chat?",`Type in the manager box on the left rail. <b>Enter</b> sends, <b>Shift + Enter</b> for a new line. Ask things like "show me how Apple is doing" — the manager has tools that open charts and surface info on your dashboard.`],
   ["How do I halt all trading in a hurry?",`The big red <b>HALT TRADERS</b> button in the Risk tab (or as an addable tile) pauses every trader instantly. Tap again to resume.`],
   ["Where are my customisations saved?",`Per user, on the server (and mirrored locally) — tab layouts, tile options, watchlist symbols, notes and theme all follow your account between browsers and devices.`],
   ["How do I reset a tab or everything?",`In Customize mode the bottom bar has <b>Reset tab</b> (this tab only) and <b>Reset all</b> (everything back to the factory layout).`],
@@ -1929,6 +1943,59 @@ function faqPcardHTML(){
   return `<div class="pcard"><h3>Help &amp; FAQ</h3><div class="desc">How to drive the cockpit — and how to replay the tour.</div>
     <div class="frow" style="margin:8px 0 6px"><button class="btn ghost" onclick="startTour(true)">▶ Replay walkthrough</button></div>
     <div class="faq">${FAQ.map(([q,a])=>`<details class="faq-q"><summary>${esc(q)}</summary><div class="faq-a">${a}</div></details>`).join("")}</div></div>`;
+}
+
+/* ===================== ADMIN CONSOLE (sysadmin back-office: /api/admin/*) =====================
+   Provision users, assign API keys, view system state.
+   Each action calls the /api/admin/* router and re-renders the section. */
+let _adminUsers=[], _adminSystem=null;
+async function adminLoad(){
+  try{ const d=await api("/api/admin/users"); _adminUsers=Array.isArray(d)?d:[]; }catch(e){ _adminUsers=[]; if(e.status===401&&booted) return signedOut(); }
+  try{ const d=await api("/api/admin/system"); _adminSystem=d; }catch(e){ _adminSystem=null; }
+  const box=document.getElementById("adminBox"); if(box) box.innerHTML=adminBoxHTML();
+}
+function adminBoxHTML(){
+  const sys=_adminSystem||{};
+  const sysHTML=`<div class="admin-sys">
+    <div class="admin-kv"><span class="admin-k">Users</span><span class="admin-v">${sys.users??'—'}</span></div>
+    <div class="admin-kv"><span class="admin-k">Active sessions</span><span class="admin-v">${sys.active_sessions??'—'}</span></div>
+    <div class="admin-kv"><span class="admin-k">Endpoints</span><span class="admin-v">${sys.endpoints??'—'}</span></div>
+    <div class="admin-kv"><span class="admin-k">Engine (bench)</span><span class="admin-v ${sys.engine?.bench?'ok-txt':'muted-txt'}">${sys.engine?.bench?'running':'offline'}</span></div>
+    <div class="admin-kv"><span class="admin-k">OpenRouter key</span><span class="admin-v ${sys.env?.OPENROUTER_API_KEY?'ok-txt':'muted-txt'}">${sys.env?.OPENROUTER_API_KEY?'set':'not set'}</span></div>
+    <div class="admin-kv"><span class="admin-k">Alpaca key</span><span class="admin-v ${sys.env?.ALPACA_API_KEY?'ok-txt':'muted-txt'}">${sys.env?.ALPACA_API_KEY?'set':'not set'}</span></div>
+  </div>`;
+  const usersHTML=_adminUsers.length?`<table class="admin-table"><thead><tr><th>Username</th><th>User ID</th><th>Endpoints</th><th>Created</th><th></th></tr></thead><tbody>
+    ${_adminUsers.map(u=>`<tr><td><b>${esc(u.username)}</b></td><td class="mono" style="font-size:11px">${esc(u.id.slice(0,12))}…</td><td>${u.endpoint_count}</td>
+      <td class="ts">${u.created_at?new Date(u.created_at*1000).toLocaleDateString():''}</td>
+      <td><button class="btn ghost" style="padding:4px 8px;font-size:11px" onclick="adminResetPw('${esc(u.id)}','${esc(u.username)}')">Reset pw</button>
+          <button class="btn ghost" style="padding:4px 8px;font-size:11px" onclick="adminEditEndpoints('${esc(u.id)}','${esc(u.username)}')">Endpoints</button></td></tr>`).join("")}
+  </tbody></table>` : `<div class="fin-empty">No users yet.</div>`;
+  return sysHTML+usersHTML;
+}
+async function adminCreateUser(){ const u=prompt("New username:"); if(!u) return; const p=prompt("Password:"); if(!p) return;
+  try{ await api("/api/admin/users",{method:"POST",body:{username:u.trim(),password:p}});
+    toast("User created",u,"good"); await adminLoad(); }
+  catch(e){ toast("Error",e.message,"bad"); } }
+async function adminResetPw(uid,username){ const p=prompt("New password for "+username+":"); if(!p) return;
+  try{ await api("/api/admin/users/"+encodeURIComponent(uid)+"/reset-password",{method:"POST",body:{new_password:p}});
+    toast("Password reset",username+" sessions invalidated","good"); }
+  catch(e){ toast("Error",e.message,"bad"); } }
+async function adminEditEndpoints(uid,username){
+  try{ const eps=await api("/api/admin/users/"+encodeURIComponent(uid)+"/endpoints");
+    const list=(Array.isArray(eps)?eps:[]).map(e=>`${e.name} (${e.type}) — ${e.key_preview||'no key'} [${e.enabled?'on':'off'}]`).join("\n")||"(none)";
+    alert("Endpoints for "+username+":\n\n"+list+"\n\n(Manage via /api/admin/users/"+uid+"/endpoints)"); }
+  catch(e){ toast("Error",e.message,"bad"); } }
+function adminConsolePcardHTML(){
+  return `<div class="pcard" id="adminCard">
+    <h3>Admin console <span style="font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400">· /api/admin/*</span></h3>
+    <div class="desc">Provision users, assign API keys, and inspect system state. All actions call the live /api/admin/* router.</div>
+    <div id="adminBox" style="margin:12px 0">${adminBoxHTML()}</div>
+    <div class="frow" style="margin-top:8px;gap:8px">
+      <button class="btn ghost" onclick="adminLoad()">↻ Refresh</button>
+      <button class="btn ghost" onclick="adminCreateUser()">+ New user</button>
+      <a class="btn ghost" href="/api/admin/system" target="_blank" rel="noopener" style="text-decoration:none">System JSON ↗</a>
+      <a class="btn ghost" href="/api/admin/storage" target="_blank" rel="noopener" style="text-decoration:none">Storage ↗</a>
+    </div></div>`;
 }
 function limitRow(l,i){
   const w=Math.min(100, Math.round(l.value/l.cap*100)), c=w>=90?"crit":(w>=70?"warn":"");
@@ -2793,31 +2860,75 @@ async function loadFundamentals(sym, root){
 function fmtNum(v){ v=+v||0; if(v>=1e9)return (v/1e9).toFixed(2)+"B"; if(v>=1e6)return (v/1e6).toFixed(2)+"M"; if(v>=1e3)return (v/1e3).toFixed(1)+"K"; return String(Math.round(v)); }
 function fmtCap(v){ v=+v; if(v>=1e12)return "$"+(v/1e12).toFixed(2)+"T"; if(v>=1e9)return "$"+(v/1e9).toFixed(2)+"B"; if(v>=1e6)return "$"+(v/1e6).toFixed(2)+"M"; return "$"+fmtNum(v); }
 
-/* ===================== FINANCE TILES (Yahoo-Finance surface) =====================
-   All consume EXISTING endpoints and degrade gracefully:
-     quote/watchlist → /api/history (Alpaca)   · news → /api/research (briefs)
-     search          → bundled symbols.json    · movers → derived from positions
-   Missing backend pieces (ticker-search API, batch /api/quotes, WS stream,
-   /api/news headlines, /api/movers) are documented in the plan. */
+/* ===================== FINANCE TILES (Markets surface) =====================
+   All consume live backend endpoints and degrade gracefully to mock/empty:
+     quote/watchlist → /api/quotes (batch) + /ws/quotes WebSocket (live ticks)
+     news            → /api/news (ingested headlines, falls back to /api/research briefs)
+     search          → /api/symbols (server-side search of bundled universe)
+     movers          → /api/movers (bench universe sorted by |Δ%|)
+   LIVE.<key> flags track which surfaces are sourced from the server vs mock.
+   Never show a "LIVE" badge when the data source is mock/empty — check LIVE[key]. */
 let SYMBOLS=[]; try{ SYMBOLS=JSON.parse(document.getElementById("symbols-data").textContent); }catch(e){ SYMBOLS=[]; }
 
-/* ---- Ticker search ---- */
+/* ---- /ws/quotes WebSocket (replaces 45-second /api/history polling for watchlist) ----
+   The bus is attached by the serve process; if the WebSocket closes or is unavailable
+   the watchlist falls back to the 45-second poll via wlLoad() as before. */
+let _wsq=null, _wsqSubs=new Set(), _wsqHandlers={};
+function wsqConnect(){
+  if(_wsq&&(_wsq.readyState===WebSocket.OPEN||_wsq.readyState===WebSocket.CONNECTING)) return;
+  const tok=authToken();
+  const url=(location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/quotes"+(tok?"?token="+encodeURIComponent(tok):"");
+  try{ _wsq=new WebSocket(url); }catch(e){ _wsq=null; return; }
+  _wsq.onopen=()=>{ if(_wsqSubs.size) _wsq.send(JSON.stringify({action:"subscribe",symbols:[..._wsqSubs]})); };
+  _wsq.onmessage=e=>{ try{ const d=JSON.parse(e.data); if(d.symbol&&d.price!=null){ const h=_wsqHandlers[d.symbol]; if(h) h(d); } }catch(_){} };
+  _wsq.onclose=()=>{ _wsq=null; };
+  _wsq.onerror=()=>{ _wsq=null; };
+}
+function wsqSubscribe(syms,handler){ syms.forEach(s=>{ _wsqSubs.add(s); _wsqHandlers[s]=handler; });
+  if(_wsq&&_wsq.readyState===WebSocket.OPEN) _wsq.send(JSON.stringify({action:"subscribe",symbols:syms}));
+  else wsqConnect(); }
+function wsqUnsubscribe(syms){ syms.forEach(s=>{ _wsqSubs.delete(s); delete _wsqHandlers[s]; });
+  if(_wsq&&_wsq.readyState===WebSocket.OPEN) _wsq.send(JSON.stringify({action:"unsubscribe",symbols:syms})); }
+
+/* ---- LIVE-vs-MOCK badge helper ---- */
+function liveBadgeHTML(key){ return LIVE[key]===true?'<span class="live-badge">LIVE</span>':'<span class="live-badge mock">MOCK</span>'; }
+/* CSS for live/mock badge injected once */
+(function(){
+  if(document.getElementById("live-badge-css")) return;
+  const s=document.createElement("style"); s.id="live-badge-css";
+  s.textContent=`.live-badge{font-family:var(--mono);font-size:9px;letter-spacing:.1em;padding:1px 5px;border-radius:3px;font-weight:700;vertical-align:middle;margin-left:4px;text-transform:uppercase;background:color-mix(in srgb,var(--pos) 18%,transparent);color:var(--pos);border:1px solid color-mix(in srgb,var(--pos) 30%,transparent)}.live-badge.mock{background:color-mix(in srgb,var(--muted) 12%,transparent);color:var(--muted);border-color:color-mix(in srgb,var(--muted) 20%,transparent)}`;
+  document.head.appendChild(s);
+})();
+
+/* ---- Ticker search (server-side /api/symbols; client SYMBOLS array as offline fallback) ---- */
 TILES.search={ title:"Ticker search", group:"Markets", icon:"🔎", w:4, h:10,
   desc:"Find any ticker or company and open its quote",
-  render(){ return `<div class="fin-title">Ticker search</div>
+  render(){ return `<div class="fin-title">Ticker search${liveBadgeHTML("symbols")}</div>
     <div class="fsearch"><span class="si">🔎</span>
     <input placeholder="Search ticker or company…" autocomplete="off" oninput="searchType(this)" onkeydown="searchKey(event,this)"></div>
     <div class="fsearch-res"></div>`; } };
 function searchResEl(inp){ return inp.closest(".fsearch").parentNode.querySelector(".fsearch-res"); }
-function searchType(inp){ const q=inp.value.trim().toLowerCase(), res=searchResEl(inp);
+let _searchTimer=null;
+function searchType(inp){ const q=inp.value.trim(), res=searchResEl(inp);
   if(!q){ res.innerHTML=""; return; }
-  const pre=[], sub=[];
-  for(const o of SYMBOLS){ const s=o.s.toLowerCase();
-    if(s.startsWith(q)) pre.push(o); else if(s.includes(q)||o.n.toLowerCase().includes(q)) sub.push(o);
-    if(pre.length>=12) break; }
-  const out=pre.concat(sub).slice(0,12);
-  res.innerHTML = out.length? out.map((o,i)=>`<div class="r ${i===0?'sel':''}" onclick="openSymbol('${o.s}')">
-    <b>${o.s}</b><span>${esc(o.n)}</span><i>${esc(o.x||"")}</i></div>`).join("") : `<div class="fin-empty">No match for “${esc(q)}”.</div>`;
+  clearTimeout(_searchTimer);
+  _searchTimer=setTimeout(async ()=>{
+    let results=null;
+    try{ const d=await api("/api/symbols?q="+encodeURIComponent(q));
+      if(d&&Array.isArray(d.results)&&d.results.length){ results=d.results; LIVE.symbols=true; }
+    }catch(e){ LIVE.symbols=false; if(e.status===401&&booted) return signedOut(); }
+    if(results===null){
+      // offline fallback — client-side SYMBOLS array
+      const ql=q.toLowerCase(); const pre=[], sub=[];
+      for(const o of SYMBOLS){ const s=o.s.toLowerCase();
+        if(s.startsWith(ql)) pre.push({symbol:o.s,name:o.n,exchange:o.x||""});
+        else if(s.includes(ql)||o.n.toLowerCase().includes(ql)) sub.push({symbol:o.s,name:o.n,exchange:o.x||""});
+        if(pre.length>=12) break; }
+      results=pre.concat(sub).slice(0,12);
+    }
+    res.innerHTML = results.length? results.map((o,i)=>`<div class="r ${i===0?'sel':''}" onclick="openSymbol('${o.symbol}')">
+      <b>${o.symbol}</b><span>${esc(o.name||"")}</span><i>${esc(o.exchange||"")}</i></div>`).join("") : `<div class="fin-empty">No match for "${esc(q)}".</div>`;
+  }, 200);
 }
 function searchKey(e,inp){ const res=searchResEl(inp);
   if(e.key==="Enter"){ const sel=res.querySelector(".r.sel")||res.querySelector(".r"); if(sel) sel.click(); }
@@ -2896,19 +3007,42 @@ async function mountQuote(body,o){
   chart.timeScale().fitContent(); body._lwc=chart;
 }
 
-/* ---- Watchlist (polls /api/history?range=1D per symbol) ---- */
+/* ---- Watchlist (batch /api/quotes + /ws/quotes live ticks; fallback to /api/history polls) ---- */
 TILES.watchlist={ title:"Watchlist", group:"Markets", icon:"⭐", w:5, h:9, refreshMs:45000,
   desc:"Track tickers with last price & % change",
   optFields:[{key:"symbols",label:"Tickers",type:"symchips"}],
   defaults:{ symbols:["AAPL","MSFT","NVDA","TSLA","SPY"] },
   render(o){ const syms=o.symbols||[];
-    return `<div class="fin-title">Watchlist<span class="live-pip"></span></div><div class="wl">${ syms.length? syms.map(s=>`<div class="wl-row" title="Open ${esc(s)} chart" onclick="openSymbol('${esc(s)}')">
+    return `<div class="fin-title">Watchlist<span class="live-pip"></span>${liveBadgeHTML("quotes")}</div><div class="wl">${ syms.length? syms.map(s=>`<div class="wl-row" title="Open ${esc(s)} chart" onclick="openSymbol('${esc(s)}')">
       <div class="wl-id"><span class="wl-sym">${esc(s)}</span><span class="wl-nm">${esc(symName(s))}</span></div>
       <div class="wl-px">—</div><div class="wl-chg">—</div></div>`).join("")
       : `<div class="fin-empty">No symbols yet — open ⚙ to add some.</div>` }</div>`; },
-  mount(body,o){ wlLoad(body,o); }, refresh(body,o){ wlLoad(body,o); } };
-async function wlLoad(body,o){ if(!body) return; const rows=[...body.querySelectorAll(".wl-row")];
-  for(const s of (o.symbols||[])){
+  mount(body,o){ wlLoad(body,o); wlWsAttach(body,o); },
+  refresh(body,o){ wlLoad(body,o); },
+  destroy(body,o){ wsqUnsubscribe(o.symbols||[]); } };
+
+// Update a single watchlist row from a {symbol,price,change_pct} object.
+function wlUpdateRow(body,sym,price,change_pct){
+  const row=[...body.querySelectorAll(".wl-row")].find(r=>r.querySelector(".wl-sym")?.textContent===sym); if(!row) return;
+  if(price!=null){ row.querySelector(".wl-px").textContent="$"+money2(price); }
+  if(change_pct!=null){ const up=change_pct>=0; const c=row.querySelector(".wl-chg"); c.className="wl-chg "+(up?"pos":"neg"); c.textContent=`${sgn(change_pct)}${Math.abs(change_pct).toFixed(2)}%`; }
+}
+// WebSocket live-tick attachment for the watchlist body.
+function wlWsAttach(body,o){ const syms=o.symbols||[]; if(!syms.length) return;
+  wsqSubscribe(syms, d=>{ if(d.symbol&&d.price!=null) wlUpdateRow(body,d.symbol,d.price,d.change_pct||null); });
+}
+// Batch load via /api/quotes; fallback to per-symbol /api/history on 404/501.
+async function wlLoad(body,o){ if(!body) return; const syms=(o.symbols||[]).filter(Boolean);
+  if(!syms.length) return;
+  // Try batch endpoint first.
+  try{
+    const d=await api("/api/quotes?symbols="+syms.map(encodeURIComponent).join(","));
+    const quotes=Array.isArray(d)?d:((d&&d.quotes)||[]);
+    if(quotes.length){ quotes.forEach(q=>wlUpdateRow(body,q.symbol,q.price,q.change_pct)); LIVE.quotes=true; return; }
+  }catch(e){ if(e.status===401&&booted) return signedOut(); LIVE.quotes=false; }
+  // Fallback: poll /api/history individually (original behaviour).
+  const rows=[...body.querySelectorAll(".wl-row")];
+  for(const s of syms){
     try{ const d=await api(`/api/history/${encodeURIComponent(s)}?range=1D`);
       const row=rows.find(r=>r.querySelector(".wl-sym")?.textContent===s); if(!row||!d) continue;
       const up=(d.change||0)>=0; row.querySelector(".wl-px").textContent="$"+money2(d.last);
@@ -2917,39 +3051,62 @@ async function wlLoad(body,o){ if(!body) return; const rows=[...body.querySelect
     }catch(e){ if(e.status===401&&booted) return signedOut(); }
   }
 }
-/* ---- News & research (briefs + source links, auto-refreshing) ---- */
+/* ---- News & research (/api/news for ingested headlines; fallback to /api/research briefs) ---- */
 TILES.news={ title:"News & research", group:"Research", icon:"📰", w:5, h:13, refreshMs:120000,
-  desc:"Latest research briefs with clickable source links",
+  desc:"Latest ingested headlines and research briefs",
   optFields:[{key:"ticker",label:"Filter by ticker",type:"symbol",ph:"blank = all tickers"}], defaults:{ ticker:"" },
-  render(){ return `<div class="fin-title">News &amp; research<span class="live-pip"></span></div><div class="news"><div class="fin-empty">Loading…</div></div>`; },
+  render(){ return `<div class="fin-title">News &amp; research<span class="live-pip"></span>${liveBadgeHTML("news")}</div><div class="news"><div class="fin-empty">Loading…</div></div>`; },
   mount(body,o){ newsLoad(body,o); }, refresh(body,o){ newsLoad(body,o); } };
 async function newsLoad(body,o){ if(!body) return; const wrap=body.querySelector(".news")||body; const t=(o.ticker||"").trim();
-  try{ const d=await api("/api/research"+(t?("?ticker="+encodeURIComponent(t)):""));
-    const arr=Array.isArray(d)?d:((d&&(d.research||d.briefs||d.feed))||[]);
-    const items=arr.slice(0,14).map(r=>({ title:r.topic||r.ticker||r.title||"Update", text:r.summary||r.text||"",
-      tags:r.catalysts||r.tags||[], who:r.who||r.trader||r.trader_id||"", sources:r.sources||[] }));
-    wrap.innerHTML = items.length ? items.map(it=>`<div class="ni">
-      <div class="nt">${esc(it.title)}</div>${it.text?`<div class="nm">${esc(String(it.text).slice(0,180))}</div>`:""}
-      <div class="nr">${(it.tags||[]).slice(0,3).map(x=>`<span class="ntag">#${esc(String(x))}</span>`).join("")}
-        ${it.who?`<span class="nwho">${esc(it.who)}</span>`:""}
-        <span class="nsrc">${(it.sources||[]).slice(0,2).map((u,i)=>`<a href="${esc(String(u))}" target="_blank" rel="noopener">source${(it.sources.length>1)?(i+1):""}↗</a>`).join(" ")}</span>
-      </div></div>`).join("")
-      : `<div class="fin-empty">No research yet${t?" for "+esc(t):""}. Run a pass from Bench Control.</div>`;
-  }catch(e){ if(e.status===401&&booted) return signedOut();
-    wrap.innerHTML=`<div class="fin-empty">News unavailable${e.status?` (${e.status})`:""}.</div>`; }
+  let items=null;
+  // Try /api/news first (raw ingested feed from WS-B).
+  try{
+    const d=await api("/api/news"+(t?("?symbol="+encodeURIComponent(t)):""));
+    const arr=Array.isArray(d)?d:((d&&d.items)||[]);
+    if(arr.length){ items=arr.map(r=>({ title:r.title||r.text||"Update", text:"", tags:[r.ticker||""].filter(Boolean),
+      who:r.source||"", sources:r.url?[r.url]:[] })); LIVE.news=true; }
+    else LIVE.news=false;
+  }catch(e){ LIVE.news=false; if(e.status===401&&booted) return signedOut(); }
+  // Fallback to /api/research briefs if no raw news items yet.
+  if(!items){
+    try{ const d=await api("/api/research"+(t?("?ticker="+encodeURIComponent(t)):""));
+      const arr=Array.isArray(d)?d:((d&&(d.research||d.briefs||d.feed))||[]);
+      if(arr.length) items=arr.map(r=>({ title:r.topic||r.ticker||r.title||"Update", text:r.summary||r.text||"",
+        tags:r.catalysts||r.tags||[], who:r.who||r.trader||r.trader_id||"", sources:r.sources||[] }));
+    }catch(e){ if(e.status===401&&booted) return signedOut(); }
+  }
+  const feed=(items||[]).slice(0,14);
+  wrap.innerHTML = feed.length ? feed.map(it=>`<div class="ni">
+    <div class="nt">${esc(it.title)}</div>${it.text?`<div class="nm">${esc(String(it.text).slice(0,180))}</div>`:""}
+    <div class="nr">${(it.tags||[]).slice(0,3).map(x=>`<span class="ntag">#${esc(String(x))}</span>`).join("")}
+      ${it.who?`<span class="nwho">${esc(it.who)}</span>`:""}
+      <span class="nsrc">${(it.sources||[]).slice(0,2).map((u,i)=>`<a href="${esc(String(u))}" target="_blank" rel="noopener">source${(it.sources.length>1)?(i+1):""}↗</a>`).join(" ")}</span>
+    </div></div>`).join("")
+    : `<div class="fin-empty">No news yet${t?" for "+esc(t):""}. Run an ingest or research pass from Bench Control.</div>`;
 }
-/* ---- Market movers (derived from current positions) ---- */
+/* ---- Market movers (/api/movers from bench universe; fallback to positions-derived list) ---- */
 TILES.movers={ title:"Market movers", group:"Markets", icon:"📊", w:4, h:11, refreshMs:60000,
-  desc:"Top gainers & losers across your traders' holdings",
-  render(){ return `<div class="fin-title">Market movers</div><div class="mv"></div>`; }, mount(body){ moversLoad(body); }, refresh(body){ moversLoad(body); } };
-function moversLoad(body){ if(!body) return; const wrap=body.querySelector(".mv")||body;
-  const src=(POSITIONS||[]).map(p=>({sym:p.sym,pct:p.pct})).filter(p=>typeof p.pct==="number");
-  if(!src.length){ wrap.innerHTML=`<div class="fin-empty">No positions yet — movers appear once traders hold stock.</div>`; return; }
-  const sorted=[...src].sort((a,b)=>b.pct-a.pct);
-  const gain=sorted.slice(0,5), lose=sorted.slice(-5).reverse();
-  const cell=p=>`<div class="mv-row"><b>${esc(p.sym)}</b><span class="${p.pct>=0?'pos':'neg'}">${sgn(p.pct)}${p.pct.toFixed(2)}%</span></div>`;
-  wrap.innerHTML=`<div class="mv-col"><div class="mv-h">▲ Gainers</div>${gain.map(cell).join("")}</div>
-    <div class="mv-col"><div class="mv-h">▼ Losers</div>${lose.map(cell).join("")}</div>`;
+  desc:"Top gainers & losers across the bench universe",
+  render(){ return `<div class="fin-title">Market movers${liveBadgeHTML("movers")}</div><div class="mv"></div>`; }, mount(body){ moversLoad(body); }, refresh(body){ moversLoad(body); } };
+async function moversLoad(body){ if(!body) return; const wrap=body.querySelector(".mv")||body;
+  let movers=null;
+  try{
+    const d=await api("/api/movers");
+    const arr=Array.isArray(d)?d:((d&&d.movers)||[]);
+    if(arr.length){ movers=arr; LIVE.movers=true; } else LIVE.movers=false;
+  }catch(e){ LIVE.movers=false; if(e.status===401&&booted) return signedOut(); }
+  // Fallback: derive from POSITIONS (original behaviour).
+  if(!movers){
+    const src=(POSITIONS||[]).map(p=>({symbol:p.sym,change_pct:p.pct})).filter(p=>typeof p.change_pct==="number");
+    if(!src.length){ wrap.innerHTML=`<div class="fin-empty">No positions yet — movers appear once traders hold stock.</div>`; return; }
+    movers=src;
+  }
+  const sorted=[...movers].sort((a,b)=>b.change_pct-a.change_pct);
+  const gain=sorted.filter(p=>p.change_pct>=0).slice(0,5);
+  const lose=[...sorted].filter(p=>p.change_pct<0).reverse().slice(0,5);
+  const cell=p=>`<div class="mv-row"><b>${esc(p.symbol||p.sym)}</b><span class="${(p.change_pct||p.pct||0)>=0?'pos':'neg'}">${sgn(p.change_pct||p.pct)}${Math.abs(p.change_pct||p.pct||0).toFixed(2)}%</span></div>`;
+  wrap.innerHTML=`<div class="mv-col"><div class="mv-h">▲ Gainers</div>${gain.map(cell).join("")||'<div class="fin-empty" style="font-size:11px">none</div>'}</div>
+    <div class="mv-col"><div class="mv-h">▼ Losers</div>${lose.map(cell).join("")||'<div class="fin-empty" style="font-size:11px">none</div>'}</div>`;
 }
 
 /* ===================== TILE CATALOG (everything is a tile) =====================
@@ -3605,7 +3762,7 @@ async function sendMsg(){ const box=document.getElementById("chatBox"), txt=box.
   }catch(e){
     if(e.status===401&&booted) return signedOut();
     const acted=managerTools(txt, null);                  // tools still work offline (client-side intent)
-    if(!acted) log.insertAdjacentHTML("beforeend",`<div class="msg bot"><div class="who">manager</div>(mock) Once wired, the manager model reasons across all six books and answers here. Tip: ask me to “show me how Apple is doing”.</div>`);
+    if(!acted) log.insertAdjacentHTML("beforeend",`<div class="msg bot"><div class="who">manager</div>(mock) Once wired, the manager model reasons across all six books and answers here. Tip: ask me to "show me how Apple is doing".</div>`);
     log.scrollTop=log.scrollHeight; setCtx(Math.min(0.95, ctxFrac+0.06));
   }finally{ stopThinking(); } }
 /* Manager tools — surface info on the dashboard. Backend tool-calling: if /api/chat
@@ -3621,7 +3778,7 @@ function managerTools(userText, data){
   if(data && Array.isArray(data.actions) && data.actions.length){ executeManagerActions(data.actions); return true; }
   const t=userText.toLowerCase();
   if(/\b(what can you do|your tools|what tools|how can you help|capabilities|explain (your|the) tool)\b/.test(t)){
-    log.insertAdjacentHTML("beforeend",`<div class="msg bot tool"><div class="who">manager · tools</div>I can surface things on your dashboard for you:<br>• <b>“show me how Apple is doing”</b> — opens a live chart window<br>• <b>“open NVDA”</b> / <b>“chart TSLA”</b> — any ticker or company<br>• ask about a trader, the leaderboard, research or risk<br><span style="color:var(--muted)">I open info in floating windows so you can drag &amp; compare them side by side.</span></div>`);
+    log.insertAdjacentHTML("beforeend",`<div class="msg bot tool"><div class="who">manager · tools</div>I can surface things on your dashboard for you:<br>• <b>"show me how Apple is doing"</b> — opens a live chart window<br>• <b>"open NVDA"</b> / <b>"chart TSLA"</b> — any ticker or company<br>• ask about a trader, the leaderboard, research or risk<br><span style="color:var(--muted)">I open info in floating windows so you can drag &amp; compare them side by side.</span></div>`);
     return true; }
   const sym=findSymbolInText(userText);
   if(sym && /\b(show|pull|open|chart|graph|how|doing|price|look|check|performing|see)\b/.test(t)){
@@ -3758,7 +3915,7 @@ function seedChats(){ return [
 let SAVED = JSON.parse(localStorage.getItem("cockpit-chats")||"null"); if(!SAVED){ SAVED=seedChats(); persistChats(); }
 function persistChats(){ localStorage.setItem("cockpit-chats", JSON.stringify(SAVED)); }
 function renderChatList(){ const box=document.getElementById("chatList");
-  if(!SAVED.length){ box.innerHTML=`<div class="cbar-empty">No saved chats yet.<br>Hit “Save this conversation” to keep one.</div>`; return; }
+  if(!SAVED.length){ box.innerHTML=`<div class="cbar-empty">No saved chats yet.<br>Hit "Save this conversation" to keep one.</div>`; return; }
   box.innerHTML=SAVED.map(c=>`<div class="savedchat" onclick="loadChat('${c.id}')">
     <div class="sc-t">${esc(c.title)}</div><div class="sc-ts">${c.ts}</div>
     <button class="sc-rm" onclick="delChat(event,'${c.id}')" title="Delete">×</button></div>`).join(""); }
