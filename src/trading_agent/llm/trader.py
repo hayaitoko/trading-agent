@@ -291,6 +291,13 @@ class AgentTrader:
         social_aggregator: Any = None,
         calendar_events: list[dict[str, Any]] | None = None,
         spot_prices_fn: Any = None,
+        # WS-Digest: analyst-digest tier (flag-gated, default OFF).
+        #   digest_mode     — when True, inject pre-compiled digest into first-look and
+        #                     gate slow-data LOOK tools (news/situation/etc.) in favour
+        #                     of one cheap search_context() backstop.
+        #   digest_store    — DigestStore instance; required for digest mode to activate.
+        digest_mode: bool = False,
+        digest_store: Any = None,
     ) -> None:
         self.model = model
         self.client = client
@@ -336,6 +343,10 @@ class AgentTrader:
         self._social_aggregator = social_aggregator
         self._calendar_events: list[dict[str, Any]] = list(calendar_events or [])
         self._spot_prices_fn = spot_prices_fn
+        # WS-Digest: analyst-digest tier.  digest_mode=False → byte-for-byte identical
+        # behaviour to the pre-digest baseline (no injection, no tool gating).
+        self._digest_mode: bool = digest_mode
+        self._digest_store: Any = digest_store
         # ask_manager ≤1/turn gate lives on the trader (the tool is constructed
         # fresh per dispatch) so the rate limit holds across calls in one turn.
         self._ask_manager_called_this_turn: bool = False
@@ -709,6 +720,13 @@ class AgentTrader:
         directed_notes = self._first_look_directed_notes()
         recent_reflections = self._first_look_recent_reflections()
 
+        # WS-Digest: inject pre-compiled analyst digest into extra_lines when
+        # digest_mode is on.  One cheap local read — no model call.  Degrades
+        # to [] when the digest store is absent or no digest has been compiled yet.
+        digest_lines = self._first_look_digest_lines()
+
+        turn_extra = self._turn_type_guidance(turn_type) + digest_lines
+
         return TurnContext(
             trader_name=self.name,
             model=self.model,
@@ -726,7 +744,7 @@ class AgentTrader:
             directed_notes=directed_notes,
             recent_reflections=recent_reflections,
             previous_attempt_tools=list(previous_attempt_tools or []),
-            extra_lines=self._turn_type_guidance(turn_type),
+            extra_lines=turn_extra,
             # A6: hint shown in place of the reflections slot for new traders.
             no_prior_context_hint=self.tutorial_remaining > 0,
         )
@@ -773,6 +791,34 @@ class AgentTrader:
             if text:
                 out.append(text)
         return out
+
+    def _first_look_digest_lines(self) -> list[str]:
+        """WS-Digest: inject the latest pre-compiled analyst digest into the first-look.
+
+        One cheap local read from the DigestStore — no model call, no external
+        fetch.  Returns [] when digest_mode is off, the store is absent, or no
+        digest has been compiled yet.  In all those cases the turn is identical
+        to the pre-digest baseline.
+        """
+        if not self._digest_mode or self._digest_store is None:
+            return []
+        if self.owner_user_id is None or not self.symbols:
+            return []
+        try:
+            digest = self._digest_store.get_latest(self.owner_user_id, self.symbols)
+        except Exception:
+            return []
+        if digest is None:
+            return []
+        age_m = int(digest.age_seconds() // 60)
+        lines = [
+            "",
+            f"Analyst digest (as_of {age_m}m ago):",
+            digest.digest_text,
+        ]
+        if digest.material_flag:
+            lines.append("[MATERIAL EVENT — review search_context for details]")
+        return lines
 
     def _turn_type_guidance(self, turn_type: TurnType) -> list[str]:
         """Turn-type-conditional special-prompt guidance for the first-look block.
@@ -880,8 +926,9 @@ class AgentTrader:
             UNWATCH_DEF,
         ]
 
-        # C0: Situation Track A LOOK tools
-        defs += [
+        # C0: Situation Track A LOOK tools — gated out in digest mode (slow external
+        # fetches replaced by search_context backstop).
+        _c0_defs: list[dict[str, Any]] = [
             {
                 "type": "function",
                 "function": {
@@ -996,11 +1043,20 @@ class AgentTrader:
                 },
             },
         ]
+        # In digest mode the slow external LOOK tools are gated out; the agent uses
+        # the pre-compiled digest in first-look + search_context() as the backstop.
+        if not self._digest_mode:
+            defs += _c0_defs
 
-        # A1 LOOK catalog (WS-LOOKTOOL-WIRING) — always declared so the model can
-        # discover them; each dispatcher returns ToolError(kind="unavailable") when
-        # its backing service is absent. Schemas mirror the C0 SITUATION pattern.
-        defs += [
+        # A1 LOOK catalog (WS-LOOKTOOL-WIRING).
+        # Split into two groups so digest mode can gate the slow external-fetch
+        # tools while leaving the live/fast tools untouched.
+        #
+        # FAST / always kept (even in digest mode):
+        #   recent_turns, history, watchlist, account_state, advisor_notes, ask_manager
+        # SLOW / gated in digest mode (replaced by search_context backstop):
+        #   news, research_brief, request_research, situation
+        _a1_fast_defs: list[dict[str, Any]] = [
             {
                 "type": "function",
                 "function": {
@@ -1050,6 +1106,81 @@ class AgentTrader:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "watchlist",
+                    "description": (
+                        "Your own watchlist of symbols (set via watch_symbol / "
+                        "unwatch_symbol), overlaid with any symbols the operator pinned."
+                    ),
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "account_state",
+                    "description": (
+                        "Fresh snapshot of your account: cash, open positions with "
+                        "current market value, and unrealized P&L."
+                    ),
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "advisor_notes",
+                    "description": (
+                        "Operator-written advisor notes scoped to your account "
+                        "(scope='trader'), a specific ticker (scope='ticker'), or "
+                        "global notes (scope='global'). Returns notes visible to you "
+                        "only — never other traders' notes."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Ticker — required when scope='ticker'.",
+                            },
+                            "scope": {
+                                "type": "string",
+                                "description": "Note scope to read.",
+                                "enum": ["ticker", "trader", "global"],
+                                "default": "trader",
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "ask_manager",
+                    "description": (
+                        "Ask the overseer manager a question. Cost-gated: at most once "
+                        "per turn (a model call). Use for strategic guidance only."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "Your question for the overseer.",
+                            },
+                        },
+                        "required": ["question"],
+                    },
+                },
+            },
+        ]
+        defs += _a1_fast_defs
+
+        # Slow external-fetch tools — only in normal (non-digest) mode.
+        _a1_slow_defs: list[dict[str, Any]] = [
             {
                 "type": "function",
                 "function": {
@@ -1128,77 +1259,43 @@ class AgentTrader:
                     "parameters": {"type": "object", "properties": {}, "required": []},
                 },
             },
-            {
-                "type": "function",
-                "function": {
-                    "name": "watchlist",
-                    "description": (
-                        "Your own watchlist of symbols (set via watch_symbol / "
-                        "unwatch_symbol), overlaid with any symbols the operator pinned."
-                    ),
-                    "parameters": {"type": "object", "properties": {}, "required": []},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "account_state",
-                    "description": (
-                        "Fresh snapshot of your account: cash, open positions with "
-                        "current market value, and unrealized P&L."
-                    ),
-                    "parameters": {"type": "object", "properties": {}, "required": []},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "advisor_notes",
-                    "description": (
-                        "Operator-written advisor notes scoped to your account "
-                        "(scope='trader'), a specific ticker (scope='ticker'), or "
-                        "global notes (scope='global'). Returns notes visible to you "
-                        "only — never other traders' notes."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "symbol": {
-                                "type": "string",
-                                "description": "Ticker — required when scope='ticker'.",
-                            },
-                            "scope": {
-                                "type": "string",
-                                "description": "Note scope to read.",
-                                "enum": ["ticker", "trader", "global"],
-                                "default": "trader",
-                            },
-                        },
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "ask_manager",
-                    "description": (
-                        "Ask the overseer manager a question. Cost-gated: at most once "
-                        "per turn (a model call). Use for strategic guidance only."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string",
-                                "description": "Your question for the overseer.",
-                            },
-                        },
-                        "required": ["question"],
-                    },
-                },
-            },
         ]
+        if not self._digest_mode:
+            defs += _a1_slow_defs
+        else:
+            # WS-Digest backstop: one cheap local search tool replaces all slow tools.
+            defs += [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_context",
+                        "description": (
+                            "Semantic search over the local analyst-digest vault. "
+                            "Returns ranked snippets from pre-compiled digests and "
+                            "research briefs. Use this instead of news/situation/"
+                            "research_brief — no external calls, instant result."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": (
+                                        "What to search for, e.g. 'AAPL earnings sentiment' "
+                                        "or 'macro risk-off signals'."
+                                    ),
+                                },
+                                "k": {
+                                    "type": "integer",
+                                    "description": "Number of results (default 5, max 20).",
+                                    "default": 5,
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                }
+            ]
 
         # A3 ACT catalog — only injected when broker is wired.
         if self.broker is not None:
@@ -1385,6 +1482,12 @@ class AgentTrader:
                     question=str(tc.arguments.get("question", "")),
                     cost_tracker=cost_tracker,
                 )
+            # WS-Digest backstop tool (available only in digest mode)
+            if tc.name == "search_context":
+                return self._tool_search_context(
+                    query=str(tc.arguments.get("query", "")),
+                    k=int(tc.arguments.get("k", 5)),
+                )
             # A3 ACT tools (also terminals — loop exits after these)
             if tc.name == "trade":
                 return self._tool_trade(
@@ -1516,22 +1619,6 @@ class AgentTrader:
                 None if self._history_service is not None
                 else "history service not wired"
             ),
-            "news": (
-                None if (self._news_db is not None and self.owner_user_id is not None)
-                else "ingest store / user context not wired"
-            ),
-            "research_brief": (
-                None if (self._research_store is not None and self.owner_user_id is not None)
-                else "research store not wired"
-            ),
-            "request_research": (
-                None if (self._research_run_fn is not None and self.owner_user_id is not None)
-                else "research agent not wired"
-            ),
-            "situation": (
-                None if self._regime_classifier is not None
-                else "situation layer (regime classifier) not wired"
-            ),
             "account_state": (
                 None if self.broker is not None else "broker not wired"
             ),
@@ -1544,20 +1631,53 @@ class AgentTrader:
                 else "manager agent not wired"
             ),
         }
-        # C0 SITUATION tools: enabled only when their SITUATION_* flag is on AND the
-        # provider is wired (mirrors each tool's own disabled-error logic).
-        avail["world_events"] = self._situation_tool_reason(
-            "SITUATION_GDELT", self._gdelt_provider, "world_events"
-        )
-        avail["prediction_market_odds"] = self._situation_tool_reason(
-            "SITUATION_PREDICTION_MARKETS", self._pm_provider, "prediction_market_odds"
-        )
-        avail["options_iv"] = self._situation_tool_reason(
-            "SITUATION_OPTIONS_IV", self._chain_provider, "options_iv"
-        )
-        avail["forecast"] = self._situation_tool_reason(
-            "SITUATION_FORECAST", self._chain_provider, "forecast"
-        )
+        if self._digest_mode:
+            # In digest mode: slow tools are gated out, search_context is the backstop.
+            avail["news"] = "digest mode — use search_context"
+            avail["research_brief"] = "digest mode — use search_context"
+            avail["request_research"] = "digest mode — use search_context"
+            avail["situation"] = "digest mode — use search_context"
+            avail["world_events"] = "digest mode — use search_context"
+            avail["prediction_market_odds"] = "digest mode — use search_context"
+            avail["options_iv"] = "digest mode — use search_context"
+            avail["forecast"] = "digest mode — use search_context"
+            # search_context enabled when digest_store is wired.
+            avail["search_context"] = (
+                None if self._digest_store is not None
+                else "digest vault not wired"
+            )
+        else:
+            # Normal mode: slow tools reported with their real availability.
+            avail["news"] = (
+                None if (self._news_db is not None and self.owner_user_id is not None)
+                else "ingest store / user context not wired"
+            )
+            avail["research_brief"] = (
+                None if (self._research_store is not None and self.owner_user_id is not None)
+                else "research store not wired"
+            )
+            avail["request_research"] = (
+                None if (self._research_run_fn is not None and self.owner_user_id is not None)
+                else "research agent not wired"
+            )
+            avail["situation"] = (
+                None if self._regime_classifier is not None
+                else "situation layer (regime classifier) not wired"
+            )
+            # C0 SITUATION tools: enabled only when their SITUATION_* flag is on AND the
+            # provider is wired (mirrors each tool's own disabled-error logic).
+            avail["world_events"] = self._situation_tool_reason(
+                "SITUATION_GDELT", self._gdelt_provider, "world_events"
+            )
+            avail["prediction_market_odds"] = self._situation_tool_reason(
+                "SITUATION_PREDICTION_MARKETS", self._pm_provider, "prediction_market_odds"
+            )
+            avail["options_iv"] = self._situation_tool_reason(
+                "SITUATION_OPTIONS_IV", self._chain_provider, "options_iv"
+            )
+            avail["forecast"] = self._situation_tool_reason(
+                "SITUATION_FORECAST", self._chain_provider, "forecast"
+            )
         return avail
 
     def _situation_tool_reason(
@@ -1810,6 +1930,18 @@ class AgentTrader:
         if result.ok:
             self._ask_manager_called_this_turn = True
         return result
+
+    def _tool_search_context(self, query: str, k: int = 5) -> ToolResult:
+        """WS-Digest backstop: local semantic search over the digest + research vault."""
+        from ..intel.tools.look.search_context import SearchContextTool
+
+        tool = SearchContextTool(
+            owner_user_id=self.owner_user_id,
+            trader_id=self.name,
+            digest_store=self._digest_store,
+            research_store=self._research_store,
+        )
+        return tool(query, k=k)
 
     def _recent_closes(self) -> list[float]:
         """Fresh close-price series from the per-symbol price-bar buffer (situation())."""

@@ -118,6 +118,8 @@ class BenchController:
         research_run_fn: Any = None,
         regime_classifier: Any = None,
         social_aggregator: Any = None,
+        # WS-Digest: shared digest store (None → digest mode always off).
+        digest_store: Any = None,
     ) -> None:
         self.bench = bench
         self.client = client
@@ -166,6 +168,8 @@ class BenchController:
         self._research_run_fn = research_run_fn
         self._regime_classifier = regime_classifier
         self._social_aggregator = social_aggregator
+        # WS-Digest: shared digest store (None → digest mode always off).
+        self._digest_store = digest_store
 
     @property
     def owner_id(self) -> str | None:
@@ -244,6 +248,21 @@ class BenchController:
         flags = dict(intelligence_flags or {})
         effective_memory = None if flags.get("memory") is False else self.memory
 
+        # WS-Digest: digest_mode resolution order:
+        #   1. Per-trader intelligence_flags["digest_mode"] (explicit override)
+        #   2. Per-user setting "digest_mode"
+        #   3. Default: False (off)
+        if "digest_mode" in flags:
+            effective_digest_mode = bool(flags["digest_mode"])
+        elif owner is not None and settings is not None:
+            effective_digest_mode = bool(
+                settings.get(owner, "digest_mode", False)
+            )
+        else:
+            effective_digest_mode = False
+        # digest_store must be provided to the controller for digest mode to activate.
+        effective_digest_store = self._digest_store if effective_digest_mode else None
+
         # Resolution order for requires_approval:
         #   1. Explicit per-trader override (this call's requires_approval param)
         #   2. Per-user setting ("requires_approval" in user_settings)
@@ -289,7 +308,24 @@ class BenchController:
             social_aggregator=social_aggregator or self._social_aggregator,
             calendar_events=calendar_events,
             tutorial_remaining=tutorial_remaining,
+            # WS-Digest: analyst-digest tier (flag-gated, default OFF).
+            digest_mode=effective_digest_mode,
+            digest_store=effective_digest_store,
         )
+        # WS-Digest: if digest mode is on, seed the universe in the digest store so
+        # the DigestDaemon knows which symbol sets to compile.  No-op when the store
+        # is absent or mode is off.
+        if effective_digest_mode and self._digest_store is not None and owner is not None:
+            try:
+                from ..digest.store import universe_key as _uk
+
+                uk = _uk(self.symbols)
+                # Probe for an existing digest to avoid a spurious write; if none
+                # exists the daemon will compile on its next cycle.  We don't write
+                # a digest here — the daemon owns compilation.
+                _ = self._digest_store.get_by_key(owner, uk)
+            except Exception:
+                pass
         # Register the competitor first (the bench mints its isolated paper book),
         # then bind that very broker + risk into the trader's ACT toolkit so trades
         # settle on the book the leaderboard values. The PendingTradeQueue is shared
@@ -545,6 +581,50 @@ class BenchController:
         except Exception:
             return  # never let a wake-hook failure break anything
         self._maybe_reflect()
+
+    # --- WS-Digest: research-bombshell event wake ----------------------------
+
+    def on_research_bombshell(self, universe_key: str) -> None:
+        """Called by the DigestDaemon when a MATERIAL high-impact event is detected.
+
+        Fires an off-cadence decision round for every trader whose universe
+        matches ``universe_key``.  De-dup: the DigestDaemon's own logic limits
+        how often this fires (bounded staleness — only fires when the digest is
+        newly compiled and material_flag is True).
+
+        This method is passed as the ``bombshell_callback`` to DigestDaemon.
+        """
+        if not self._running:
+            return
+        # Wake all digest-mode traders whose universe matches.
+        for comp_name in self.bench.names():
+            comp = self.bench._competitors.get(comp_name)
+            if comp is None:
+                continue
+            trader = getattr(comp, "trader", None)
+            if trader is None:
+                continue
+            # Only wake digest-mode traders (non-digest traders are unaffected).
+            if not getattr(trader, "_digest_mode", False):
+                continue
+            # Check universe match.
+            from ..digest.store import universe_key as _uk
+
+            trader_uk = _uk(getattr(trader, "symbols", []))
+            if trader_uk != universe_key:
+                continue
+            # Fire an off-cadence turn for this trader (reuse the reminder wake
+            # pattern: _run_one directly, no scheduler needed).
+            try:
+                # Annotate the trader's wake reason so the turn context shows
+                # the bombshell reason rather than "scheduled".
+                if hasattr(trader, "_current_wake_reason"):
+                    trader._current_wake_reason = f"digest-bombshell:{universe_key}"
+                if hasattr(trader, "_current_turn_type"):
+                    trader._current_turn_type = "event"
+                self.bench._run_one(comp)
+            except Exception:
+                pass  # never let a bombshell wake kill anything
 
     # --- A2: Attention-queue scanner ----------------------------------------
 
