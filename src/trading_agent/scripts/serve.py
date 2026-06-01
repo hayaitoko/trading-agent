@@ -44,6 +44,7 @@ from ..intel.attention_queue import AttentionQueue
 from ..intel.turn_store import TurnStore
 from ..llm.openrouter import OpenRouterClient, OpenRouterError
 from ..paper_broker import PaperBroker
+from ..paper_broker_store import PaperBrokerStore
 from ..risk_manager import RiskLimits, RiskManager
 from ..signal_router import SignalRouter, _signal_to_order
 from ..strategies.mean_reversion import MeanReversionStrategy
@@ -302,7 +303,16 @@ def build_cockpit(
     syms = list(symbols) if symbols else list(DEFAULT_COCKPIT_SYMBOLS)
 
     app = create_cockpit_app(db, transport=transport)
-    bench = Bench(syms, initial_balance=initial_balance, max_position_size=max_position_size)
+    # Durable broker store: a single SQLite file shared across all competitor
+    # books. Each competitor's PaperBroker gets book_id=<competitor_name> so
+    # fills persist and replay on restart, restoring the day's positions/cash/P&L.
+    broker_store = PaperBrokerStore(base_dir / "paper.db")
+    bench = Bench(
+        syms,
+        initial_balance=initial_balance,
+        max_position_size=max_position_size,
+        broker_store=broker_store,
+    )
     app.state.bench = bench
     app.state.market_watch = MarketMoveWatcher(threshold_pct=threshold_pct)
     app.state.risk = RiskManager(kill_switch_file=base_dir / ".kill_switch")
@@ -684,12 +694,34 @@ def cockpit_main(argv: list[str] | None = None) -> int:
             print("feed: synthetic mean-reversion (no ALPACA_API_KEY)")
             threading.Thread(target=run_synthetic, name="cockpit-feed", daemon=True).start()
 
+    # Autonomous research cadence: ingest + research every hour, cost-gated via
+    # CostGate. Pre-SoD hydration fires within PRE_SOD_WINDOW_MINUTES of the
+    # first trader turn of the day so briefs are fresh at SoD. Degrades
+    # gracefully when sources / endpoints are absent.
+    from ..research.daemon import build_research_daemon
+
+    _research_scheduler = getattr(app.state, "bench_controller", None)
+    _research_scheduler = (
+        getattr(_research_scheduler, "scheduler", None) if _research_scheduler else None
+    )
+    research_daemon = build_research_daemon(
+        app.state,
+        scheduler=_research_scheduler,
+    )
+    if research_daemon is not None:
+        research_daemon.start()
+        print("research: autonomous ingest+research daemon started (hourly, pre-SoD hydration on)")
+    else:
+        print("research: autonomous daemon not started (no sources or endpoints configured)")
+
     print("=== trading-agent cockpit (multi-user) ===")
     print(f"open  http://{args.host}:{args.port}/   (Ctrl-C to stop)")
     try:
         uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     finally:
         stop.set()
+        if research_daemon is not None:
+            research_daemon.stop()
         if controller is not None:
             controller.stop()
         app.state.approvals.close()

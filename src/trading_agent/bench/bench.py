@@ -22,6 +22,7 @@ from ..signal_router import _signal_to_order
 if TYPE_CHECKING:
     from ..audit import AuditLogger
     from ..llm.trader import Trader
+    from ..paper_broker_store import PaperBrokerStore
 
 
 def _utcnow_iso() -> str:
@@ -92,11 +93,16 @@ class Bench:
         initial_balance: float = 100_000.0,
         max_position_size: float = 1_000.0,
         audit: AuditLogger | None = None,
+        broker_store: PaperBrokerStore | None = None,
     ) -> None:
         self.symbols = list(symbols)
         self.initial_balance = initial_balance
         self.max_position_size = max_position_size
         self.audit = audit
+        # Optional durable store shared across all competitor books. When set,
+        # each add_competitor call creates a PaperBroker with store=broker_store
+        # and book_id=<competitor_name>, so fills persist across restarts.
+        self._broker_store: PaperBrokerStore | None = broker_store
         self._competitors: dict[str, Competitor] = {}
         self._last_prices: dict[str, float] = {}
         self._lock = threading.RLock()
@@ -126,7 +132,11 @@ class Bench:
             max_pos = (
                 self.max_position_size if max_position_size is None else float(max_position_size)
             )
-            broker = PaperBroker(initial_balance=balance)
+            broker = PaperBroker(
+                initial_balance=balance,
+                store=self._broker_store,
+                book_id=name,
+            )
             broker.connect()
             # seed any known prices so valuation/fills work immediately
             if self._last_prices:
