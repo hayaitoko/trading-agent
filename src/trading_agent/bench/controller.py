@@ -213,6 +213,11 @@ class BenchController:
         # extended_hours enables 04:00-09:30 + 16:00-20:00 ET wakes.
         cadence_minutes: int = 30,
         extended_hours: bool = False,
+        # A6 tutorial mode passthrough: number of guided no-trade tutorial turns the
+        # trader starts with (forwarded to AgentTrader). 0 disables tutorial entirely.
+        # The cockpit serve path passes 0 so the live paper test trades from its first
+        # RTH turn and a restart never re-arms tutorial.
+        tutorial_remaining: int = 3,
     ) -> str:
         owner = self.owner_id
         memory_k = _MEMORY_RECALL_K
@@ -264,6 +269,7 @@ class BenchController:
             regime_classifier=regime_classifier or self._regime_classifier,
             social_aggregator=social_aggregator or self._social_aggregator,
             calendar_events=calendar_events,
+            tutorial_remaining=tutorial_remaining,
         )
         # Register the competitor first (the bench mints its isolated paper book),
         # then bind that very broker + risk into the trader's ACT toolkit so trades

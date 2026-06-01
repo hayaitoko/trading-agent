@@ -596,9 +596,19 @@ def cockpit_main(argv: list[str] | None = None) -> int:
     if controller is None:
         print("note: no OPENROUTER_API_KEY — add-trader is disabled until one is set.")
     _print_intelligence_status(app)
+    # TRADING_AGENT_TUTORIAL_TURNS: guided no-trade tutorial turns each cockpit
+    # trader starts with. Default 0 so the live paper test trades from its first RTH
+    # turn (and a restart never re-arms tutorial). Set >0 to re-enable onboarding.
+    tutorial_turns = int(os.environ.get("TRADING_AGENT_TUTORIAL_TURNS", "0") or 0)
     for slug in (m.strip() for m in args.models.split(",") if m.strip()):
         if controller is not None:
-            controller.add_model(slug)
+            controller.add_model(slug, tutorial_remaining=tutorial_turns)
+
+    # Start the cadence loop so the cockpit actually fires decision turns. The
+    # scheduler (when wired) gates them to US RTH; without this call the service
+    # registers traders but never wakes them — the bench-cadence thread runs the loop.
+    if controller is not None:
+        controller.start()
 
     stop = threading.Event()
 
