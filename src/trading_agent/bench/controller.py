@@ -202,6 +202,12 @@ class BenchController:
         # the owner-level settings for this specific trader instance. Pass the
         # same model twice with different flags to get an A/B on intelligence.
         intelligence_flags: dict[str, bool] | None = None,
+        # Per-trader approval override (resolution order: this param → per-user
+        # settings "requires_approval" → default False).  None = defer to
+        # per-user/default; True/False = hard override for this trader only.
+        # Use True to gate a specific trader's trades through the approval queue
+        # even when the account-wide default is autonomous (and vice versa).
+        requires_approval: bool | None = None,
         # P3: optional per-trader situation layer objects.
         regime_classifier: Any = None,
         social_aggregator: Any = None,
@@ -237,6 +243,19 @@ class BenchController:
         # compatibility but not forwarded — the AgentTrader has no such slots.
         flags = dict(intelligence_flags or {})
         effective_memory = None if flags.get("memory") is False else self.memory
+
+        # Resolution order for requires_approval:
+        #   1. Explicit per-trader override (this call's requires_approval param)
+        #   2. Per-user setting ("requires_approval" in user_settings)
+        #   3. Default: False (autonomous execution)
+        if requires_approval is not None:
+            effective_requires_approval = requires_approval
+        elif owner is not None and settings is not None:
+            effective_requires_approval = bool(
+                settings.get(owner, "requires_approval", False)
+            )
+        else:
+            effective_requires_approval = False
 
         # WS-LOOKTOOL-WIRING: prefer a per-trader regime/social passed by the caller
         # (A/B harness), else fall back to the controller-wide instances. calendar
@@ -282,7 +301,7 @@ class BenchController:
             broker=comp.broker,
             risk_manager=comp.risk,
             pending_trade_queue=self._pending_trade_queue,
-            requires_approval=False,
+            requires_approval=effective_requires_approval,
             # Concern #2: fresh per-turn spot prices read from the bench's live
             # last-price map (kept current every market tick) rather than a snapshot
             # frozen at construction — so options_iv()/forecast() see mid-session moves.

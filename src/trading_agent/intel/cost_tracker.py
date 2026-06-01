@@ -78,6 +78,17 @@ class CostTracker:
     def total_usd(self) -> float:
         return self._total_usd
 
+    def snapshot_total(self) -> float:
+        """Return the current running total USD so callers can compute a delta later.
+
+        Usage::
+
+            before = tracker.snapshot_total()
+            # ... some work that may call add_nested_llm() ...
+            delta = tracker.total_usd - before
+        """
+        return self._total_usd
+
     @property
     def call_count(self) -> int:
         """Number of main-loop model calls this turn."""

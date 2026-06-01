@@ -551,16 +551,19 @@ class AgentTrader:
                 for tc in result.tool_calls:
                     tool_call_count += 1
                     _t0 = time.monotonic()
+                    _cost_before = cost_tracker.snapshot_total()
                     tool_result = self._execute_tool(tc, cost_tracker)
                     # A5: capture this call in the turn trace (name, args, result,
-                    # latency).  cost_usd stays 0.0 here — turn-level cost rollup
-                    # carries nested-LLM spend; per-tool attribution is future work.
+                    # latency, incremental cost).  cost_usd is the delta accumulated
+                    # by this tool invocation (non-zero for tools like ask_manager
+                    # that make nested LLM calls; zero for pure-read LOOK tools).
                     tool_records.append(
                         ToolCallRecord(
                             tool_name=tc.name,
                             args=dict(tc.arguments) if isinstance(tc.arguments, dict) else {},
                             result=tool_result.to_dict(),
                             latency_ms=int((time.monotonic() - _t0) * 1000),
+                            cost_usd=round(cost_tracker.total_usd - _cost_before, 8),
                         )
                     )
 

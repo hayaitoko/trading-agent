@@ -55,6 +55,9 @@ DEFAULTS: dict[str, Any] = {
     "SITUATION_PREDICTION_MARKETS": False,  # prediction_market_odds tool (Polymarket + Kalshi)
     "SITUATION_OPTIONS_IV": False,          # options_iv tool (Alpaca IV passthrough)
     "SITUATION_FORECAST": False,            # forecast tool (price-cone; needs history)
+    # Per-user approval mode (overridable per-trader via add_model(requires_approval=...)).
+    # False = autonomous execution; True = every trade routed through PendingTradeQueue.
+    "requires_approval": False,
 }
 
 
