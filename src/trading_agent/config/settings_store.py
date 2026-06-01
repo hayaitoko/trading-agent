@@ -9,9 +9,20 @@ research_cadence, the daily $ ceiling, etc. Values are arbitrary JSON.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from .db import Database
+
+# A few settings are NOT per-user: the embedding model, its dimension, and the
+# vector-store backend are shared infrastructure (one embedder is pulled at the
+# deploy, one collection holds everyone's vectors). They live under a reserved
+# pseudo-user so the whole box reads/writes one value. ``get``/``set``/``all``
+# transparently redirect these keys to that scope, so existing call sites
+# (embed.py, serve.py, research.py) read the system value with no change. Only
+# the admin console may write them (see web/routers/admin.py).
+SYSTEM_USER_ID = "__system__"
+SYSTEM_KEYS = frozenset({"embed_model", "vstore", "embed_dim"})
 
 # Defaults mirror the cockpit mock's initial state so a fresh user sees the
 # same UI the design specifies. Streams may read more keys than appear here.
@@ -66,6 +77,8 @@ class SettingsStore:
         self._db = db
 
     def get(self, user_id: str, key: str, default: Any = None) -> Any:
+        if key in SYSTEM_KEYS:  # system-wide, not per-user
+            user_id = SYSTEM_USER_ID
         row = self._db.query_one(
             "SELECT value FROM user_settings WHERE user_id = ? AND key = ?", (user_id, key)
         )
@@ -76,6 +89,8 @@ class SettingsStore:
         return DEFAULTS.get(key)
 
     def set(self, user_id: str, key: str, value: Any) -> None:
+        if key in SYSTEM_KEYS:  # system-wide, not per-user
+            user_id = SYSTEM_USER_ID
         self._db.execute(
             """
             INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
@@ -85,12 +100,26 @@ class SettingsStore:
         )
 
     def all(self, user_id: str) -> dict[str, Any]:
-        """Every stored key for the user, merged over :data:`DEFAULTS`."""
+        """Every stored key for the user, merged over :data:`DEFAULTS`.
+
+        System-scoped keys (:data:`SYSTEM_KEYS`) always reflect the shared
+        system value, never a stray per-user row, so any user's view shows the
+        one true embed model / vector store.
+        """
         merged: dict[str, Any] = dict(DEFAULTS)
+        is_system = user_id == SYSTEM_USER_ID
         for row in self._db.query(
             "SELECT key, value FROM user_settings WHERE user_id = ?", (user_id,)
         ):
+            if row["key"] in SYSTEM_KEYS and not is_system:
+                continue  # system keys never come from a per-user row
             merged[row["key"]] = json.loads(row["value"])
+        if not is_system:  # overlay the shared system values for system keys
+            for row in self._db.query(
+                "SELECT key, value FROM user_settings WHERE user_id = ?", (SYSTEM_USER_ID,)
+            ):
+                if row["key"] in SYSTEM_KEYS:
+                    merged[row["key"]] = json.loads(row["value"])
         return merged
 
     def update(self, user_id: str, values: dict[str, Any]) -> dict[str, Any]:
@@ -98,3 +127,29 @@ class SettingsStore:
         for key, value in values.items():
             self.set(user_id, key, value)
         return self.all(user_id)
+
+    def seed_system_from_env(self) -> None:
+        """Seed system-scoped settings from deploy env when not already set.
+
+        ``EMBED_MODEL`` / ``VSTORE`` / ``EMBED_DIM`` are the deploy's source of
+        truth (they dictate what the embedder pulled). We only fill a key that
+        has no system row yet, so an admin-UI override persists and wins on
+        later boots. This also fixes the prior bug where the app ignored
+        ``EMBED_MODEL`` and silently defaulted to ``bge-small-en-v1.5``.
+        """
+        env_map = {
+            "embed_model": os.environ.get("EMBED_MODEL"),
+            "vstore": os.environ.get("VSTORE"),
+            "embed_dim": os.environ.get("EMBED_DIM"),
+        }
+        for key, raw in env_map.items():
+            if not raw:
+                continue
+            existing = self._db.query_one(
+                "SELECT 1 FROM user_settings WHERE user_id = ? AND key = ?",
+                (SYSTEM_USER_ID, key),
+            )
+            if existing is not None:
+                continue  # admin override already persisted — don't clobber
+            value: Any = int(raw) if key == "embed_dim" and raw.isdigit() else raw
+            self.set(SYSTEM_USER_ID, key, value)

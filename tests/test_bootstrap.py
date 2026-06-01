@@ -30,7 +30,6 @@ from trading_agent.config.db import Database  # noqa: E402
 from trading_agent.config.endpoints import EndpointRegistry  # noqa: E402
 from trading_agent.config.settings_store import SettingsStore  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient
 from trading_agent.config.db import Database
 from trading_agent.web.app import create_cockpit_app
 
-
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------
@@ -146,17 +145,17 @@ class _FakeMemoryStore:
 
     def list(self, user_id: str, trader_id: str | None = None,
              *, include_archived: bool = False) -> list[_FakeLesson]:
-        out = [l for l in self._lessons if l.user_id == user_id]
+        out = [le for le in self._lessons if le.user_id == user_id]
         if trader_id is not None:
-            out = [l for l in out if l.trader_id == trader_id]
+            out = [le for le in out if le.trader_id == trader_id]
         return out
 
     def recall(self, user_id: str, trader_id: str, query: str,
                k: int = 5) -> list[_FakeLesson]:
         # Return lessons tagged with the query term for predictable test results.
-        return [l for l in self._lessons
-                if l.user_id == user_id and l.trader_id == trader_id
-                and (query in l.text or query in " ".join(l.tags))][:k]
+        return [le for le in self._lessons
+                if le.user_id == user_id and le.trader_id == trader_id
+                and (query in le.text or query in " ".join(le.tags))][:k]
 
 
 @pytest.fixture
@@ -201,7 +200,7 @@ def test_memory_lesson_shape(client_with_store: TestClient) -> None:
 
 def test_memory_filter_by_trader(client_with_store: TestClient) -> None:
     data = client_with_store.get("/api/memory?trader_id=t1").json()
-    assert all(l["trader_id"] == "t1" for l in data["lessons"])
+    assert all(le["trader_id"] == "t1" for le in data["lessons"])
     assert data["total"] == 1
 
 
@@ -210,7 +209,7 @@ def test_memory_semantic_search(client_with_store: TestClient) -> None:
     data = client_with_store.get("/api/memory?q=AAPL&trader_id=t1").json()
     assert data["source"] == "memory"
     # At least one lesson contains AAPL in text or tags.
-    assert any("AAPL" in l["text"] or "AAPL" in l["tags"] for l in data["lessons"])
+    assert any("AAPL" in le["text"] or "AAPL" in le["tags"] for le in data["lessons"])
 
 
 def test_memory_k_cap(client_with_store: TestClient) -> None:

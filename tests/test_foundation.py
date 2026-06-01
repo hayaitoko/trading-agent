@@ -380,8 +380,16 @@ def test_health_open_without_auth(client: TestClient) -> None:
     assert client.get("/api/health").json() == {"status": "ok"}
 
 
-def test_root_serves_placeholder_when_no_cockpit(client: TestClient) -> None:
+def test_root_serves_advisor_portal(client: TestClient) -> None:
+    # Root is the HELM advisor portal (customer.html), not the cockpit.
     r = client.get("/")
+    assert r.status_code == 200
+    assert "HELM" in r.text
+
+
+def test_admin_serves_cockpit(client: TestClient) -> None:
+    # The dense cockpit + system admin console lives at /admin now.
+    r = client.get("/admin")
     assert r.status_code == 200
     assert "cockpit" in r.text.lower()
 

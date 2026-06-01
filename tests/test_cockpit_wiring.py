@@ -37,15 +37,23 @@ def test_static_cockpit_copied() -> None:
     assert _STATIC.is_file(), "WS-G1 must copy design/cockpit.html into web/static/"
 
 
-def test_root_serves_cockpit_html(client: TestClient) -> None:
-    r = client.get("/")
+def test_admin_serves_cockpit_html(client: TestClient) -> None:
+    r = client.get("/admin")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
     assert "Helm" in r.text  # the cockpit brand mark
 
 
+def test_root_serves_advisor_portal_not_cockpit(client: TestClient) -> None:
+    # The flip: / is the HELM advisor portal (customer.html); the cockpit is /admin.
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "HELM" in r.text
+    assert "grid-stack" not in r.text  # cockpit-only GridStack markup absent
+
+
 def test_served_page_is_wired_not_mock(client: TestClient) -> None:
-    html = client.get("/").text
+    html = client.get("/admin").text
     # live wiring is present (frontend plumbing against the CONTRACTS routes)
     for marker in (
         "function api(",       # the fetch helper
@@ -69,7 +77,7 @@ def test_served_page_is_wired_not_mock(client: TestClient) -> None:
 
 def test_endpoint_field_mapping_present(client: TestClient) -> None:
     # WS-G must map the server endpoint shape onto the cockpit's field names.
-    html = client.get("/").text
+    html = client.get("/admin").text
     assert "key_preview" in html and "has_key" in html  # masked-key display
     assert "base_url" in html  # url<->base_url mapping in add/toggle
 
@@ -85,7 +93,7 @@ def test_phase2_agent_surfaces_wired(client: TestClient) -> None:
     # WS-G2: research / manager-chat / notifications+requests / notes / wizard
     # call exactly the CONTRACTS routes (no invented ones besides the flagged
     # bench create), through the same api() helper.
-    html = client.get("/").text
+    html = client.get("/admin").text
     for marker in (
         "/api/research",  # research feed
         "/api/research/run",  # gated, explicit paid trigger
@@ -108,7 +116,7 @@ def test_phase2_agent_surfaces_wired(client: TestClient) -> None:
 def test_phase2_keeps_mock_fallbacks(client: TestClient) -> None:
     # Each surface must keep its mock array/seed as the 501/offline fallback so an
     # unfinished WS-C/E/H upstream still renders without errors (same rule as P1).
-    html = client.get("/").text
+    html = client.get("/admin").text
     for marker in ("MGR_SEED", "function seedChats(", "let RESEARCH=", "let MEMORY=", "let NOTIFS="):
         assert marker in html, f"missing mock fallback: {marker}"
 

@@ -233,3 +233,45 @@ def test_resolve_owner_stale_id_is_none_until_signup(users_db, monkeypatch):
     assert resolve_owner_user_id(users_db, explicit="alice") is None  # stale → None, not bob
     alice = create_user(users_db, "alice", "pw")
     assert resolve_owner_user_id(users_db, explicit="alice") == alice.id  # now binds
+
+
+# --- system-scoped settings (embed model / vector store) ----------------------
+
+
+def test_system_scoped_keys_are_shared_across_users(users_db):
+    """embed_model/vstore/embed_dim ignore the user_id — one shared value."""
+    from trading_agent.config.settings_store import SettingsStore
+
+    store = SettingsStore(users_db)
+    store.set("alice", "embed_model", "all-minilm")
+    # Read back under a totally different user → same value (system-scoped).
+    assert store.get("bob", "embed_model") == "all-minilm"
+    # ...and it surfaces in all() for any user, never a stray per-user row.
+    assert store.all("bob")["embed_model"] == "all-minilm"
+
+
+def test_per_user_keys_stay_isolated(users_db):
+    from trading_agent.config.settings_store import SettingsStore
+
+    store = SettingsStore(users_db)
+    store.set("alice", "theme", "dark")
+    assert store.get("alice", "theme") == "dark"
+    assert store.get("bob", "theme") == "teal"  # default, not alice's
+
+
+def test_seed_system_from_env_fills_unset_only(users_db, monkeypatch):
+    from trading_agent.config.settings_store import SettingsStore
+
+    monkeypatch.setenv("EMBED_MODEL", "mxbai-embed-large")
+    monkeypatch.setenv("VSTORE", "qdrant")
+    monkeypatch.setenv("EMBED_DIM", "1024")
+    store = SettingsStore(users_db)
+    store.seed_system_from_env()
+    assert store.get("anyone", "embed_model") == "mxbai-embed-large"
+    assert store.get("anyone", "vstore") == "qdrant"
+    assert store.get("anyone", "embed_dim") == 1024  # parsed to int
+
+    # An admin override persists and is NOT clobbered by a later re-seed.
+    store.set("admin", "embed_model", "all-minilm")
+    store.seed_system_from_env()
+    assert store.get("anyone", "embed_model") == "all-minilm"

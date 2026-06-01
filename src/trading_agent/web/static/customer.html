@@ -603,7 +603,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text);
      TOP BAR
      ============================================================ -->
 <div class="topbar">
-  <a class="brand" href="/app"><span>H</span>ELM</a>
+  <a class="brand" href="/"><span>H</span>ELM</a>
 
   <nav class="nav" id="main-nav">
     <button class="nav-btn active" data-page="accounts" onclick="showPage('accounts',this)">
@@ -621,6 +621,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text);
   </nav>
 
   <div class="topbar-right">
+    <a class="btn btn-sm" href="/admin" target="_blank" rel="noopener" title="System admin console" style="text-decoration:none">⚙ Admin</a>
     <div class="user-chip" id="user-chip">
       <div class="user-avatar" id="user-avatar">?</div>
       <span class="user-name" id="user-name">Loading…</span>
@@ -898,31 +899,15 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text);
           </div>
         </div>
 
-        <!-- Embedding / storage -->
+        <!-- Embedding / storage — SYSTEM-WIDE, managed in the admin console -->
         <div class="settings-section">
           <div class="ss-head">
             <h3>Storage &amp; Embeddings</h3>
-            <p>Vector store and local embedding model configuration.</p>
+            <p>The vector store and embedding model are shared infrastructure, not a per-account setting.</p>
           </div>
           <div class="ss-body">
-            <div class="form-row">
-              <label>Vector store</label>
-              <select id="set-vstore" class="settings-select">
-                <option value="sqlite-vec">sqlite-vec (on-device)</option>
-                <option value="qdrant">Qdrant</option>
-              </select>
-            </div>
-            <div class="form-row">
-              <label>Embedding model</label>
-              <select id="set-embed-model" class="settings-select">
-                <option value="mxbai-embed-large">mxbai-embed-large (quality, 1024d)</option>
-                <option value="all-minilm">all-minilm (fast, 384d)</option>
-                <option value="nomic-embed-text">nomic-embed-text (768d)</option>
-                <option value="bge-large">bge-large (1024d)</option>
-              </select>
-              <p class="settings-hint">Only models your embedder has pulled will work (set EMBED_MODELS at deploy).</p>
-            </div>
-            <button class="btn btn-sm btn-accent" onclick="saveStorageSettings()">Save</button>
+            <p class="settings-hint">One embedding model is pulled per deployment and one vector store holds every account's memory, so these are configured once for the whole system.</p>
+            <a class="btn btn-sm" href="/admin" target="_blank" rel="noopener" style="text-decoration:none">Open admin console ↗</a>
           </div>
         </div>
       </div>
@@ -1466,8 +1451,6 @@ async function loadSettings() {
   setVal('set-research-model', settings.research_model || '');
   setVal('set-research-cadence', settings.research_cadence || 'off');
   setVal('set-daily-ceiling', settings.daily_usd_ceiling ?? 5);
-  setVal('set-vstore', settings.vstore || 'sqlite-vec');
-  setVal('set-embed-model', settings.embed_model || 'mxbai-embed-large');
   setVal('set-hard-floor', settings.hard_floor_pct ?? '');
   setChecked('set-situation', !!settings.situation_enabled);
   setChecked('set-pattern-kb', !!settings.pattern_kb_enabled);
@@ -1501,12 +1484,6 @@ function savePatternKbToggle(el) { putSettings({pattern_kb_enabled: el.checked})
 function saveApprovalMode(el) { putSettings({require_approval: el.checked}); }
 function saveTraderMemory(el) { putSettings({trader_memory_recall_k: el.checked ? 5 : 0}); }
 function saveTraderResearch(el) { putSettings({trader_research_read: el.checked}); }
-function saveStorageSettings() {
-  putSettings({
-    vstore: getVal('set-vstore'),
-    embed_model: getVal('set-embed-model'),
-  });
-}
 
 /* =============================================================
    CHAT DOCK

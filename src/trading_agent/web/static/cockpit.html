@@ -1129,7 +1129,7 @@ td b{ font-weight:700; letter-spacing:-.01em; }
 <div class="app" id="app" hidden>
   <aside class="rail">
     <div class="rail-head">
-      <div class="brand"><span class="mark">H<em>e</em>lm</span><span class="tag">paper · live data</span></div>
+      <a class="brand" href="/" title="Back to advisor portal" style="text-decoration:none;color:inherit"><span class="mark">H<em>e</em>lm</span><span class="tag">admin · live data</span></a>
       <div class="mfield">
         <label>Manager model</label>
         <select id="model">
@@ -1525,13 +1525,15 @@ const PRICES = {
 };
 const CAD_RUNS = { manual:0, "15m":96, "1h":24, "4h":6, "1d":1 };
 let researchModel="google/gemini-3.5-flash", researchCad="1h";
+// Ollama tags the deploy can pull (set EMBED_MODELS in .env). Only models the
+// embedder has actually pulled will work — the system value is seeded from env.
 const EMBEDS = [
-  ["bge-small-en-v1.5","384-dim · light · recommended"],
-  ["all-MiniLM-L6-v2","384-dim · ultra-light"],
+  ["mxbai-embed-large","1024-dim · quality · default"],
+  ["all-minilm","384-dim · fast + light (best on a Pi)"],
   ["nomic-embed-text","768-dim · longer context"],
-  ["mxbai-embed-large","1024-dim · heaviest (Artoo's)"],
+  ["bge-large","1024-dim · alternative"],
 ];
-let embedModel=localStorage.getItem("cockpit-embed")||"bge-small-en-v1.5";
+let embedModel=localStorage.getItem("cockpit-embed")||"mxbai-embed-large";
 let vectorStore=localStorage.getItem("cockpit-vstore")||"sqlite-vec";
 const PROVIDERS = {
   openrouter:{ label:"OpenRouter", url:"https://openrouter.ai/api/v1", ph:"sk-or-..." },
@@ -1924,7 +1926,7 @@ const VIEWS = {
           <div class="frow"><div style="flex:2;min-width:200px"><label>Alpaca base URL</label><input class="input" value="https://paper-api.alpaca.markets" readonly></div>
             <div style="flex:1;min-width:140px"><label>API key</label><input class="input" type="password" value="PKxxxxxxxx" readonly></div>
             <span class="pill ok" style="align-self:flex-end;margin-bottom:9px">practice mode</span></div></div>
-        <div class="pcard"><h3>Memory engine</h3><div class="desc">Runs locally on your hardware — embeddings never leave the box.</div>
+        <div class="pcard"><h3>Memory engine <span style="font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400">· system-wide</span></h3><div class="desc">Runs locally on your hardware — embeddings never leave the box. One model + vector store serves every account on this deployment (not a per-account setting).</div>
           <div class="frow" style="align-items:flex-end"><div style="flex:1;min-width:220px"><label>Embedding model</label>
             <select onchange="setEmbed(this.value)">${EMBEDS.map(([m,d])=>`<option value="${m}" ${m===embedModel?"selected":""}>${m} — ${d}</option>`).join("")}</select></div></div>
           <label style="margin-top:14px">Where vectors live</label>
@@ -1961,7 +1963,13 @@ let _adminUsers=[], _adminSystem=null;
 async function adminLoad(){
   try{ const d=await api("/api/admin/users"); _adminUsers=Array.isArray(d)?d:[]; }catch(e){ _adminUsers=[]; if(e.status===401&&booted) return signedOut(); }
   try{ const d=await api("/api/admin/system"); _adminSystem=d; }catch(e){ _adminSystem=null; }
+  // Reflect the true system-wide embed model / vector store in the pickers.
+  let changed=false;
+  try{ const s=await api("/api/admin/system/settings");
+    if(s){ if(s.embed_model&&s.embed_model!==embedModel){ embedModel=s.embed_model; changed=true; }
+           if(s.vstore&&s.vstore!==vectorStore){ vectorStore=s.vstore; changed=true; } } }catch(e){}
   const box=document.getElementById("adminBox"); if(box) box.innerHTML=adminBoxHTML();
+  if(changed && currentTab==="settings") render();  // refresh the Memory-engine pickers
 }
 function adminBoxHTML(){
   const sys=_adminSystem||{};
@@ -2033,8 +2041,14 @@ function researchCard(){
 }
 function setResearchModel(v){ researchModel=v; render(); }
 function setResearchCad(c){ researchCad=c; render(); }
-function setEmbed(v){ embedModel=v; localStorage.setItem("cockpit-embed",v); putSettings({embed_model:v}); render(); toast("Embedding model set",v,"good"); }
-function setVStore(v){ vectorStore=v; localStorage.setItem("cockpit-vstore",v); putSettings({vstore:v}); render(); }
+// Embed model + vector store are SYSTEM-WIDE (one embedder, one shared
+// collection), so they write to the admin endpoint, not per-user /api/settings.
+function setEmbed(v){ embedModel=v; localStorage.setItem("cockpit-embed",v); putSystemSettings({embed_model:v}); render(); toast("Embedding model set",v+" · system-wide","good"); }
+function setVStore(v){ vectorStore=v; localStorage.setItem("cockpit-vstore",v); putSystemSettings({vstore:v}); render(); toast("Vector store set",v+" · system-wide","good"); }
+async function putSystemSettings(patch){
+  try{ await api("/api/admin/system/settings",{ method:"PUT", body:patch }); }
+  catch(e){ toast("Couldn't save",(e&&e.message)||"system settings","bad"); }
+}
 // Endpoints live server-side now: the secret key is never returned, so we show
 // the server's key_preview/has_key instead of a raw key (CONTRACTS as-built note).
 function epKeyLabel(e){ return e.has_key ? (e.key_preview || "••••") : "no key set"; }

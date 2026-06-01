@@ -327,7 +327,7 @@ def test_storage_info_unauthenticated(client: TestClient) -> None:
 
 def test_admin_panel_in_cockpit(client: TestClient) -> None:
     """The cockpit SPA should contain markers for the admin console wiring."""
-    html = client.get("/").text
+    html = client.get("/admin").text
     for marker in (
         "/api/admin/users",
         "/api/admin/system",
@@ -335,13 +335,15 @@ def test_admin_panel_in_cockpit(client: TestClient) -> None:
         "adminLoad(",
         "adminCreateUser(",
         "adminConsolePcardHTML(",
+        "/api/admin/system/settings",  # system-wide embed/vstore writes
+        "putSystemSettings(",
     ):
         assert marker in html, f"missing admin console wiring marker: {marker}"
 
 
 def test_new_market_tile_wiring_markers(client: TestClient) -> None:
     """Finance tiles should be wired to live backends with LIVE-badge support."""
-    html = client.get("/").text
+    html = client.get("/admin").text
     for marker in (
         "/api/quotes",        # batch watchlist quotes
         "/api/news",          # news headlines
@@ -361,6 +363,71 @@ def test_new_market_tile_wiring_markers(client: TestClient) -> None:
 
 def test_stale_comment_removed(client: TestClient) -> None:
     """The stale 'Missing backend pieces' comment must no longer claim these as missing."""
-    html = client.get("/").text
+    html = client.get("/admin").text
     # The old comment claimed these endpoints don't exist yet — they do now
     assert "Missing backend pieces (ticker-search API, batch /api/quotes, WS stream" not in html
+
+
+# ---------------------------------------------------------------------------
+# System-wide settings (embed model / vector store) — admin-only, not per-user
+# ---------------------------------------------------------------------------
+
+
+def test_system_settings_get_returns_system_keys(client: TestClient) -> None:
+    token = _signup_and_token(client)
+    r = client.get("/api/admin/system/settings", headers=_auth_headers(token))
+    assert r.status_code == 200, r.text
+    assert set(r.json()) == {"embed_model", "vstore", "embed_dim"}
+
+
+def test_system_settings_put_and_roundtrip(client: TestClient) -> None:
+    token = _signup_and_token(client)
+    r = client.put(
+        "/api/admin/system/settings",
+        json={"values": {"embed_model": "mxbai-embed-large", "vstore": "qdrant"}},
+        headers=_auth_headers(token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["embed_model"] == "mxbai-embed-large"
+    assert r.json()["vstore"] == "qdrant"
+    r2 = client.get("/api/admin/system/settings", headers=_auth_headers(token))
+    assert r2.json()["embed_model"] == "mxbai-embed-large"
+
+
+def test_system_settings_put_rejects_non_system_keys(client: TestClient) -> None:
+    token = _signup_and_token(client)
+    r = client.put(
+        "/api/admin/system/settings",
+        json={"values": {"theme": "dark"}},  # not a system key
+        headers=_auth_headers(token),
+    )
+    assert r.status_code == 400
+
+
+def test_system_settings_unauthenticated(client: TestClient) -> None:
+    assert client.get("/api/admin/system/settings").status_code == 401
+    assert (
+        client.put("/api/admin/system/settings", json={"values": {}}).status_code == 401
+    )
+
+
+def test_system_embed_is_shared_and_not_overridable_per_user(client: TestClient) -> None:
+    """Admin sets the system embed model; per-user /api/settings reflects it and
+    cannot override it (the key is stripped from per-user writes)."""
+    token = _signup_and_token(client, "boss", "pw12345")
+    client.put(
+        "/api/admin/system/settings",
+        json={"values": {"embed_model": "all-minilm"}},
+        headers=_auth_headers(token),
+    )
+    # A normal /api/settings read shows the shared system value.
+    r = client.get("/api/settings", headers=_auth_headers(token))
+    assert r.json()["embed_model"] == "all-minilm"
+    # Attempting to change it via the per-user endpoint is ignored.
+    client.put(
+        "/api/settings",
+        json={"embed_model": "nomic-embed-text"},
+        headers=_auth_headers(token),
+    )
+    r2 = client.get("/api/settings", headers=_auth_headers(token))
+    assert r2.json()["embed_model"] == "all-minilm"  # unchanged — still system value

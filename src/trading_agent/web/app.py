@@ -157,6 +157,10 @@ def create_cockpit_app(
     app = FastAPI(title=title, docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.db = database
     app.state.settings = SettingsStore(database)
+    # The embed model / vector store are system-wide; seed them from deploy env
+    # (EMBED_MODEL / VSTORE / EMBED_DIM) so the app honours what the embedder
+    # actually pulled, instead of silently defaulting to bge-small-en-v1.5.
+    app.state.settings.seed_system_from_env()
     app.state.endpoints = EndpointRegistry(database, transport=transport)
 
     for router in _COCKPIT_ROUTERS:
@@ -166,8 +170,20 @@ def create_cockpit_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    # Root is the HELM advisor portal (the customer-facing 5-page product).
+    # The dense GridStack cockpit + system admin console lives at /admin.
     @app.get("/", include_in_schema=False)
     def index() -> Any:
+        helm = _STATIC_DIR / "customer.html"
+        if helm.exists():
+            return FileResponse(helm)
+        return JSONResponse(
+            {"app": "trading-agent", "note": "advisor portal pending; API under /api"}
+        )
+
+    @app.get("/admin", include_in_schema=False)
+    @app.get("/admin/{path:path}", include_in_schema=False)
+    def admin_console(path: str = "") -> Any:  # noqa: ARG001
         cockpit = _STATIC_DIR / "cockpit.html"
         if cockpit.exists():  # WS-G drops the wired SPA here
             return FileResponse(cockpit)

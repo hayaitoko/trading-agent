@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from ...config import users as users_mod
 from ...config.endpoints import EndpointError, EndpointRegistry
-from ...config.settings_store import SettingsStore
+from ...config.settings_store import SYSTEM_KEYS, SettingsStore
 from ...config.users import SESSION_COOKIE, AuthError, current_user, get_db
 
 router = APIRouter(tags=["config"])
@@ -124,7 +124,10 @@ def put_settings(
     user_id: str = Depends(current_user),
 ) -> dict[str, Any]:
     # A bare ``dict`` param is read as the JSON request body by FastAPI.
-    return _settings(request).update(user_id, values)
+    # System-wide keys (embed model, vector store, dim) are not per-user — they
+    # can only be changed via the admin console, so strip them here.
+    safe = {k: v for k, v in values.items() if k not in SYSTEM_KEYS}
+    return _settings(request).update(user_id, safe)
 
 
 # --- endpoints ---------------------------------------------------------------

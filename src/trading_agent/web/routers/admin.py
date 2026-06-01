@@ -21,6 +21,8 @@ Routes owned by this router (all under /api/admin):
   DELETE /api/admin/users/{user_id}/endpoints/{endpoint_id}
   GET    /api/admin/users/{user_id}/settings
   PUT    /api/admin/users/{user_id}/settings
+  GET    /api/admin/system/settings   (system-wide: embed model, vector store)
+  PUT    /api/admin/system/settings
   GET    /api/admin/system
   GET    /api/admin/storage
 """
@@ -38,7 +40,7 @@ from pydantic import BaseModel
 from ...config import users as users_mod
 from ...config.db import Database
 from ...config.endpoints import EndpointError, EndpointRegistry
-from ...config.settings_store import SettingsStore
+from ...config.settings_store import SYSTEM_KEYS, SYSTEM_USER_ID, SettingsStore
 from ...config.users import AuthError, current_user
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -283,6 +285,45 @@ def update_user_settings(
     _get_user_or_404(db, uid)
     store = _settings(request)
     return store.update(uid, body.values)
+
+
+# ---------------------------------------------------------------------------
+# System-wide settings (embed model, vector store) — NOT per-user
+# ---------------------------------------------------------------------------
+
+
+@router.get("/system/settings")
+def get_system_settings(
+    request: Request,
+    _: str = Depends(admin_user),
+) -> dict[str, Any]:
+    """Return the shared, system-wide settings (embed model, vector store, dim).
+
+    These are infrastructure-level (one embedder, one shared vector collection),
+    so they are stored once under a reserved scope rather than per user.
+    """
+    store = _settings(request)
+    return {k: store.get(SYSTEM_USER_ID, k) for k in sorted(SYSTEM_KEYS)}
+
+
+@router.put("/system/settings")
+def update_system_settings(
+    body: SettingsPatch,
+    request: Request,
+    _: str = Depends(admin_user),
+) -> dict[str, Any]:
+    """Update system-wide settings. Only :data:`SYSTEM_KEYS` are accepted; any
+    other key in the body is ignored (use the per-user ``/api/settings`` for those).
+    """
+    store = _settings(request)
+    accepted = {k: v for k, v in body.values.items() if k in SYSTEM_KEYS}
+    if not accepted:
+        raise HTTPException(
+            status_code=400,
+            detail=f"no system-wide keys in body; allowed: {sorted(SYSTEM_KEYS)}",
+        )
+    store.update(SYSTEM_USER_ID, accepted)
+    return {k: store.get(SYSTEM_USER_ID, k) for k in sorted(SYSTEM_KEYS)}
 
 
 # ---------------------------------------------------------------------------
