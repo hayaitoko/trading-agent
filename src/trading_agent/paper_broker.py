@@ -28,10 +28,13 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .broker_adapter import BrokerAdapter
 from .enums import OrderSide, OrderType
+
+if TYPE_CHECKING:
+    from .paper_broker_store import PaperBrokerStore
 
 
 class OrderStatus(Enum):
@@ -79,6 +82,10 @@ class PaperBroker(BrokerAdapter):
         allow_short: bool = False,
         short_margin_ratio: float = 1.5,
         max_short_notional: float | None = None,
+        # Durability (optional): when a store is supplied, fills persist to it and
+        # replay on construction so the book survives a process restart.
+        store: "PaperBrokerStore | None" = None,
+        book_id: str = "default",
     ):
         self._initial_balance: float = initial_balance
         self._balance: float = initial_balance
@@ -109,6 +116,14 @@ class PaperBroker(BrokerAdapter):
         # hard_floor_pct: if not None and equity / initial_balance - 1 < -pct,
         # flatten_all() is auto-called with no model in the loop.
         self.hard_floor_pct: float | None = None
+        # Durable book persistence (optional). When a store is supplied, every fill
+        # is appended to it and replayed here so a restart restores cash, positions,
+        # and realized P&L instead of resetting to initial_balance.
+        self._store: PaperBrokerStore | None = store
+        self._book_id: str = book_id
+        self._replaying: bool = False
+        if store is not None:
+            self._replay_from_store()
 
     def connect(self) -> bool:
         self._connected = True
@@ -659,6 +674,17 @@ class PaperBroker(BrokerAdapter):
         if closed_qty > 0:
             self._realized_pnl += realized
             self._closed_pnls.append(realized)
+        # Durability: persist this fill (skipped while replaying to avoid re-write).
+        if self._store is not None and not self._replaying:
+            self._store.append_fill(
+                self._book_id,
+                order.id,
+                order.symbol,
+                order.side.value,
+                order.quantity,
+                fill_price,
+                commission,
+            )
 
     def _order_result(self, order: PaperOrder) -> dict[str, Any]:
         return {
@@ -700,6 +726,50 @@ class PaperBroker(BrokerAdapter):
     def get_realized_pnl(self) -> float:
         """Total realized profit/loss from closed (or reduced) positions."""
         return self._realized_pnl
+
+    @property
+    def realized_pnl(self) -> float:
+        """Total realized P&L (property accessor, mirrors get_realized_pnl)."""
+        return self._realized_pnl
+
+    def _replay_from_store(self) -> None:
+        """Reconstruct cash / positions / realized P&L from persisted fills."""
+        if self._store is None:
+            return
+        self._replaying = True
+        try:
+            for f in self._store.load_fills(self._book_id):
+                order = PaperOrder(
+                    id=f.order_id,
+                    symbol=f.symbol,
+                    side=OrderSide(f.side),
+                    order_type=OrderType.MARKET,
+                    quantity=f.quantity,
+                    price=None,
+                )
+                self._execute_trade(order, f.fill_price)
+        finally:
+            self._replaying = False
+
+    def place_order_idempotent(
+        self, order_details: dict[str, Any], idem_key: str
+    ) -> dict[str, Any] | None:
+        """``place_order`` with durable de-duplication keyed by ``idem_key``.
+
+        Requires a :class:`PaperBrokerStore`. A duplicate key — within this process
+        or after a restart — returns the cached result without re-executing, which
+        eliminates double-fire on ``systemd Restart=on-failure``.
+        """
+        if self._store is None:
+            raise RuntimeError(
+                "place_order_idempotent requires a PaperBrokerStore (pass store=)"
+            )
+        cached = self._store.has_idem_key(self._book_id, idem_key)
+        if cached is not None:
+            return cached or None
+        result = self.place_order(order_details)
+        self._store.add_idem_key(self._book_id, idem_key, result)
+        return result
 
     def get_win_loss(self) -> tuple[int, int]:
         """Count of closing trades that realized a gain vs. a loss.
