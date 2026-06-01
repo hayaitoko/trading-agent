@@ -346,6 +346,25 @@ def create_account(
     return {"created": name, "account": created}
 
 
+@router.delete("/api/accounts/{name:path}")
+def remove_account(
+    name: str, request: Request, user_id: str = Depends(current_user)
+) -> dict[str, Any]:
+    """Remove a trader from the live bench (drops its competitor + unschedules it).
+
+    ``{name:path}`` so slug-style names like ``deepseek/deepseek-v4-flash`` match.
+    """
+    controller = _controller(request)
+    if controller is None:
+        raise HTTPException(status_code=503, detail="bench engine not running")
+    bench = _bench(request)
+    existing = {a.get("name") for a in (_accounts(bench) if bench is not None else [])}
+    if name not in existing:
+        raise HTTPException(status_code=404, detail=f"no trader named {name!r}")
+    controller.remove(name)
+    return {"removed": name}
+
+
 @router.get("/api/leaderboard")
 def leaderboard(request: Request, user_id: str = Depends(current_user)) -> list[dict[str, Any]]:
     """Ranked standings (same row shape as accounts; cockpit recomputes from it)."""

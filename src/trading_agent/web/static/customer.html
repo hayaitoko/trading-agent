@@ -1124,6 +1124,18 @@ function loadPage(name) {
 /* =============================================================
    ACCOUNTS PAGE
    ============================================================= */
+async function removeTrader(el) {
+  const name = (el && el.dataset) ? el.dataset.name : el;
+  if (!name) return;
+  if (!confirm('Remove trader "' + name + '"? This drops it from the bench.')) return;
+  try {
+    const path = name.split('/').map(encodeURIComponent).join('/');
+    const r = await fetch('/api/accounts/' + path, { method: 'DELETE' });
+    if (!r.ok) { alert('Remove failed (' + r.status + ')'); return; }
+    loadAccounts();
+  } catch (e) { alert('Remove failed: ' + e); }
+}
+
 async function loadAccounts() {
   const [accts, positions, pending] = await Promise.all([
     apiFetch('/api/accounts').catch(() => []),
@@ -1196,6 +1208,8 @@ async function loadAccounts() {
           <div class="tc-model">${esc(providerOf(a.prov||''))}</div>
         </div>
         <div class="tc-status ${statusClass}">${esc(a.status||'idle')}</div>
+        <button class="tc-remove" title="Remove trader" data-name="${esc(a.name||'')}" onclick="removeTrader(this)"
+          style="background:none;border:none;color:var(--muted);font-size:20px;line-height:1;cursor:pointer;padding:0 2px 0 6px">&times;</button>
       </div>
       <div class="tc-stats">
         <div class="tc-stat">
