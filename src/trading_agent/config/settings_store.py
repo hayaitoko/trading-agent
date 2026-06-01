@@ -20,7 +20,7 @@ DEFAULTS: dict[str, Any] = {
     "embed_model": "bge-small-en-v1.5",
     "vstore": "sqlite-vec",
     "research_model": None,
-    "research_cadence": "off",
+    "research_cadence": "1h",  # off | 15m | 1h | 4h — honored per-user by ResearchDaemon
     "daily_usd_ceiling": 5.0,  # cost-gating ceiling (CONTRACTS §Cost-gating)
     "risk_limits": {},
     # WS-A trader intelligence: how much research/memory each trader pulls per

@@ -413,3 +413,32 @@ def test_build_research_daemon_with_full_state(tmp_path: Any) -> None:
     daemon = build_research_daemon(state)
     assert daemon is not None
     assert isinstance(daemon, ResearchDaemon)
+
+
+def test_due_users_honors_research_cadence(tmp_path: Any) -> None:
+    """ResearchDaemon._due_users gates each user by their research_cadence setting."""
+    import time as _time
+
+    db, ingest, src_reg, research = _make_stores(tmp_path)
+    agent = _make_agent(db, ingest, research, tmp_path)
+    registry = EndpointRegistry(db)
+    settings = SettingsStore(db)
+    daemon = ResearchDaemon(
+        db, ingest, src_reg, agent, registry, settings, cadence_seconds=3600
+    )
+
+    # "off" → never due
+    settings.set(USER, "research_cadence", "off")
+    assert daemon._due_users([USER]) == []
+
+    # "15m" → due on first evaluation (last_run defaults to 0)
+    settings.set(USER, "research_cadence", "15m")
+    assert daemon._due_users([USER]) == [USER]
+
+    # after a run, not due again until the 15-min interval elapses
+    daemon._last_run[USER] = _time.time()
+    assert daemon._due_users([USER]) == []
+
+    # pretend 16 minutes passed → due again
+    daemon._last_run[USER] = _time.time() - 16 * 60
+    assert daemon._due_users([USER]) == [USER]

@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +49,14 @@ logger = logging.getLogger(__name__)
 
 # Default cadence: run ingest+research every hour.
 DEFAULT_CADENCE_SECONDS: int = 3600
+
+# Per-user `research_cadence` setting (chosen in the Settings UI) → interval in
+# seconds. "off" is intentionally absent so those users are skipped entirely.
+_CADENCE_SECONDS: dict[str, int] = {"15m": 900, "1h": 3600, "4h": 14400}
+
+# How often the daemon wakes to re-evaluate who is due. Finest cadence is 15m,
+# but we tick more often so pre-SoD hydration stays responsive.
+_BASE_TICK_SECONDS: int = 60
 
 # Pre-SoD window: run a research pass when we are within this many minutes of
 # the scheduled SoD turn.  Must be comfortably less than SOD_LEAD_MINUTES (60).
@@ -157,6 +166,9 @@ class ResearchDaemon:
         # Pre-SoD tracking: date string of the last day we ran a pre-SoD pass.
         self._pre_sod_ran_date: str | None = None
         self._pre_sod_lock = threading.Lock()
+        # Per-user wall-clock of the last completed research cycle; combined with
+        # each user's `research_cadence` setting to decide who is due each tick.
+        self._last_run: dict[str, float] = {}
 
     def start(self) -> None:
         """Start the daemon thread (idempotent)."""
@@ -244,27 +256,45 @@ class ResearchDaemon:
         except Exception:
             logger.exception("research_daemon: pre-SoD check failed")
 
+    def _due_users(self, users: list[str]) -> list[str]:
+        """Filter *users* to those due for a research cycle per their per-user
+        ``research_cadence`` setting (chosen in the Settings UI).
+
+        "off" users are skipped entirely; "15m"/"1h"/"4h" map to an interval and a
+        user runs only once at least that interval has elapsed since their last
+        completed cycle. An unrecognised value falls back to ``cadence_seconds``.
+        """
+        now = time.time()
+        due: list[str] = []
+        for user_id in users:
+            cadence = str(self._settings.get(user_id, "research_cadence", "1h"))
+            if cadence == "off":
+                continue
+            interval = _CADENCE_SECONDS.get(cadence, self.cadence_seconds)
+            if now - self._last_run.get(user_id, 0.0) >= interval:
+                due.append(user_id)
+        return due
+
     def _run(self) -> None:
-        """Main daemon loop."""
+        """Main daemon loop: wake every ``_BASE_TICK_SECONDS``, run a cycle for each
+        user whose ``research_cadence`` makes them due, then check pre-SoD."""
         while not self._stop.is_set():
             users = _users_with_sources(self._db)
-            if not users:
-                logger.debug("research_daemon: no users with enabled sources; sleeping")
+            if users:
+                due = self._due_users(users)
+                if due:
+                    try:
+                        self._run_cycle_for_users(due)
+                        now = time.time()
+                        for user_id in due:
+                            self._last_run[user_id] = now
+                    except Exception:
+                        logger.exception("research_daemon: cycle-level failure")
+                # Pre-SoD hydration is cadence-independent (forced before SoD).
+                self._check_pre_sod(users)
             else:
-                try:
-                    self._run_cycle_for_users(users)
-                except Exception:
-                    logger.exception("research_daemon: cycle-level failure")
-
-            # Wait for the cadence interval, checking for pre-SoD every minute.
-            elapsed = 0
-            interval = min(60, self.cadence_seconds)
-            while elapsed < self.cadence_seconds and not self._stop.is_set():
-                self._stop.wait(interval)
-                elapsed += interval
-                # Check pre-SoD on every minute tick (cheap — no network call).
-                if users:
-                    self._check_pre_sod(users)
+                logger.debug("research_daemon: no users with enabled sources; sleeping")
+            self._stop.wait(_BASE_TICK_SECONDS)
 
 
 def build_research_daemon(
