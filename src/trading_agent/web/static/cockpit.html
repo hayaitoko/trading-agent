@@ -497,6 +497,15 @@ body::before{
 .stylechip b{ display:block; font-size:14px; } .stylechip span{ font-size:11.5px; color:var(--muted); }
 .reviewrow{ display:flex; justify-content:space-between; padding:11px 0; border-bottom:var(--hair); font-size:13.5px; }
 .reviewrow:last-child{ border-bottom:none; } .reviewrow .rk{ color:var(--muted); } .reviewrow .rv{ font-family:var(--mono); }
+/* intelligence-mode radio cards */
+.moderow{ display:flex; gap:9px; flex-wrap:wrap; margin-top:0; }
+.modechip{ flex:1; min-width:140px; border:var(--hair); border-radius:var(--radius-sm); padding:13px 14px; cursor:pointer; transition:.14s; position:relative; }
+.modechip:hover{ border-color:color-mix(in srgb,var(--accent) 45%,var(--border)); }
+.modechip.on{ border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,transparent); }
+.modechip b{ display:block; font-size:13.5px; margin-bottom:3px; }
+.modechip span{ font-size:11.5px; color:var(--muted); line-height:1.45; display:block; }
+.modechip .mctag{ display:inline-block; margin-top:7px; font-family:var(--mono); font-size:9px; letter-spacing:.13em;
+  text-transform:uppercase; padding:2px 7px; border-radius:20px; border:var(--hair); color:var(--muted); }
 
 /* ========================= LEFT RAIL ========================= */
 .rail{ background:linear-gradient(180deg, var(--panel), color-mix(in srgb,var(--panel) 70%, var(--bg)));
@@ -3845,7 +3854,7 @@ const STYLES=[["Cautious","Plays it safe — smaller trades, quick to cut losses
   ["Balanced","A mix of caution and ambition"],
   ["Bold","Swings bigger for bigger gains — and bigger dips"]];
 let WIZ;
-function openWizard(){ WIZ={step:1, model:"anthropic/claude-opus-4.7", name:"", cash:100000, style:"Balanced"}; renderWiz();
+function openWizard(){ WIZ={step:1, model:"anthropic/claude-opus-4.7", name:"", cash:100000, style:"Balanced", digest_mode:false}; renderWiz();
   overlay.hidden=false; win.style.left="50%"; win.style.top="50%"; win.style.transform="translate(-50%,-50%)"; }
 function renderWiz(){
   const opts=Object.values(SLUG).concat(["anthropic/claude-sonnet-4.6"]);
@@ -3860,13 +3869,27 @@ function renderWiz(){
     <label>Starting cash</label>
     <div class="capedit" style="width:100%;padding:9px 12px;margin-bottom:18px"><span class="pre">$</span><input type="number" step="10000" id="wizCash" value="${WIZ.cash}" oninput="wizSet('cash',+this.value)" style="width:100%;text-align:left;font-size:14px"></div>
     <label>Trading style</label>
-    <div class="stylerow">${STYLES.map(([s,d])=>`<div class="stylechip ${s===WIZ.style?"on":""}" onclick="wizSet('style','${s}')"><b>${s}</b><span>${d}</span></div>`).join("")}</div>`;
+    <div class="stylerow" style="margin-bottom:18px">${STYLES.map(([s,d])=>`<div class="stylechip ${s===WIZ.style?"on":""}" onclick="wizSet('style','${s}')"><b>${s}</b><span>${d}</span></div>`).join("")}</div>
+    <label>Intelligence mode</label>
+    <div class="moderow">
+      <div class="modechip ${!WIZ.digest_mode?"on":""}" onclick="wizSet('digest_mode',false)">
+        <b>Pull</b>
+        <span>The trader gathers every signal itself each turn — news, events, prediction markets, forecasts. Most thorough, but uses the most tokens and costs more per turn.</span>
+        <span class="mctag">Default · validated</span>
+      </div>
+      <div class="modechip ${WIZ.digest_mode?"on":""}" onclick="wizSet('digest_mode',true)">
+        <b>Digest</b>
+        <span>A cheap analyst pre-compiles the news and research into a short briefing the trader reads in one shot. Far cheaper per turn, and potentially sharper (less noise). Experimental — not yet proven to trade better.</span>
+        <span class="mctag">Cheaper · experimental</span>
+      </div>
+    </div>`;
   } else { const short=WIZ.name||WIZ.model.split("/").pop(); bodyHTML=`
     <p class="wiz-q">Ready to go</p><p class="wiz-h">Here's your new trader. You can change everything later.</p>
     <div class="reviewrow"><span class="rk">Name</span><span class="rv">${esc(short)}</span></div>
     <div class="reviewrow"><span class="rk">AI model</span><span class="rv">${WIZ.model}</span></div>
     <div class="reviewrow"><span class="rk">Starting cash</span><span class="rv">$${money(WIZ.cash)}</span></div>
-    <div class="reviewrow"><span class="rk">Style</span><span class="rv">${WIZ.style}</span></div>`;
+    <div class="reviewrow"><span class="rk">Style</span><span class="rv">${WIZ.style}</span></div>
+    <div class="reviewrow"><span class="rk">Intelligence</span><span class="rv">${WIZ.digest_mode?"Digest (cheaper · experimental)":"Pull (default · validated)"}</span></div>`;
   }
   win.innerHTML=`
     <div class="win-bar" id="winBar">      <span class="ttl">Add a trader · step ${WIZ.step} of 3</span><button class="x" onclick="closeWin()">×</button></div>
@@ -3881,7 +3904,7 @@ function renderWiz(){
     </div>`;
   makeDraggable(win, win.querySelector("#winBar"));
 }
-function wizSet(k,v){ WIZ[k]=v; if(k==="style") renderWiz(); }
+function wizSet(k,v){ WIZ[k]=v; if(k==="style"||k==="digest_mode") renderWiz(); }
 function wizGo(d){ WIZ.step=Math.max(1,Math.min(3,WIZ.step+d)); renderWiz(); }
 // Create the trader server-side via the bench resource, then re-pull /api/accounts.
 // NOTE: CONTRACTS' route table lists no explicit create route for the bench
@@ -3892,7 +3915,7 @@ async function wizCreate(){
   const short=(WIZ.name||WIZ.model.split("/").pop()).trim(), prov=WIZ.model.split("/")[0];
   SLUG[short]=WIZ.model;
   try{
-    await api("/api/accounts",{method:"POST",body:{name:short, model:WIZ.model, cash:WIZ.cash, style:WIZ.style}});
+    await api("/api/accounts",{method:"POST",body:{name:short, model:WIZ.model, cash:WIZ.cash, style:WIZ.style, digest_mode:WIZ.digest_mode}});
     if(!COMPETITORS.includes(short)) COMPETITORS.push(short);
     closeWin(); gotoTab("accounts"); loadAccounts();
     toast("Trader added",short+" · funded $"+money(WIZ.cash),"good"); return;
