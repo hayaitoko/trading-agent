@@ -6,6 +6,11 @@ Read-only surface. Auth via the ``current_user`` pattern. Returns:
 
 The pattern KB is read from ``app.state.pattern_store`` (None → empty response).
 The bench leaderboard is read from ``app.state.bench`` (None → empty response).
+
+P6 experiment endpoints (``/api/calibration/experiment/...``) drive the A/B
+cohort proof: intel-ON vs intel-OFF over the same inputs.  The
+``ExperimentStore`` is resolved from ``app.state.experiment_store``; if absent,
+the endpoints return 503.
 """
 
 from __future__ import annotations
@@ -13,7 +18,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from ...config.users import current_user
 
@@ -125,3 +131,86 @@ def _kb_calibration(
         return {"available": True, **loop.calibration_summary(label=label, regime=regime)}
     except Exception as exc:
         return {"available": False, "error": str(exc)}
+
+
+# ── Experiment endpoints (P6 A/B driver) ─────────────────────────────────────
+
+
+def _experiment_store(request: Request) -> Any:
+    return getattr(request.app.state, "experiment_store", None)
+
+
+def _require_experiment_store(request: Request) -> Any:
+    store = _experiment_store(request)
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="experiment_store not configured on app.state",
+        )
+    return store
+
+
+class RunExperimentBody(BaseModel):
+    """Request body for POST /api/calibration/experiment/run."""
+
+    model: str = "test/model"
+    rounds: int = 5
+    cohort_size: int = 1
+
+
+@router.post("/experiment/run")
+def run_experiment(
+    body: RunExperimentBody,
+    request: Request,
+    user: str = Depends(current_user),
+) -> dict[str, Any]:
+    """Trigger a new ON/OFF cohort experiment and return its result.
+
+    Requires ``app.state.experiment_store`` and ``app.state.bench_controller``
+    to be set (the cockpit serve path wires both).  Returns the completed
+    :class:`~trading_agent.calibration.experiment.ExperimentRun` as JSON.
+    """
+    store = _require_experiment_store(request)
+    controller = getattr(request.app.state, "bench_controller", None)
+    if controller is None:
+        raise HTTPException(status_code=503, detail="bench_controller not configured on app.state")
+
+    from ...calibration.experiment import ExperimentDriver
+
+    driver = ExperimentDriver(
+        controller,
+        store,
+        model=body.model,
+        rounds=body.rounds,
+        cohort_size=body.cohort_size,
+    )
+    try:
+        run = driver.run()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return run.as_dict()
+
+
+@router.get("/experiment/results")
+def list_experiment_results(
+    request: Request,
+    user: str = Depends(current_user),
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Return the most recent experiment runs (newest first)."""
+    store = _require_experiment_store(request)
+    return [r.as_dict() for r in store.list_runs(limit=limit)]
+
+
+@router.get("/experiment/{run_id}")
+def get_experiment(
+    run_id: str,
+    request: Request,
+    user: str = Depends(current_user),
+) -> dict[str, Any]:
+    """Return a single experiment run by its ``run_id``."""
+    store = _require_experiment_store(request)
+    run = store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"experiment {run_id!r} not found")
+    return run.as_dict()
