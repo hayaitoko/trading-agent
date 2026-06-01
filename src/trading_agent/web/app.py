@@ -44,6 +44,7 @@ from .routers import movers as movers_router
 from .routers import news as news_router
 from .routers import notes as notes_router
 from .routers import notifications as notifications_router
+from .routers import personas as personas_router
 from .routers import quote_stream as quote_stream_router
 from .routers import quotes as quotes_router
 from .routers import requests as requests_router
@@ -79,11 +80,12 @@ _COCKPIT_ROUTERS = (
     quote_stream_router.router,
     traces_router.router,
     forecast_router.router,
-    # Customer product UI + memory API + sysadmin admin console (mounted on
-    # every cockpit app).
+    # Customer product UI + memory API + sysadmin admin console + persona
+    # catalog (mounted on every cockpit app).
     memory_router.router,
     customer_router.router,
     admin_router.router,
+    personas_router.router,
 )
 
 

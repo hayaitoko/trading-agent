@@ -31,6 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ...config.users import current_user
+from ...prompts.personas import get_persona_mandate
 
 if TYPE_CHECKING:
     from ...bench.bench import Bench
@@ -308,8 +309,17 @@ def create_account(
     model = body.model.strip()
     if not model:
         raise HTTPException(status_code=422, detail="model is required")
+    # Resolve persona id → full mandate string so the UI can pass the short id
+    # (e.g. "animal_spirits") and the trader gets the full system-prompt mandate.
+    # If style is not a known persona id it is used verbatim (free-text mandates
+    # are still valid — the persona registry is additive, not exclusive).
+    style = body.style
+    if style is not None:
+        resolved = get_persona_mandate(style.strip())
+        if resolved is not None:
+            style = resolved
     try:
-        name = controller.add_model(model, body.name, cash=body.cash, style=body.style)
+        name = controller.add_model(model, body.name, cash=body.cash, style=style)
     except ValueError as exc:  # duplicate competitor name
         raise HTTPException(status_code=409, detail=str(exc))
 
