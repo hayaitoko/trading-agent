@@ -287,6 +287,10 @@ class BenchController:
             # last-price map (kept current every market tick) rather than a snapshot
             # frozen at construction — so options_iv()/forecast() see mid-session moves.
             spot_prices_fn=lambda: dict(self.bench._last_prices),
+            # A4-b: pass the scheduler so trade() can wire the approval-callback after
+            # proposing a pending trade (wire_pending_trade_callbacks is CALLED there,
+            # not here, so the callback is registered at propose-time not at startup).
+            scheduler=self.scheduler,
         )
         # A4: register with lifecycle scheduler if wired.
         if self.scheduler is not None:
@@ -338,6 +342,10 @@ class BenchController:
             if self._stop.wait(self.cadence_seconds):
                 break
             try:
+                # A4-b: sweep TTL-expired pending trades before the tick so any
+                # expiry callbacks fire (and queue callback turns) before the scheduler
+                # drains them into actual turns this iteration.
+                self._expire_pending_trades()
                 # A4: if scheduler is wired, let it gate and classify turns.
                 # Otherwise fall back to unconditional run_decisions() (pre-A4 compat).
                 if self.scheduler is not None:
@@ -645,6 +653,24 @@ class BenchController:
         except Exception:
             pass
         return symbols
+
+    # --- A4-b: pending-trade TTL expiry sweep --------------------------------
+
+    def _expire_pending_trades(self) -> None:
+        """Sweep TTL-expired pending trades so their callbacks fire.
+
+        Called once per cadence iteration before the scheduler tick so
+        approval-TTL-expiry callbacks are enqueued as callback turns in the
+        *same* tick that processes them.  Silently no-ops when no
+        ``PendingTradeQueue`` is attached.
+        """
+        ptq = self._pending_trade_queue
+        if ptq is None:
+            return
+        try:
+            ptq.expire_old()
+        except Exception:
+            pass  # never let expiry sweep kill the cadence loop
 
     # --- Model menu ---------------------------------------------------------
 

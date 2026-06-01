@@ -41,6 +41,12 @@ class ActToolBase:
     requires_approval:
         When True, ``trade()`` routes through PendingTradeQueue instead of
         executing directly.
+    scheduler:
+        Optional :class:`~trading_agent.bench.scheduler.MarketScheduler`.  When
+        present, ``trade()`` calls
+        :meth:`~trading_agent.bench.scheduler.MarketScheduler.wire_pending_trade_callbacks`
+        after enqueueing a pending trade so that approve / deny / TTL-expire
+        events schedule a callback turn for the trader (A4-b wiring).
     """
 
     def __init__(
@@ -52,6 +58,7 @@ class ActToolBase:
         trader_id: str,
         turn_id: str,
         requires_approval: bool = False,
+        scheduler: Any = None,
     ) -> None:
         self.broker = broker
         self.risk_manager = risk_manager
@@ -59,6 +66,7 @@ class ActToolBase:
         self.trader_id = trader_id
         self.turn_id = turn_id
         self.requires_approval = requires_approval
+        self.scheduler = scheduler
 
     # ------------------------------------------------------------------ helpers
 

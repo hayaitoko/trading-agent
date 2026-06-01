@@ -311,6 +311,9 @@ class AgentTrader:
         self.risk_manager = risk_manager
         self.pending_trade_queue = pending_trade_queue
         self.requires_approval = requires_approval
+        # A4-b: approval-callback scheduler reference (wired by bind_execution).
+        # None until bind_execution is called with a scheduler.
+        self._scheduler: Any = None
         # A6 tutorial: remaining guided turns (decremented after each tutorial turn;
         # zeroed immediately on first trade* terminal so auto-exit works).
         self.tutorial_remaining: int = max(0, tutorial_remaining)
@@ -376,6 +379,7 @@ class AgentTrader:
         pending_trade_queue: Any = None,
         requires_approval: bool = False,
         spot_prices_fn: Any = None,
+        scheduler: Any = None,
     ) -> None:
         """Attach the bench's per-competitor broker + risk + approval queue.
 
@@ -404,6 +408,10 @@ class AgentTrader:
         self.requires_approval = requires_approval
         if spot_prices_fn is not None:
             self._spot_prices_fn = spot_prices_fn
+        # A4-b: scheduler reference — passed to ACT tools so trade() can wire the
+        # approval-callback after proposing a pending trade.
+        if scheduler is not None:
+            self._scheduler = scheduler
         self._stable_system_content = self._build_system_prompt()
 
     # --- Trader Protocol interface -------------------------------------------
@@ -1892,6 +1900,8 @@ class AgentTrader:
             "trader_id": self.name,
             "turn_id": self._current_turn_id,
             "requires_approval": self.requires_approval,
+            # A4-b: pass the scheduler so trade() can wire the approval callback.
+            "scheduler": self._scheduler,
         }
 
     def _tool_trade(

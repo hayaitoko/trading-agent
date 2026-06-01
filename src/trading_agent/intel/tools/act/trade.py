@@ -156,13 +156,21 @@ class TradeTool(ActToolBase):
             trail=trail,
         )
 
-        # Approval-required path: enqueue, return pending_trade_id.
+        # Approval-required path: enqueue, register scheduler callback, return id.
         ptq = self.pending_trade_queue
         if self.requires_approval and ptq is not None:
             try:
                 pt = ptq.propose(self.trader_id, intent, idem_key)
             except ValueError as exc:
                 return self._err("invalid_input", str(exc))
+            # A4-b wiring: register a callback so approve / deny / TTL-expire events
+            # schedule a callback turn for this trader via the MarketScheduler.  When
+            # no scheduler is attached (tests, pre-A4 compat) the approval still lands
+            # in the DB — the trader simply won't wake autonomously to act on it.
+            if self.scheduler is not None:
+                self.scheduler.wire_pending_trade_callbacks(
+                    ptq, self.trader_id, pt.pending_trade_id
+                )
             return self._ok(
                 {
                     "pending_trade_id": pt.pending_trade_id,
