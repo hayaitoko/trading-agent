@@ -1,6 +1,6 @@
 """Config router (WS-0, fully implemented): auth, settings, endpoints, sources.
 
-This is the only router WS-0 fills in; the rest are 501 stubs for their owners.
+WS-0 owns this router; other routers are maintained by their respective workstreams.
 All per-user state keys on the ``current_user`` ``user_id``. Endpoint API keys are
 never returned in full — :meth:`Endpoint.public` masks them.
 """

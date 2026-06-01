@@ -173,7 +173,107 @@ same assertions against `PaperBroker`, `AlpacaBroker` (mocked `TradingClient`),
 and `CCXTBroker` (mocked ccxt Exchange) — the only place all three are
 exercised together against the frozen `BrokerAdapter` ABC.
 
+## Deployment
+
+### systemd user service (Raspberry Pi / homelab)
+
+Create `~/.config/systemd/user/trading-cockpit.service`:
+
+```ini
+[Unit]
+Description=Trading-agent cockpit (multi-user paper trading)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/trading-agent
+ExecStart=/path/to/trading-agent/.venv/bin/trading-agent-serve \
+    --cockpit \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --data-dir data \
+    --owner <your-username>
+Restart=on-failure
+RestartSec=10
+
+# --- required ---
+Environment=OPENROUTER_API_KEY=sk-or-...
+Environment=ALPACA_API_KEY=...
+Environment=ALPACA_SECRET_KEY=...
+
+# --- optional intelligence layer ---
+# Bind the trader-intelligence layer to this user (id or username).
+# Falls back to TRADING_AGENT_OWNER_ID env var, then a lone signed-up user.
+# Environment=TRADING_AGENT_OWNER_ID=<user-id>
+
+# Set to the base URL of a local Ollama-compatible embedding endpoint.
+# Required for research-brief recall and per-trader memory (WS-D).
+# Example: http://localhost:11434 (nomic-embed-text model)
+# Without this, traders run history-only — research + memory stay dark.
+# Environment=TRADING_AGENT_EMBED_ENDPOINT=http://localhost:11434
+
+# --- optional feature flags ---
+# Gate decision turns to US regular trading hours (US/Eastern).
+# Set to 1 for a production paper test; leave unset for free-running dev.
+# Environment=TRADING_AGENT_SCHEDULER=1
+
+# Enable the POST /api/dev/fire-turn endpoint (development only).
+# Remove in production.
+# Environment=TRADING_AGENT_DEV_TRIGGER=1
+
+# Number of guided tutorial turns each new trader gets before trading freely.
+# 0 (default) disables tutorial mode — traders trade from their first RTH turn.
+# Set >0 to re-enable onboarding after a restart.
+# Environment=TRADING_AGENT_TUTORIAL_TURNS=3
+
+# Hard kill switch — set to 1 to halt all trades immediately (all
+# RiskManager.check_* methods return True). Unset to resume.
+# Alternatively, create the file at data/.kill_switch (path configurable).
+# Environment=TRADING_AGENT_KILL_SWITCH=1
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now trading-cockpit.service
+journalctl --user -u trading-cockpit.service -f
+```
+
+### Key environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `OPENROUTER_API_KEY` | Yes | LLM routing (OpenRouter). Required for add-trader; without it, cockpit read surfaces work but no new traders can be added. |
+| `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` | Yes (live bars) | Alpaca paper account. Without these, the cockpit falls back to a synthetic mean-reverting price feed. |
+| `TRADING_AGENT_OWNER_ID` | Recommended | User id (or username) to bind the intelligence layer. Overridden by `--owner` CLI flag. |
+| `TRADING_AGENT_EMBED_ENDPOINT` | Recommended | Local Ollama-compatible embed base URL (e.g. `http://localhost:11434`). Required for WS-D memory + research recall. |
+| `TRADING_AGENT_SCHEDULER` | Optional | Set to `1` to gate turns to US RTH via `MarketScheduler`. Leave unset for free-running cadence (development). |
+| `TRADING_AGENT_DEV_TRIGGER` | Optional | Set to `1` to expose `POST /api/dev/fire-turn` (development only). |
+| `TRADING_AGENT_TUTORIAL_TURNS` | Optional | Guided orientation turns for new traders. Default `0` (disabled). |
+| `TRADING_AGENT_KILL_SWITCH` | Optional | Set to `1` to halt all trades immediately. Equivalent to touching `data/.kill_switch`. |
+
+### `--owner` flag
+
+The `--owner` flag (or `TRADING_AGENT_OWNER_ID`) binds the trader-intelligence
+layer to a specific user so traders have access to their research briefs, memory,
+and advisor notes. Without it, traders run in history-only mode (price bars +
+tool calls, no recall). Set it to the username or `user_id` of an account that
+has been registered via the cockpit.
+
+### Embed endpoint requirement
+
+Memory and research recall depend on a local embedding model. Configure a
+`local` type endpoint in the cockpit settings UI (or via the API) pointing at an
+Ollama-compatible server. The recommended model is `nomic-embed-text` (Ollama).
+Without a working embed endpoint, `memory_search` and `research_brief` return
+`ToolError(kind="unavailable")` — the trader continues operating normally on
+price history alone.
+
 ## Out of scope
 
-Deployment infra, Docker, web UI, strategy R&D. The single placeholder
-mean-reversion strategy exists only to prove the framework end-to-end.
+Docker, strategy R&D. The single placeholder mean-reversion strategy exists
+only to prove the framework end-to-end.

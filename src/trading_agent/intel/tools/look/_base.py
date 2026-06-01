@@ -76,15 +76,16 @@ class LookToolBase:
     def _disabled(tool_name: str) -> ToolResult:
         """Return the canonical disabled-tool error.
 
-        Used by stub tools whose provider has not yet landed (WS-Situation
-        Track A/B).  ``list_tools()`` surfaces these with ``enabled=false``.
+        Returned when a tool's feature flag is off or its backing provider is
+        not initialised.  ``list_tools()`` surfaces these with ``enabled=false``
+        and a human-readable ``disabled_reason``.
         """
         return ToolResult(
             ok=False,
             error=ToolError(
                 kind="disabled",
                 message=(
-                    f"{tool_name}: provider lands in WS-Situation+Forecast. "
+                    f"{tool_name}: provider not available. "
                     "Use situation() or research_brief() for current market context."
                 ),
             ),

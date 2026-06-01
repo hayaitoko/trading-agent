@@ -1,6 +1,6 @@
 """FastAPI routers — one module per workstream (CONTRACTS.md §HTTP route table).
 
-WS-0 ships ``config`` fully implemented (auth, settings, endpoints, sources) and
-every other router as 501 stubs carrying the correct method/path + ``current_user``
-dependency, so each owning stream just fills the body.
+All routers are fully implemented. ``config`` (WS-0) handles auth, settings,
+endpoints, and sources; every other router ships its complete implementation
+with graceful degradation when the relevant ``app.state`` dependency is absent.
 """
