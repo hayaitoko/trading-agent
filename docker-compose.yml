@@ -1,0 +1,148 @@
+---
+# trading-agent full-stack compose
+# Services: app | qdrant | embedder | embedder-init
+#
+# One-command start (after filling .env):
+#   docker compose up -d --build
+#
+# With TLS (Caddy reverse proxy):
+#   DOMAIN=trade.example.com docker compose --profile tls up -d --build
+
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# Named volumes — all data persists across container restarts
+# ---------------------------------------------------------------------------
+volumes:
+  ta_data:        # SQLite files: config.db, serve.db, turns.db, paper.db, memory.db
+  ta_qdrant:      # Qdrant vector storage
+  ta_ollama:      # Ollama model weights (embed model persists across boots)
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+services:
+
+  # ── Qdrant vector store ──────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - ta_qdrant:/qdrant/storage
+    expose:
+      - "6333"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ── Ollama embedder ──────────────────────────────────────────────────────
+  # Serves the OpenAI-compatible /v1/embeddings endpoint that LocalEmbedder uses.
+  embedder:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ta_ollama:/root/.ollama
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:11434/api/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    # Default command just starts the server; model is pulled by embedder-init.
+    command: serve
+
+  # ── Embedder-init (one-shot): pulls the embed model on first boot ────────
+  # Runs `ollama pull <model>` against the embedder service, then exits (code 0).
+  # `depends_on: app: condition: service_completed_successfully` ensures the app
+  # waits for the model to be available before starting its intelligence layer.
+  embedder-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    volumes:
+      - ta_ollama:/root/.ollama
+    environment:
+      OLLAMA_HOST: "http://embedder:11434"
+      EMBED_MODEL: "${EMBED_MODEL:-mxbai-embed-large}"
+    depends_on:
+      embedder:
+        condition: service_healthy
+    # Pull the embed model, then exit. The model is stored in ta_ollama so
+    # subsequent boots skip the download.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "[embedder-init] pulling ${EMBED_MODEL:-mxbai-embed-large} ..."
+        ollama pull "${EMBED_MODEL:-mxbai-embed-large}"
+        echo "[embedder-init] done"
+
+  # ── Trading-agent app ────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ta_data:/app/data
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      embedder:
+        condition: service_healthy
+      embedder-init:
+        condition: service_completed_successfully
+    command:
+      - "--cockpit"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--owner"
+      - "${OWNER:-admin}"
+    environment:
+      # Passed through env_file but can be overridden here
+      DATA_DIR: "/app/data"
+      EMBED_BASE_URL: "${EMBED_BASE_URL:-http://embedder:11434/v1}"
+      QDRANT_URL: "${QDRANT_URL:-http://qdrant:6333}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Optional: Caddy TLS reverse proxy (profile: tls) ────────────────────
+  # Activate with:  docker compose --profile tls up -d --build
+  # Requires:  DOMAIN=trade.example.com in .env
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles:
+      - tls
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_certs:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      DOMAIN: "${DOMAIN:-localhost}"
+
+volumes:
+  ta_data:
+  ta_qdrant:
+  ta_ollama:
+  caddy_data:
+  caddy_certs:

@@ -1,0 +1,33 @@
+# Caddyfile — reverse proxy for trading-agent
+#
+# Activated with:  docker compose --profile tls up -d --build
+# Requires:  DOMAIN env var set in .env (e.g. DOMAIN=trade.example.com)
+#
+# Caddy automatically provisions a TLS certificate from Let's Encrypt.
+# The domain must have a public A/AAAA record pointing to the VPS IP.
+
+{$DOMAIN} {
+    # Forward all traffic to the app container on port 8000
+    reverse_proxy app:8000
+
+    # Standard security headers
+    header {
+        # Prevent clickjacking
+        X-Frame-Options DENY
+        # Disable MIME sniffing
+        X-Content-Type-Options nosniff
+        # Enable HSTS (1 year)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        # Remove server header
+        -Server
+    }
+
+    # Compress responses
+    encode gzip zstd
+
+    # Logging
+    log {
+        output stdout
+        format json
+    }
+}
