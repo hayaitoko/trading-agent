@@ -17,6 +17,8 @@ volumes:
   ta_data:        # SQLite files: config.db, serve.db, turns.db, paper.db, memory.db
   ta_qdrant:      # Qdrant vector storage
   ta_ollama:      # Ollama model weights (embed model persists across boots)
+  caddy_data:     # Caddy TLS state (tls profile only)
+  caddy_certs:    # Caddy certs (tls profile only)
 
 # ---------------------------------------------------------------------------
 # Services
@@ -139,10 +141,3 @@ services:
         condition: service_healthy
     environment:
       DOMAIN: "${DOMAIN:-localhost}"
-
-volumes:
-  ta_data:
-  ta_qdrant:
-  ta_ollama:
-  caddy_data:
-  caddy_certs:
