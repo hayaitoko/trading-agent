@@ -52,7 +52,13 @@ DEFAULT_CADENCE_SECONDS: int = 3600
 
 # Per-user `research_cadence` setting (chosen in the Settings UI) → interval in
 # seconds. "off" is intentionally absent so those users are skipped entirely.
-_CADENCE_SECONDS: dict[str, int] = {"15m": 900, "1h": 3600, "4h": 14400}
+_CADENCE_SECONDS: dict[str, int] = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "4h": 14400,
+}
 
 # How often the daemon wakes to re-evaluate who is due. Finest cadence is 15m,
 # but we tick more often so pre-SoD hydration stays responsive.
