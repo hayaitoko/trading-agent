@@ -69,17 +69,22 @@ services:
       - ta_ollama:/root/.ollama
     environment:
       OLLAMA_HOST: "http://embedder:11434"
-      EMBED_MODEL: "${EMBED_MODEL:-mxbai-embed-large}"
+      EMBED_MODELS: "${EMBED_MODELS:-mxbai-embed-large}"
     depends_on:
       embedder:
         condition: service_healthy
-    # Pull the embed model, then exit. The model is stored in ta_ollama so
-    # subsequent boots skip the download.
+    # Pull EACH model in EMBED_MODELS (comma-separated) so the Settings UI picker
+    # can switch between them, then exit. Models persist in ta_ollama so later
+    # boots skip the download. ($$ escapes compose interpolation -> literal $ for sh.)
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "[embedder-init] pulling ${EMBED_MODEL:-mxbai-embed-large} ..."
-        ollama pull "${EMBED_MODEL:-mxbai-embed-large}"
+        models="${EMBED_MODELS:-mxbai-embed-large}"
+        echo "[embedder-init] pulling: $$models"
+        for m in $$(echo "$$models" | tr ',' ' '); do
+          echo "[embedder-init] pull $$m"
+          ollama pull "$$m" || echo "[embedder-init] WARN: pull failed for $$m"
+        done
         echo "[embedder-init] done"
 
   # ── Trading-agent app ────────────────────────────────────────────────────

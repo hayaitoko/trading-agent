@@ -915,9 +915,12 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text);
             <div class="form-row">
               <label>Embedding model</label>
               <select id="set-embed-model" class="settings-select">
-                <option value="bge-small-en-v1.5">bge-small-en-v1.5 (fast, local)</option>
-                <option value="mxbai-embed-large">mxbai-embed-large (quality)</option>
+                <option value="mxbai-embed-large">mxbai-embed-large (quality, 1024d)</option>
+                <option value="all-minilm">all-minilm (fast, 384d)</option>
+                <option value="nomic-embed-text">nomic-embed-text (768d)</option>
+                <option value="bge-large">bge-large (1024d)</option>
               </select>
+              <p class="settings-hint">Only models your embedder has pulled will work (set EMBED_MODELS at deploy).</p>
             </div>
             <button class="btn btn-sm btn-accent" onclick="saveStorageSettings()">Save</button>
           </div>
@@ -1450,7 +1453,7 @@ async function loadSettings() {
   setVal('set-research-cadence', settings.research_cadence || 'off');
   setVal('set-daily-ceiling', settings.daily_usd_ceiling ?? 5);
   setVal('set-vstore', settings.vstore || 'sqlite-vec');
-  setVal('set-embed-model', settings.embed_model || 'bge-small-en-v1.5');
+  setVal('set-embed-model', settings.embed_model || 'mxbai-embed-large');
   setVal('set-hard-floor', settings.hard_floor_pct ?? '');
   setChecked('set-situation', !!settings.situation_enabled);
   setChecked('set-pattern-kb', !!settings.pattern_kb_enabled);
